@@ -1,0 +1,3 @@
+[submodule "modules/uniform"]
+	path = modules/uniform
+	url = https://github.com/rluba/uniform
