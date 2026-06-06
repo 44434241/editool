@@ -172,6 +172,12 @@ command_replace :: (_: Command_In) -> Command_Result {
 	return .{ status = .CONTINUE_CHAR, continue_no_number = true };
 }
 
+command_jump_search :: (in: Command_In, step: int) -> Command_Result {
+	assert(step != 0);
+	jump_to_search_match_offset(step * in.number);
+	return .{};
+}
+
 command_replace_char :: (in: Command_In, char: s32) -> Command_Result {
 	if !is_printable_char(char) {
 		return .{ status = .ERROR, error_message = "Not printable char" };

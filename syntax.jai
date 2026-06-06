@@ -49,7 +49,7 @@ Syntax :: struct {
 	elements[DECLARATION].color = 14; // dark gren (24 or 30 or 6?)
 	normal_color: s32 = 0;
 	is_compiled: bool = false;
-	regex: Regexp;
+	regex: Uniform.Regexp;
 }
 
 compile_syntax :: (using syntax: *Syntax) {
@@ -83,7 +83,7 @@ compile_syntax :: (using syntax: *Syntax) {
 			log("regex str: %\n", regex_str);
 		}
 	}
-	regex, is_compiled = compile(regex_str);
+	regex, is_compiled = Uniform.compile(regex_str);
 }
 
 get_jai_syntax :: () -> Syntax {

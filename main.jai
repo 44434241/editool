@@ -98,10 +98,23 @@ Command_State :: struct {
 	waiting_for_char: [..]Waiting_For_Char;
 }
 
+Search_State :: struct {
+	regex_chars: [..]u8;
+	#overlay(regex_chars) regex_string: string;
+	Match :: struct {
+		index: Position;
+		count: int;
+	}
+	matches: [..]Match;
+	match_time: Editime = -1;
+	selected_match: int = 0;
+}
+
 Edit_Mode :: enum {
 	NONE :: 0;
 	INSERT;
 	COMMAND;
+	SEARCH;
 }
 
 /*
@@ -129,6 +142,7 @@ Editool :: struct {
 	motions: [..]Motion;
 	commands: [..]Command;
 	command_state: Command_State;
+	search_state: Search_State;
 	added_chars: [..]s32; // synthentic input
 	time: Editime; // time in relation to user input
 }
@@ -149,27 +163,33 @@ is_printable_char :: (ch: s32) -> bool {
 change_edit_mode :: (mode: Edit_Mode) {
 	if context.edit.mode == mode
 		return;
+	// reset
 	if context.edit.mode == .COMMAND
 		reset_command_mode();
+	if context.edit.mode == .SEARCH
+		reset_search_mode();
+	// set
 	context.edit.mode = mode;
+	// start
 	if mode == .COMMAND
-		start_command_mode();
+		enter_command_mode();
+	if mode == .SEARCH
+		enter_search_mode();
 }
 
 reset_command_mode :: () {
 	log("resetting command mode");
-	if true || context.edit.mode == .COMMAND {
-		array_reset(*context.command_state.waiting_for_char);
-		array_reset(*context.command_state.waiting_for_motion); // @Leak
-		waiting_chars_reset(*context.command_state); 
-		array_reset(*context.command_state.all_chars); 
-	}
+	using context.command_state;
+	array_reset(*waiting_for_char);
+	array_reset(*waiting_for_motion); // @Leak
+	array_reset(*all_chars); 
+	waiting_chars_reset(*context.command_state); 
 	if context.edit.mode == .COMMAND {
-		start_command_mode();
+		enter_command_mode();
 	}
 }
 
-start_command_mode :: () {
+enter_command_mode :: () {
 	handle_command_step();
 }
 
@@ -279,6 +299,169 @@ handle_command_step :: () -> (should_reset: bool, found_command: bool) {
 	return should_reset, found_command;
 }
 
+reset_search_mode :: () {
+}
+
+enter_search_mode :: () {
+	using context.edit.search_state;
+	array_reset(*regex_chars);
+	array_reset(*matches);
+	selected_match = 0;
+}
+
+// updates matches only when you jump actually
+// what do i name this??
+jump_to_search_match_offset :: (offset: int) {
+	using context.edit.search_state;
+	buf := context.edit.current_buffer;
+	if match_time < buf.modify_time {
+		_update_search_matches();
+	}
+	if matches.count == 0
+		return;
+	y := buf.cursor.y;
+	log("selected match: %\n", selected_match);
+	selected_match = matches.count - 1;
+	for matches {
+		if it.index <= buf.cursor.position {
+			selected_match = it_index;
+		} else {
+			break;
+		}
+	}
+	if buf.cursor.position != matches[selected_match].index && offset < 0 {
+		selected_match += 1;
+	}
+	log("selected match: %\n", selected_match);
+	selected_match = (selected_match + offset) % matches.count;
+	selected_match = (selected_match + matches.count) % matches.count;
+	move_cursor(buf, matches[selected_match].index, jump = true);
+}
+
+// returns true if match was *valid*
+_update_search_matches :: () -> bool {
+	using context.edit.search_state;
+	array_reset(*matches);
+	selected_match = -1;
+	if regex_string.count == 0
+		return false;
+	time_this("Search");
+	full_regex_string := tprint("(.*+)(%)", regex_string); // non-greedy whatever
+	// @UniformBug with how .NonGreedy works, i think? (inverts instead of choosing a default)
+	//compile_flags := (.LikePerl | .NonGreedy | .MatchNL) & ~.OneLine;
+	compile_flags: Uniform.ParseFlags = (.LikePerl | .NonGreedy);
+	re, ok := Uniform.compile(full_regex_string, compile_flags,, allocator=temp);
+	if !ok {
+		log_error("Regex compile failed");
+		return false;
+	}
+	match_time = context.edit.time;
+	defer Uniform.uninit(*re,,allocator=temp);
+	//text: [..]u8;
+	//indices: [..]Position;
+	//text.allocator, indices.allocator = temp;
+	MAX_MATCHES :: 10000;
+	for line, y: context.current_buffer.lines {
+		if matches.count >= MAX_MATCHES
+			break;
+		//array_add(*text, it);
+		//array_add(*indices, it_index);
+		s: string = cast(string)line.chars;
+		idx := 0;
+		while matches.count < MAX_MATCHES { // limit 
+			ok, m := Uniform.match(s, re, .ANCHOR_START);
+			if !ok
+				break;
+			prefix_str := m[1];
+			match_str := m[2];
+			if match_str.count == 0 {
+				log_error("what");
+				break;
+			}
+			idx += prefix_str.count;
+			defer idx += match_str.count;
+			vec2_idx := Position.{ idx, y};
+			array_add(*matches, .{
+				index = vec2_idx,
+				count = match_str.count,
+			});
+			log("Found match at %: %", vec2_idx, match_str);
+			s = advance(s, prefix_str.count + match_str.count);
+		}
+	}
+	return true;
+}
+
+do_some_extra_stuff_to_the_buffer_colors :: () {
+	buf := context.current_buffer;
+	{
+		using context.edit.search_state;
+		if match_time < buf.modify_time {
+			_update_search_matches();
+		}
+		for matches {
+			y := it.index.y;
+			line := *buf.lines[it.index.y];
+			if it.index.x + it.count > line.count {
+				log_error("Ruh roh, something went wrong with search (%)", it);
+			}
+			for it.index.x..min(line.count, it.index.x + it.count)-1 {
+				fg, bg := uncolor_fg_bg(line.colors[it]);
+				bg = 2;
+				line.colors[it] = color_fg_bg(fg, bg);
+			}
+		}
+	}
+	{
+		line := *buf.lines[buf.cursor.y];
+		if buf.cursor.x < line.count {
+			ch := line.chars[buf.cursor.x];
+			pos: Position = .{ -1, -1 };
+			if ch == #char "(" {
+				pos = find_char_in_buffer(")", "(",  1);
+			} else if ch == #char ")" {
+				pos = find_char_in_buffer("(", ")", -1);
+			} else if ch == #char "{" {
+				pos = find_char_in_buffer("}", "{",  1);
+			} else if ch == #char "}" {
+				pos = find_char_in_buffer("{", "}", -1);
+			} else if ch == #char "[" {
+				pos = find_char_in_buffer("]", "[",  1);
+			} else if ch == #char "]" {
+				pos = find_char_in_buffer("[", "]", -1);
+			}
+			if pos.y >= 0 {
+				log("found match at %\n", pos);
+				fg, bg := uncolor_fg_bg(buf.lines[pos.y].colors[pos.x]);
+				fg = 7; // this seems to be black?
+				bg = 0;
+				buf.lines[pos.y].colors[pos.x] = color_fg_bg(fg, bg);
+			}
+		}
+	}
+}
+
+handle_search_char :: (ch: s32) {
+	using context.edit.search_state;
+	if ch == {
+		case KEY_ESCAPE; #through;
+		case #char "\n";
+			change_edit_mode(.COMMAND);
+			return;
+		case KEY_BACKSPACE;
+			if regex_chars.count > 0 {
+				pop(*regex_chars);
+			} else {
+				change_edit_mode(.COMMAND);
+				return;
+			}
+		case;
+			if is_printable_char(ch)
+				array_add(*regex_chars, xx ch);
+	}
+	_update_search_matches();
+}
+
 handle_command_char :: (ch: s32) {
 	// printable ch!
 	should_reset := true;
@@ -380,20 +563,23 @@ handle_char :: (ch: s32) {
 	buf := *context.edit.main_buffer;
 	{ 
 		// do something independant of mode?
-		was_handled := true;
 		if ch == {
 			case KEY_RESIZE;
 				refresh_buffer_size(context.current_buffer);
-				// auto handled
-			case KEY_DC; // delete
-				delete_at_x_offset(buf, 0);
-			case KEY_BACKSPACE;
-				delete_at_x_offset(buf, -1);
-			case;
-				was_handled = false;
+				return;
 		}
-		if was_handled
-			return;
+		// special case rn for these!!
+		if context.edit.mode == .INSERT || context.edit.mode == .COMMAND {
+			if ch == {
+				// auto handled
+				case KEY_DC; // delete
+					delete_at_x_offset(buf, 0);
+					return;
+				case KEY_BACKSPACE;
+					delete_at_x_offset(buf, -1);
+					return;
+			}
+		}
 	}
 	{
 		was_handled := true;
@@ -402,6 +588,8 @@ handle_char :: (ch: s32) {
 				handle_insert_char(ch);
 			case .COMMAND;
 				handle_command_char(ch);
+			case .SEARCH;
+				handle_search_char(ch);
 			case;
 				log("what? %", context.edit.mode);
 				was_handled = false;
@@ -600,6 +788,10 @@ add_all_commands :: () {
 		proc = #run wrap_command(#bake_arguments(change_edit_mode(mode = .INSERT))),
 	);
 	add_command(
+		keybind = "/",
+		proc = #run wrap_command(#bake_arguments(change_edit_mode(mode = .SEARCH))),
+	);
+	add_command(
 		keybind = "A",
 		proc = make_command_alias(.[ KEY_END, #char "i" ]),
 	);
@@ -655,18 +847,42 @@ add_all_commands :: () {
 		char_proc = command_replace_char,
 	);
 	add_command(
+		keybind = "n",
+		proc = #bake_arguments command_jump_search(step = 1),
+	);
+	add_command(
+		keybind = "N",
+		proc = #bake_arguments command_jump_search(step = -1),
+	);
+	add_command(
 		keybind = "?",
 		proc = (_: Command_In) -> Command_Result {
 			buf := context.current_buffer;
-			if buf.cursor.x < buf.lines[buf.cursor.y].count {
-				log("char under cursor: %\n", buf.lines[buf.cursor.y].chars[buf.cursor.x]);
+			line := *buf.lines[buf.cursor.y];
+			if buf.cursor.x < line.count {
+				log("Under cursor:\n");
+				fg, bg := uncolor_fg_bg(line.colors[buf.cursor.x]);
+				char := line.chars[buf.cursor.x];
+				log("char: '%' (%), fg: %, bg: %\n", string.{ data = *char, count = 1 }, char, fg, bg);
 			}
 			return .{};
 		}
 	);
 }
 
-COLOR_COUNT :: 32;
+COLOR_COUNT :: 16;
+
+// returns pair index, still need to call COLOR_PAIR
+color_fg_bg :: (fg: int, bg: int) -> (pair: s32) {
+	idx := (fg + 1) + (bg + 1) * (COLOR_COUNT+1);
+	return xx idx;
+}
+
+uncolor_fg_bg :: (col: s32) -> (fg: int, bg: int) {
+	fg, bg := col % (COLOR_COUNT+1) - 1, col / (COLOR_COUNT+1) - 1;
+	return fg, bg;
+	//return COLOR_PAIR(xx ((fg + 1) + (bg + 1) * COLOR_COUNT));
+}
 
 editool_init :: () {
 	// logger
@@ -697,8 +913,16 @@ editool_init :: () {
 		}
 	}
 	#if 1 {
-		for i: 0..COLOR_COUNT-1 {
-			init_pair(xx i, xx i, -1);
+		for i: -1..COLOR_COUNT-1 {
+			for j: -1..COLOR_COUNT-1 {
+				idx := color_fg_bg(i, j);
+				ret := init_pair(xx idx, xx i, xx j);
+				if ret == ERR {
+					log_error("can't init color % (%, %)", idx, i, j);
+					editool_deinit();
+					exit(1);
+				}
+			}
 		}
 	}
 	#if 0 {
@@ -733,7 +957,7 @@ main :: () {
 		if args.count > 1 {
 			s, ok := read_entire_file(args[1]);
 			if !ok {
-				log("can't read file");
+				log_error("can't read file");
 				editool_deinit();
 				return;
 			}
@@ -777,3 +1001,4 @@ main :: () {
 #import "File";
 #import "String";
 #import "ncurses";
+Uniform :: #import "uniform";

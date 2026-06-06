@@ -27,3 +27,32 @@ is_digit :: (c: s32) -> bool {
 array_adds :: (a: *[..]u8, s: string) {
 	array_add(a, .. cast([]u8)s);
 }
+
+time_this :: (name: string) #expand {
+	start_time := current_time_monotonic();
+	`defer {
+		end_time := current_time_monotonic();
+		duration := to_float64_seconds(end_time - start_time);
+		log("% took % ms", name, duration * 1000);
+	}
+}
+
+sign :: (v: $T) -> T 
+	#modify { return IsScalar(T); } {
+	if v == 0
+		return v;
+	return ifx v > 0 then cast(T)1 else cast(T)-1;
+}
+
+in_range_inclusive :: (v: int, l: int, r: int) -> bool {
+	return l <= v && v <= r;
+}
+
+// exclusive int implies [l, r)
+in_range_exclusive :: (v: int, l: int, r: int) -> bool {
+	return l <= v && v < r;
+}
+
+#scope_file
+
+#import "Math";

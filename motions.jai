@@ -14,8 +14,8 @@ Motion_Result :: struct {
 	}
 	status: Status = .OK;
 	flags: Flags = .NONE;
-	start: Vec2i = .{ -1, -1 };
-	end: Vec2i = .{ -1, -1 };
+	start: Position = .{ -1, -1 };
+	end: Position = .{ -1, -1 };
 	continue_no_number: bool = false;
 	error_message: string; // not printed rn
 }
@@ -67,7 +67,7 @@ find_char_in_line :: (ch: u8, opposite_ch: u8, step: int, count: int) -> int {
 	return find_char_in_line(x, ch, opposite_ch, step, count);
 }
 
-find_char_in_line :: (x: int, ch: u8, opposite_ch: u8, step: int, count: int) -> int {
+find_char_in_line :: (x: int, ch: u8, opposite_ch: u8, step: int, count: int = 1) -> int {
 	assert(step == 1 || step == -1);
 	line := *context.current_buffer.lines[context.current_buffer.cursor.y];
 	char_cnt := count;
@@ -85,6 +85,35 @@ find_char_in_line :: (x: int, ch: u8, opposite_ch: u8, step: int, count: int) ->
 		idx += step;
 	}
 	return -1;
+}
+
+// starts from cursor
+find_char_in_buffer :: (ch: u8, opposite_ch: u8, step: int, count: int = 1) -> Position {
+	assert(step == 1 || step == -1);
+	buf := context.current_buffer;
+	y := buf.cursor.y;
+	x := buf.cursor.x + step;
+	//x = min(x, buf.lines[y].count-1);
+	char_cnt := count;
+	should_change_x := false;
+	while in_range_exclusive(y, 0, buf.lines.count) {
+		log("search %: \n", y);
+		defer y += step;
+		line := *buf.lines[y];
+		if should_change_x
+			x = ifx step < 0 then line.count - 1 else 0;
+		while in_range_exclusive(x, 0, line.count) {
+			defer x += step;
+			if line.chars[x] == ch
+				char_cnt -= 1;
+			if line.chars[x] == opposite_ch
+				char_cnt += 1;
+			if char_cnt == 0
+				return .{ x, y };
+		}
+		should_change_x = true;
+	}
+	return .{ -1, -1 };
 }
 
 motion_inner :: (in: Motion_In, $ch: u8, $inclusive: bool) -> Motion_Result {
@@ -147,13 +176,13 @@ motion_word :: (in: Motion_In, $step: int = 1, $flags: Motion_Word_Flags = 0) ->
 	if step > 0 && cursor.x >= line.count {
 		return .{
 			start = cursor.position,
-			end = ifx cursor.position.y + 1 < lines.count then Vec2i.{ 0, cursor.position.y + 1 } else cursor.position,
+			end = ifx cursor.position.y + 1 < lines.count then Position.{ 0, cursor.position.y + 1 } else cursor.position,
 		};
 	}
 	if step < 0 && cursor.x <= 0 {
 		return .{
 			start = cursor.position,
-			end = ifx cursor.y > 0 then Vec2i.{ lines[cursor.y-1].count, cursor.y - 1 } else cursor.position,
+			end = ifx cursor.y > 0 then Position.{ lines[cursor.y-1].count, cursor.y - 1 } else cursor.position,
 		};
 	}
 	next_x := min(cursor.x, line.count-1);
@@ -258,7 +287,7 @@ motion_page_step :: (in: Motion_In, step: int) -> Motion_Result {
 	};
 }
 
-motion_step :: (in: Motion_In, step: Vec2i) -> Motion_Result {
+motion_step :: (in: Motion_In, step: Position) -> Motion_Result {
 	assert(step.x == 0 || step.y == 0);
 	assert(step.x != 0 || step.y != 0);
 	buf := context.current_buffer;
