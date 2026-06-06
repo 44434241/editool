@@ -61,7 +61,7 @@ make_motion_alias :: ($chars: $T/.[ []s32, string ]) -> Motion.Proc {
 }
 
 find_char_in_line :: (ch: u8, opposite_ch: u8, step: int, count: int) -> int {
-	x := context.current_buffer.cursor.x;
+	x := context.current_window.cursor.x;
 	if step < 0
 		x -= 1;
 	return find_char_in_line(x, ch, opposite_ch, step, count);
@@ -69,7 +69,7 @@ find_char_in_line :: (ch: u8, opposite_ch: u8, step: int, count: int) -> int {
 
 find_char_in_line :: (x: int, ch: u8, opposite_ch: u8, step: int, count: int = 1) -> int {
 	assert(step == 1 || step == -1);
-	line := *context.current_buffer.lines[context.current_buffer.cursor.y];
+	line := *context.current_window.lines[context.current_window.cursor.y];
 	char_cnt := count;
 	idx := x;
 	while true {
@@ -88,18 +88,18 @@ find_char_in_line :: (x: int, ch: u8, opposite_ch: u8, step: int, count: int = 1
 }
 
 // starts from cursor
-find_char_in_buffer :: (ch: u8, opposite_ch: u8, step: int, count: int = 1) -> Position {
+find_char_in_window :: (ch: u8, opposite_ch: u8, step: int, count: int = 1) -> Position {
 	assert(step == 1 || step == -1);
-	buf := context.current_buffer;
-	y := buf.cursor.y;
-	x := buf.cursor.x + step;
-	//x = min(x, buf.lines[y].count-1);
+	win := context.current_window;
+	y := win.cursor.y;
+	x := win.cursor.x + step;
+	//x = min(x, win.lines[y].count-1);
 	char_cnt := count;
 	should_change_x := false;
-	while in_range_exclusive(y, 0, buf.lines.count) {
+	while in_range_exclusive(y, 0, win.lines.count) {
 		log("search %: \n", y);
 		defer y += step;
-		line := *buf.lines[y];
+		line := *win.lines[y];
 		if should_change_x
 			x = ifx step < 0 then line.count - 1 else 0;
 		while in_range_exclusive(x, 0, line.count) {
@@ -153,7 +153,7 @@ motion_inner :: (in: Motion_In, $ch: u8, $inclusive: bool) -> Motion_Result {
 		left_x += 1;
 		right_x -= 1;
 	}
-	cursor := context.current_buffer.cursor;
+	cursor := context.current_window.cursor;
 	return {
 		start = .{ left_x, cursor.y },
 		end = .{ right_x, cursor.y },
@@ -169,9 +169,9 @@ Motion_Word_Flags :: enum_flags {
 
 // TODO: in.number not supported
 motion_word :: (in: Motion_In, $step: int = 1, $flags: Motion_Word_Flags = 0) -> Motion_Result {
-	using buf := context.edit.current_buffer;
+	using win := context.edit.current_window;
 	assert(step == 1 || step == -1);
-	line := *buf.lines[cursor.y];
+	line := *win.lines[cursor.y];
 	// TODO: early returns don't support number (though it doesn't matter that much, maybe its better?)
 	if step > 0 && cursor.x >= line.count {
 		return .{
@@ -262,27 +262,27 @@ motion_find_char_char :: (in: Motion_In, char: s32, $step: int, $inclusive: bool
 	if !is_printable_char(char) {
 		return .{ status = .ERROR };
 	}
-	x := context.current_buffer.cursor.x + step;
+	x := context.current_window.cursor.x + step;
 	idx := find_char_in_line(x, xx char, 0, step, in.number);
 	if idx < 0 {
 		return .{ status = .ERROR };
 	}
 	if !inclusive
 		idx -= step;
-	buf := context.edit.current_buffer;
+	win := context.edit.current_window;
 	return .{
-		start = buf.cursor.position,
-		end = .{ idx, buf.cursor.position.y },
+		start = win.cursor.position,
+		end = .{ idx, win.cursor.position.y },
 		flags = .X_ONLY,
 	};
 }
 
 motion_page_step :: (in: Motion_In, step: int) -> Motion_Result {
 	assert(step == 1 || step == -1);
-	buf := context.current_buffer;
+	win := context.current_window;
 	return .{
-		start = buf.cursor.position,
-		end = .{ x = buf.cursor.x, y = buf.cursor.y + step * buf.size.y * in.number },
+		start = win.cursor.position,
+		end = .{ x = win.cursor.x, y = win.cursor.y + step * win.size.y * in.number },
 		flags = .Y_ONLY,
 	};
 }
@@ -290,10 +290,10 @@ motion_page_step :: (in: Motion_In, step: int) -> Motion_Result {
 motion_step :: (in: Motion_In, step: Position) -> Motion_Result {
 	assert(step.x == 0 || step.y == 0);
 	assert(step.x != 0 || step.y != 0);
-	buf := context.current_buffer;
+	win := context.current_window;
 	return .{
-		start = buf.cursor.position,
-		end = buf.cursor.position + step * in.number,
+		start = win.cursor.position,
+		end = win.cursor.position + step * in.number,
 		flags = ifx step.y == 0 then .X_ONLY else .Y_ONLY,
 	};
 }
@@ -302,11 +302,11 @@ motion_step :: (in: Motion_In, step: Position) -> Motion_Result {
 // Number unsupported here, don't know how to define that..
 motion_end_of_line  :: (_: Motion_In, step: int) -> Motion_Result {
 	assert(step == 1 || step == -1);
-	buf := context.current_buffer;
-	x := ifx step < 0 then 0 else buf.lines[buf.cursor.y].count;
+	win := context.current_window;
+	x := ifx step < 0 then 0 else win.lines[win.cursor.y].count;
 	return .{
-		start = buf.cursor.position,
-		end = .{ x, buf.cursor.y },
+		start = win.cursor.position,
+		end = .{ x, win.cursor.y },
 		flags = .X_ONLY,
 	};
 }
@@ -315,26 +315,26 @@ motion_end_of_line  :: (_: Motion_In, step: int) -> Motion_Result {
 // TODO: Should define that it supports 0 number ?
 motion_end_of_file  :: (in: Motion_In, step: int) -> Motion_Result {
 	assert(step == 1 || step == -1);
-	buf := context.current_buffer;
-	y := ifx step < 0 then 0 else buf.lines.count - 1;
+	win := context.current_window;
+	y := ifx step < 0 then 0 else win.lines.count - 1;
 	if in.number > 1
 		y = in.number;
 	return .{
-		start = buf.cursor.position,
-		end = .{ buf.cursor.x, y },
+		start = win.cursor.position,
+		end = .{ win.cursor.x, y },
 		flags = .Y_ONLY,
 	};
 }
 
 motion_empty_line  :: (in: Motion_In, step: int) -> Motion_Result {
 	assert(step == 1 || step == -1);
-	buf := context.current_buffer;
+	win := context.current_window;
 	to_find := in.number;
-	y := buf.cursor.y;
+	y := win.cursor.y;
 	while true {
 		y += step;
-		is_eof := clamp(y, 0, buf.lines.count - 1) != y;
-		if is_eof || buf.lines[y].count == 0
+		is_eof := clamp(y, 0, win.lines.count - 1) != y;
+		if is_eof || win.lines[y].count == 0
 			to_find -= 1;
 		if to_find == 0
 			break;
@@ -342,8 +342,8 @@ motion_empty_line  :: (in: Motion_In, step: int) -> Motion_Result {
 			return .{ status = .ERROR };
 	}
 	return .{
-		start = buf.cursor.position,
-		end = .{ buf.cursor.x, y },
+		start = win.cursor.position,
+		end = .{ win.cursor.x, y },
 		flags = .Y_ONLY,
 	};
 }

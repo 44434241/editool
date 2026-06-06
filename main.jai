@@ -110,11 +110,17 @@ Search_State :: struct {
 	selected_match: int = 0;
 }
 
+Exec_State :: struct {
+	chars: [..]u8;
+	#overlay(chars) str: string;
+}
+
 Edit_Mode :: enum {
 	NONE :: 0;
 	INSERT;
 	COMMAND;
 	SEARCH;
+	EXEC;
 }
 
 /*
@@ -136,19 +142,21 @@ Editool :: struct {
 	flags: Flags = .RELATIVE_LINES;
 	// ...
 	main_buffer: Buffer;
-	current_buffer: *Buffer;
-	mode: Edit_Mode = .COMMAND;
+	//current_buffer: *Buffer;
+	current_window: *Window;
+	mode: Edit_Mode = .NONE;
 	should_quit: bool;
 	motions: [..]Motion;
 	commands: [..]Command;
 	command_state: Command_State;
 	search_state: Search_State;
+	exec_state: Exec_State;
 	added_chars: [..]s32; // synthentic input
 	time: Editime; // time in relation to user input
 }
 
 #add_context edit: Editool;
-#add_context using,only(command_state, current_buffer) edit;
+#add_context using,only(command_state, current_window) edit;
 
 insert_tty_input :: (chars: $T/.[ []s32, string ]) {
 	for chars
@@ -168,6 +176,8 @@ change_edit_mode :: (mode: Edit_Mode) {
 		reset_command_mode();
 	if context.edit.mode == .SEARCH
 		reset_search_mode();
+	if context.edit.mode == .EXEC
+		reset_exec_mode();
 	// set
 	context.edit.mode = mode;
 	// start
@@ -313,29 +323,30 @@ enter_search_mode :: () {
 // what do i name this??
 jump_to_search_match_offset :: (offset: int) {
 	using context.edit.search_state;
-	buf := context.edit.current_buffer;
+	win := context.current_window;
+	buf := win.buffer;
 	if match_time < buf.modify_time {
 		_update_search_matches();
 	}
 	if matches.count == 0
 		return;
-	y := buf.cursor.y;
+	y := win.cursor.y;
 	log("selected match: %\n", selected_match);
 	selected_match = matches.count - 1;
 	for matches {
-		if it.index <= buf.cursor.position {
+		if it.index <= win.cursor.position {
 			selected_match = it_index;
 		} else {
 			break;
 		}
 	}
-	if buf.cursor.position != matches[selected_match].index && offset < 0 {
+	if win.cursor.position != matches[selected_match].index && offset < 0 {
 		selected_match += 1;
 	}
 	log("selected match: %\n", selected_match);
 	selected_match = (selected_match + offset) % matches.count;
 	selected_match = (selected_match + matches.count) % matches.count;
-	move_cursor(buf, matches[selected_match].index, jump = true);
+	move_cursor(win, matches[selected_match].index, jump = true);
 }
 
 // returns true if match was *valid*
@@ -361,7 +372,7 @@ _update_search_matches :: () -> bool {
 	//indices: [..]Position;
 	//text.allocator, indices.allocator = temp;
 	MAX_MATCHES :: 10000;
-	for line, y: context.current_buffer.lines {
+	for line, y: context.current_window.lines {
 		if matches.count >= MAX_MATCHES
 			break;
 		//array_add(*text, it);
@@ -393,7 +404,8 @@ _update_search_matches :: () -> bool {
 }
 
 do_some_extra_stuff_to_the_buffer_colors :: () {
-	buf := context.current_buffer;
+	win := context.current_window;
+	buf: *Buffer = win.buffer;
 	{
 		using context.edit.search_state;
 		if match_time < buf.modify_time {
@@ -413,29 +425,30 @@ do_some_extra_stuff_to_the_buffer_colors :: () {
 		}
 	}
 	{
-		line := *buf.lines[buf.cursor.y];
-		if buf.cursor.x < line.count {
-			ch := line.chars[buf.cursor.x];
+		using win;
+		line := *lines[cursor.y];
+		if cursor.x < line.count {
+			ch := line.chars[cursor.x];
 			pos: Position = .{ -1, -1 };
 			if ch == #char "(" {
-				pos = find_char_in_buffer(")", "(",  1);
+				pos = find_char_in_window(")", "(",  1);
 			} else if ch == #char ")" {
-				pos = find_char_in_buffer("(", ")", -1);
+				pos = find_char_in_window("(", ")", -1);
 			} else if ch == #char "{" {
-				pos = find_char_in_buffer("}", "{",  1);
+				pos = find_char_in_window("}", "{",  1);
 			} else if ch == #char "}" {
-				pos = find_char_in_buffer("{", "}", -1);
+				pos = find_char_in_window("{", "}", -1);
 			} else if ch == #char "[" {
-				pos = find_char_in_buffer("]", "[",  1);
+				pos = find_char_in_window("]", "[",  1);
 			} else if ch == #char "]" {
-				pos = find_char_in_buffer("[", "]", -1);
+				pos = find_char_in_window("[", "]", -1);
 			}
 			if pos.y >= 0 {
 				log("found match at %\n", pos);
-				fg, bg := uncolor_fg_bg(buf.lines[pos.y].colors[pos.x]);
+				fg, bg := uncolor_fg_bg(lines[pos.y].colors[pos.x]);
 				fg = 7; // this seems to be black?
 				bg = 0;
-				buf.lines[pos.y].colors[pos.x] = color_fg_bg(fg, bg);
+				lines[pos.y].colors[pos.x] = color_fg_bg(fg, bg);
 			}
 		}
 	}
@@ -460,6 +473,33 @@ handle_search_char :: (ch: s32) {
 				array_add(*regex_chars, xx ch);
 	}
 	_update_search_matches();
+}
+
+reset_exec_mode :: () {
+	using context.edit.exec_state;
+	array_reset(*chars);
+}
+
+handle_exec_char :: (ch: s32) {
+	using context.edit.exec_state;
+	if ch == {
+		case KEY_ESCAPE; 
+			change_edit_mode(.COMMAND);
+			return;
+		case #char "\n";
+			change_edit_mode(.COMMAND);
+			return;
+		case KEY_BACKSPACE;
+			if chars.count > 0 {
+				pop(*chars);
+			} else {
+				change_edit_mode(.COMMAND);
+				return;
+			}
+		case;
+			if is_printable_char(ch)
+				array_add(*chars, xx ch);
+	}
 }
 
 handle_command_char :: (ch: s32) {
@@ -536,19 +576,19 @@ handle_command_char :: (ch: s32) {
 }
 
 handle_insert_char :: (ch: s32) {
-	buf := context.current_buffer;
+	win := context.current_window;
 	if is_printable_char(ch) {
-		write_char(buf, xx ch);
+		write_char(win, xx ch);
 	} else if ch == {
 		case #char "\t"; #through; 
 		case #char "\n";
-			write_char(buf, xx ch);
+			write_char(win, xx ch);
 		case KEY_ESCAPE; // escape
 			change_edit_mode(.COMMAND);
 		case KEY_SR;
-			offset_scroll(context.current_buffer, -1);
+			offset_scroll(win, -1);
 		case KEY_SF;
-			offset_scroll(context.current_buffer, 1);
+			offset_scroll(win, 1);
 		case;
 			motion: *Motion = get_motion(.[ ch ]);
 			if motion != null {
@@ -560,12 +600,12 @@ handle_insert_char :: (ch: s32) {
 }
 
 handle_char :: (ch: s32) {
-	buf := *context.edit.main_buffer;
+	win := context.edit.current_window;
 	{ 
 		// do something independant of mode?
 		if ch == {
 			case KEY_RESIZE;
-				refresh_buffer_size(context.current_buffer);
+				refresh_window_size(win);
 				return;
 		}
 		// special case rn for these!!
@@ -573,10 +613,10 @@ handle_char :: (ch: s32) {
 			if ch == {
 				// auto handled
 				case KEY_DC; // delete
-					delete_at_x_offset(buf, 0);
+					delete_at_x_offset(win, 0);
 					return;
 				case KEY_BACKSPACE;
-					delete_at_x_offset(buf, -1);
+					delete_at_x_offset(win, -1);
 					return;
 			}
 		}
@@ -590,6 +630,8 @@ handle_char :: (ch: s32) {
 				handle_command_char(ch);
 			case .SEARCH;
 				handle_search_char(ch);
+			case .EXEC;
+				handle_exec_char(ch);
 			case;
 				log("what? %", context.edit.mode);
 				was_handled = false;
@@ -792,6 +834,10 @@ add_all_commands :: () {
 		proc = #run wrap_command(#bake_arguments(change_edit_mode(mode = .SEARCH))),
 	);
 	add_command(
+		keybind = ":",
+		proc = #run wrap_command(#bake_arguments(change_edit_mode(mode = .EXEC))),
+	);
+	add_command(
 		keybind = "A",
 		proc = make_command_alias(.[ KEY_END, #char "i" ]),
 	);
@@ -857,12 +903,12 @@ add_all_commands :: () {
 	add_command(
 		keybind = "?",
 		proc = (_: Command_In) -> Command_Result {
-			buf := context.current_buffer;
-			line := *buf.lines[buf.cursor.y];
-			if buf.cursor.x < line.count {
+			using win := context.current_window;
+			line := *lines[cursor.y];
+			if cursor.x < line.count {
 				log("Under cursor:\n");
-				fg, bg := uncolor_fg_bg(line.colors[buf.cursor.x]);
-				char := line.chars[buf.cursor.x];
+				fg, bg := uncolor_fg_bg(line.colors[cursor.x]);
+				char := line.chars[cursor.x];
 				log("char: '%' (%), fg: %, bg: %\n", string.{ data = *char, count = 1 }, char, fg, bg);
 			}
 			return .{};
@@ -884,9 +930,11 @@ uncolor_fg_bg :: (col: s32) -> (fg: int, bg: int) {
 	//return COLOR_PAIR(xx ((fg + 1) + (bg + 1) * COLOR_COUNT));
 }
 
+// doesn't init any buffers!!
 editool_init :: () {
 	// logger
 	init_logger();
+	time_this("Editool init");
 	// ncurses
 	initscr();
 	noecho(); 
@@ -936,7 +984,7 @@ editool_init :: () {
 	// editool
 	add_all_motions();
 	add_all_commands();
-	reset_command_mode();
+	change_edit_mode(.COMMAND);
 	context.edit.time = 1;
 }
 
@@ -948,31 +996,18 @@ main :: () {
 	editool_init();
 	{
 		// init buffer
-		context.edit.current_buffer = *context.edit.main_buffer;
-		refresh_buffer_size(context.current_buffer);
-		array_add(*context.edit.main_buffer.lines, .{});
-		context.edit.current_buffer.syntax = get_jai_syntax();
-		//
+		filename: string = "";
 		args := get_command_line_arguments();
-		if args.count > 1 {
-			s, ok := read_entire_file(args[1]);
-			if !ok {
-				log_error("can't read file");
-				editool_deinit();
-				return;
-			}
-			write_string(*context.edit.main_buffer, s);
-			for * context.edit.main_buffer.operations {
-				it.flags |= .NO_UNDO;
-			}
-		}
-		// stuffsz
+		if args.count > 1
+			filename = args[1];
+		context.edit.main_buffer = create_buffer_from_filename(filename);
+		context.edit.current_window = create_window_from_buffer(*context.edit.main_buffer);
 	}
 	//
 	while true {
 		ch: s32 = ---;
 		if context.edit.added_chars.count == 0 {
-			draw_buffer(*context.edit.main_buffer);
+			draw_window(context.edit.current_window);
 			ch = getch();
 			context.edit.time += 1;
 		} else {
@@ -996,6 +1031,7 @@ main :: () {
 #load "commands.jai";
 #load "buffer.jai";
 #load "syntax.jai";
+#load "window.jai";
 
 #import "Basic";
 #import "File";

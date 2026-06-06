@@ -1,59 +1,56 @@
 
-
-
-Position :: struct {
-	x, y: int;
-}
-
-operator + :: (l: Position, r: Position) -> Position {
-	return .{ l.x + r.x, l.y + r.y };
-}
-
-operator * :: (l: Position, r: int) -> Position #symmetric {
-	return .{ l.x * r, l.y * r };
-}
-
-operator == :: (l: Position, r: Position) -> bool {
-	return l.x == r.x && l.y == r.y;
-}
-
-operator < :: (l: Position, r: Position) -> bool {
-	return l.y < r.y || (l.y == r.y && l.x < r.x);
-}
-
-operator <= :: (l: Position, r: Position) -> bool {
-	return l.y < r.y || (l.y == r.y && l.x <= r.x);
-}
-
-operator >= :: (l: Position, r: Position) -> bool {
-	return r <= l;
-}
-
 Line :: struct {
 	chars: [..]u8;
 	colors: [256]s32;
 	#overlay(chars.count) count: int;
 }
 
-// starts from 0/0
-Cursor :: struct {
-	using position: Position;
-	virtual_real_x: int; // this is real x, and *not* in terms of char index
-}
-
 Buffer :: struct {
+	File_Flags :: enum_flags {
+		NO_FILE; // failed to read
+		READ_ONLY; // not implemented
+		DIRTY;
+		NONE :: 0;
+	}
 	lines: [..]Line;
-	cursor: Cursor; // should belong to window, not buffer?
-	scroll: int = 0;
-	size: Position;
-	is_dirty: bool = false;
-	filename: string;
+	is_dirty: bool = false; // i dont know what this means..
 	operations: [..]Buffer_Op; // this array shouldn't get touched outside execute_buffer_operation
 	operation_index: int = -1; // index of last operation that was done, or -1
 	syntax: Syntax;
 	modify_time: Editime; // when the last modifying operation happened?
+	// file
+	filename: string;
+	file_flags: File_Flags;
+	windows: [..]*Window; // doing it like this for now..
 }
 
+create_buffer_from_filename :: (filename: string) -> Buffer {
+	time_this("Create buffer");
+	buf: Buffer;
+	buf.filename = filename;
+	//refresh_buffer_size(*buf); // from LINES, COLS
+	array_add(*buf.lines, .{});
+	buf.syntax = get_jai_syntax();
+	file_str: string;
+	file_ok: bool = false;
+	if filename {
+		file_str, file_ok = read_entire_file(filename);
+	}
+	if file_ok {
+		string_lines: []string = split(file_str, #char "\n",, allocator=temp);
+		for string_lines {
+			array_adds(*peek_pointer(buf.lines).chars, it);
+			if it_index + 1 != string_lines.count
+				array_add(*buf.lines, .{});
+		}
+	} else {
+		buf.file_flags |= .NO_FILE;
+	}
+	buf.file_flags &= ~.DIRTY;
+	return buf;
+}
+
+// this is probably slow !
 for_expansion :: (using buffer: *Buffer, body: Code, flags: For_Flags) #expand {
 	#assert flags == 0;
 	`it_index: Position = ---;
@@ -100,39 +97,48 @@ Buffer_Op :: struct {
 	begin_mode: Edit_Mode;
 }
 
-execute_buffer_operation :: (using buf: *Buffer, op: Buffer_Op) {
-	op_copy := op;
-	if op_copy.kind == .INSERT_CHARS {
-		op_copy.chars = array_copy(op_copy.chars);
-	}
-	_execute_buffer_operation(buf, *op_copy, .FILL_FOR_REVERSE);
-	assert(buf.operation_index < operations.count);
-	buf.operation_index += 1;
-	operations.count = buf.operation_index; // @Leak
-	array_add(*operations, op_copy);
-}
-
 Execute_Buffer_Op_Flags :: enum_flags {
 	FILL_FOR_REVERSE;
 	MOVE_CURSOR;
 	NONE :: 0;
 }
 
+// buffer operation THROUGH window
+execute_buffer_operation :: (win: *Window, _op: Buffer_Op) {
+	op := _op;
+	if op.kind == .INSERT_CHARS {
+		op.chars = array_copy(op.chars);
+	}
+	using buf: *Buffer = win.buffer;
+	_execute_buffer_operation(win, buf, *op, .FILL_FOR_REVERSE);
+	assert(buf.operation_index < operations.count);
+	operation_index += 1;
+	operations.count = buf.operation_index; // @Leak
+	array_add(*operations, op);
+}
+
 // leak?
-_execute_buffer_operation :: (using buf: *Buffer, op: *Buffer_Op, flags: Execute_Buffer_Op_Flags) {
+_execute_buffer_operation :: (win: *Window, using buf: *Buffer, op: *Buffer_Op, flags: Execute_Buffer_Op_Flags) {
+	using,only(cursor) win;
 	if flags & .FILL_FOR_REVERSE {
-		op.begin_cursor_position = buf.cursor.position;
+		op.begin_cursor_position = cursor.position;
 		op.begin_mode = context.edit.mode;
 		op.begin_time = context.edit.time;
 	}
+	moved_real_x := false;
 	defer {
 		if flags & .MOVE_CURSOR {
-			move_cursor(buf, op.begin_cursor_position);
+			move_cursor(win, op.begin_cursor_position);
 		}
 		buf.modify_time = context.edit.time;
 		buf.is_dirty = true;
-		normalize_cursor(buf); // i don't think i ned to do that?
-		normalize_scroll(buf);
+		buf.file_flags |= .DIRTY;
+		for buf.windows {
+			normalize_cursor(it); 
+			normalize_scroll(it);
+			if moved_real_x
+				refresh_cursor_virtual_x(it);
+		}
 	}
 	//normalize_buffer_operation(buf, op);
 	assert(op.count >= 0);
@@ -149,7 +155,7 @@ _execute_buffer_operation :: (using buf: *Buffer, op: *Buffer_Op, flags: Execute
 			}
 			if cursor.y == op.y && cursor.x >= op.x {
 				cursor.x += op.chars.count;
-				refresh_cursor_virtual_x(buf); 
+				moved_real_x = true;
 			}
 		case .DELETE_CHARS;
 			// slow
@@ -166,7 +172,7 @@ _execute_buffer_operation :: (using buf: *Buffer, op: *Buffer_Op, flags: Execute
 					cursor.x -= 1;
 				}
 			}
-			refresh_cursor_virtual_x(buf);
+			moved_real_x = true;
 		case .SPLIT_LINE;
 			assert(op.y < lines.count);
 			assert(op.x <= lines[op.y].count);
@@ -175,14 +181,14 @@ _execute_buffer_operation :: (using buf: *Buffer, op: *Buffer_Op, flags: Execute
 			array_add(*new_line.chars, .. advance(curr_line.chars, op.x));
 			curr_line.chars.count = op.x;
 			if cursor.y > op.y {
-				buf.cursor.y += 1; 
+				cursor.y += 1; 
 			} else if cursor.y == op.y && cursor.x >= op.x {
 				cursor.y += 1;
 				cursor.x -= op.x;
-				refresh_cursor_virtual_x(buf); 
+				moved_real_x = true;
 			}
 		case .MERGE_LINES;
-			assert(op.y + 1 < buf.lines.count);
+			assert(op.y + 1 < lines.count);
 			assert(op.count == 1);
 			if flags & .FILL_FOR_REVERSE {
 				op.x = lines[op.y].count;
@@ -195,7 +201,7 @@ _execute_buffer_operation :: (using buf: *Buffer, op: *Buffer_Op, flags: Execute
 			if cursor.y == op.y + 1 {
 				cursor.y -= 1;
 				cursor.x += line_len;
-				refresh_cursor_virtual_x(buf);
+				moved_real_x = true;
 			} else if cursor.y > op.y + 1 {
 				cursor.y -= 1;
 			}
@@ -210,7 +216,7 @@ _execute_buffer_operation :: (using buf: *Buffer, op: *Buffer_Op, flags: Execute
 					cursor.y += 1;
 			}
 		case .DELETE_LINES;
-			assert(op.y + op.count <= buf.lines.count);
+			assert(op.y + op.count <= lines.count);
 			if flags & .FILL_FOR_REVERSE {
 				assert(op.lines.count == 0);
 				lines: [..]string; // alloc here too
@@ -233,7 +239,7 @@ _execute_buffer_operation :: (using buf: *Buffer, op: *Buffer_Op, flags: Execute
 	}
 }
 
-undo :: (using buf: *Buffer) -> bool, Buffer_Op {
+undo :: (win: *Window) -> bool, Buffer_Op {
 	reverse_operation :: inline (op: *Buffer_Op) -> bool {
 		if op.kind == {
 			case .DELETE_LINES;
@@ -257,6 +263,7 @@ undo :: (using buf: *Buffer) -> bool, Buffer_Op {
 		}
 		return true;
 	}
+	using buf: *Buffer = win.buffer;
 	if buf.operation_index < 0
 		return false, .{};
 	op := buf.operations[buf.operation_index];
@@ -267,16 +274,17 @@ undo :: (using buf: *Buffer) -> bool, Buffer_Op {
 		log_error("Can't undo? %\n", op.kind);
 		return false, op; // this is a panic
 	}
-	_execute_buffer_operation(buf, *op, .MOVE_CURSOR);
+	_execute_buffer_operation(win, buf, *op, .MOVE_CURSOR);
 	buf.operation_index -= 1;
 	return true, op;
 }
 
-redo :: (using buf: *Buffer) -> bool, Buffer_Op {
+redo :: (win: *Window) -> bool, Buffer_Op {
+	using buf: *Buffer = win.buffer;
 	if operation_index + 1 >= operations.count
 		return false, .{};
 	op := buf.operations[buf.operation_index+1];
-	_execute_buffer_operation(buf, *op, .MOVE_CURSOR);
+	_execute_buffer_operation(win, buf, *op, .MOVE_CURSOR);
 	operation_index += 1;
 	return true, op;
 }
@@ -293,95 +301,12 @@ peek_next_operation :: (using buf: *Buffer) -> *Buffer_Op {
 	return null;
 }
 
-normalize_scroll :: (using buf: *Buffer) {
-	//
-	scroll = clamp(scroll, 0, max(0, lines.count - size.y + 1));
-	//
-	scroll = max(cursor.y - size.y + 1, scroll);
-	scroll = min(cursor.y, scroll);
-}
-
-offset_scroll :: (using buf: *Buffer, val: int) {
-	scroll += val;
-	normalize_scroll(buf);
-}
-
-set_scroll :: (using buf: *Buffer, val: int) {
-	scroll = val;
-	normalize_scroll(buf);
-}
-
-refresh_buffer_size :: (using buf: *Buffer) {
-	buf.size = .{ COLS, LINES-1 };
-	normalize_scroll(buf);
-}
-
-// maybe this should go somewhere else
-draw_buffer :: (using buf: *Buffer) {
-	{
-		_refresh_buffer_colors(buf);
-	}
-	time_this("Draw buffer");
-	clear();
-	//width, height := getmaxx(stdscr)+1, getmaxy(stdscr)+1;
-	lines_to_draw := advance(buf.lines, scroll);
-	lines_to_draw.count = min(lines_to_draw.count, size.y);
-	for lines_to_draw {
-		true_line_no := it_index + scroll;
-		line_no := true_line_no;
-		if context.edit.flags & .RELATIVE_LINES {
-			if line_no != buf.cursor.y
-				line_no = abs(line_no - buf.cursor.y);
-		}
-		line_no_str := tprint(ifx buf.cursor.y == it_index + scroll then "%   " else " %  ", formatInt(line_no, padding = #char " ", minimum_digits = 3));
-		attrset(A_BOLD);
-		mvaddnstr(xx it_index, 0, line_no_str.data, xx line_no_str.count);
-		attrset(0);
-		move(xx it_index, 5);
-		using,only(colors) it;
-		assert (it.count <= colors.count);
-		for it.chars {
-			info := _get_char_info(it);
-			// doing goofy colors here.. whatever !!
-			if context.edit.flags & .GOOFY_COLORS {
-				fg, bg := uncolor_fg_bg(colors[it_index]);
-				bg = it_index / 1 - 1;
-				colors[it_index] = color_fg_bg(fg, bg);
-			}
-			// matches are color 2
-			attrset(COLOR_PAIR(colors[it_index]));
-			if info.replaced {
-				assert(info.replaced.count == info.size);
-				addnstr(info.replaced.data, xx info.replaced.count);
-			} else {
-				assert(info.size == 1);
-				addch(it);
-			}
-			attrset(0);
-		}
-	}
-	mode_s := tprint("%", context.edit.mode);
-	if context.edit.mode == .COMMAND {
-		mode_s = tprint("%: '%'", mode_s, keybind_to_string(context.command_state.all_chars,, allocator=temp));
-	}
-	if context.edit.mode == .SEARCH || context.edit.search_state.regex_string {
-		using context.edit.search_state;
-		mode_s = tprint("% | Search: '%' (%/%)", mode_s, regex_string, min(selected_match + 1, matches.count), matches.count);
-	}
-	mvaddnstr(LINES-1, 0, mode_s.data, xx mode_s.count);
-	real_x := _get_real_x_in_line(*buf.lines[buf.cursor.y], cursor.x);
-	//
-	move(xx (cursor.y - scroll), xx (real_x + 5));
-	//
-	refresh();
-}
-
-_refresh_buffer_colors :: (using buf: *Buffer) {
+// lines is a view to buffer lines..
+_refresh_buffer_colors :: (using buf: *Buffer, ly: int, ry: int) {
 	time_this("Refresh buffer colors");
-	lines_to_draw := advance(buf.lines, scroll);
-	lines_to_draw.count = min(lines_to_draw.count, size.y);
-	for lines_to_draw {
-		true_line_no := it_index + scroll;
+	lines_to_refresh := []Line.{ data = lines.data + ly, count = ry - ly };
+	for lines_to_refresh {
+		true_line_no := it_index + ly;
 		using,only(colors) it;
 		assert (it.count <= colors.count);
 		for * colors {
@@ -397,14 +322,6 @@ _refresh_buffer_colors :: (using buf: *Buffer) {
 			matched, captures := Uniform.match(string_to_match, syntax.regex, .ANCHOR_START,, allocator=temp);
 			if !matched
 				break;
-			if true_line_no == cursor.y {
-				#if 0 {
-					log("line %", true_line_no);
-					for captures {
-						log("%: '%'\n", it_index, it);
-					}
-				}
-			}
 			// captures[0] = full
 			// captures[1] = prefix
 			// captures[2] = value + suffix
@@ -434,271 +351,11 @@ _refresh_buffer_colors :: (using buf: *Buffer) {
 	do_some_extra_stuff_to_the_buffer_colors();
 }
 
-move_cursor_y :: (using buf: *Buffer, y: int) {
-	cursor.y = clamp(y, 0, lines.count-1);
-	virtual_x := _from_real_x_in_line(*buf.lines[cursor.y], cursor.virtual_real_x);
-	cursor.x = min(virtual_x, buf.lines[cursor.y].count);
-	normalize_scroll(buf);
-}
-
-refresh_cursor_virtual_x :: (using buf: *Buffer) {
-	cursor.virtual_real_x = _get_real_x_in_line(*lines[cursor.y], cursor.x);
-}
-
-move_cursor_x :: (using buf: *Buffer, x: int) {
-	cursor.x = clamp(x, 0, lines[cursor.y].count);
-	refresh_cursor_virtual_x(buf);
-}
-
-move_cursor :: (using buf: *Buffer, x: int, y: int) {
-	move_cursor(buf, Position.{x, y});
-}
-
-move_cursor :: (using buf: *Buffer, v: Position, jump := false) {
-	move_cursor_y(buf, v.y);
-	move_cursor_x(buf, v.x);
-}
-
-offset_cursor :: (using buf: *Buffer, x: int, y: int) {
-	assert(x == 0 || y == 0);
-	if y != 0 {
-		move_cursor_y(buf, cursor.y + y);
-	}
-	if x != 0 {
-		move_cursor_x(buf, cursor.x + x);
-	}
-}
-
-// EDITING BUFFER COMMANDS
-
-write_string :: (using buf: *Buffer, s: string) {
-	str := s;
-	while str != "" {
-		for str {
-			if it == #char "\n" || it_index + 1 == str.count {
-				cut := string.{ data = str.data, count = it_index };
-				_write_normal_string(buf, cut);
-				if it == #char "\n"
-					write_char(buf, #char "\n");
-				str = advance(str, it_index+1);
-				break;
-			}
-		}
-	}
-}
-
-// no funky characters!
-_write_normal_string :: (using buf: *Buffer, s: string) {
-	execute_buffer_operation(buf, .{
-		kind = .INSERT_CHARS,
-		y = cursor.y,
-		x = cursor.x,
-		count = s.count,
-		chars = cast([]u8)s,
-	});
-}
-
-write_char :: (using buf: *Buffer, ch: u8) {
-	if ch == #char "\n" {
-		split_line(buf, buf.cursor.position);
-		return;
-	} 
-	#if 0 {
-		array_insert_at(*lines[cursor.y].chars, ch, cursor.x);
-		offset_cursor(buf, 1, 0);
-		buf.is_dirty = true;
-	} else {
-		execute_buffer_operation(buf, .{
-			kind = .INSERT_CHARS,
-			y = cursor.y,
-			x = cursor.x,
-			count = 1,
-			chars = .[ ch ],
-		});
-	}
-}
-
-merge_lines_after :: (using buf: *Buffer, line_y: int) {
-	if line_y < 0
-		return;
-	if line_y + 1 >= buf.lines.count
-		return;
-	#if 0 {
-		line: *Line = *lines[line_y];
-		next_line: *Line = *lines[line_y+1];
-		array_add(*line.chars, .. next_line.chars);
-		array_ordered_remove_by_index(*lines, line_y+1); // @Leak
-		buf.is_dirty = true;
-		// ... update cursor
-	} else {
-		execute_buffer_operation(buf, .{
-			kind = .MERGE_LINES,
-			y = line_y,
-			count = 1, // not used
-		});
-	}
-}
-
-// this should change to something else (x_offset argument is akward)
-delete_at_x_offset :: (using buf: *Buffer, x_offset: int) {
-	assert(x_offset == 0 || x_offset == -1);
-	x := cursor.x + x_offset;
-	if x < 0 {
-		if cursor.y == 0
-			return;
-		//old_count := lines[cursor.y-1].count;
-		merge_lines_after(buf, cursor.y-1);
-		//offset_cursor(buf, 0, -1);
-		//move_cursor_x(buf, old_count);
-	} else if x >= lines[cursor.y].count {
-		merge_lines_after(buf, cursor.y);
-	} else {
-		execute_buffer_operation(buf, .{
-			kind = .DELETE_CHARS,
-			y = cursor.y,
-			x = x,
-			count = 1,
-		});
-	}
-}
-
-delete_range_in_line :: (using buf: *Buffer, y: int, lx: int, rx: int) {
-	if clamp(y, 0, lines.count-1) != y
-		return;
-	if lx > rx
-		lx, rx = rx, lx;
-	line := *lines[y];
-	lx = clamp(lx, 0, line.count-1);
-	rx = clamp(rx, 0, line.count-1);
-	#if 0 {
-		for < lx..rx {
-			array_ordered_remove_by_index(*line.chars, it);
-			if cursor.y == y && cursor.x > it {
-				cursor.x -= 1;
-			}
-		}
-		normalize_cursor_x(buf);
-		buf.is_dirty = true;
-	} else {
-		execute_buffer_operation(buf, .{
-			kind = .DELETE_CHARS,
-			y = y,
-			x = lx,
-			count = rx - lx + 1,
-		});
-	}
-}
-
-delete_line_range :: (using buf: *Buffer, l: int, r: int) {
-	l = clamp(l, 0, buf.lines.count-1);
-	r = clamp(r, 0, buf.lines.count-1);
-	if l > r
-		l, r = r, l;
-	delete_lines(buf, l, r - l + 1);
-	// not setting dirty
-}
-
-delete_lines :: (using buf: *Buffer, y: int, count: int = 1) {
-	y = clamp(y, 0, lines.count-1);
-	count = min(count, lines.count - y + 1);
-	#if 0 {
-		for < y..y+count-1 { 
-			array_ordered_remove_by_index(*lines, it); // @Leak
-			if it < cursor.y {
-				cursor.y -= 1;
-			}
-		}
-		if lines.count == 0
-			array_add(*lines);
-		normalize_cursor(buf);
-		buf.is_dirty = true;
-	} else {
-		execute_buffer_operation(buf, .{
-			kind = .DELETE_LINES,
-			y = y,
-			count = count,
-		});
-	}
-}
-
-split_line :: (using buf: *Buffer, pos: Position) {
-	// probably validated...
-	#if 0 {
-		new_line: *Line = array_insert_at(*lines, pos.y+1);
-		curr_line: *Line = *lines[pos.y];
-		array_add(*new_line.chars, .. advance(curr_line.chars, pos.x));
-		curr_line.chars.count = cursor.x;
-		if buf.cursor.y > pos.y {
-			buf.cursor.y += 1; // cursors line didn't change, so i can just add
-		} else if buf.cursor.y == pos.y && buf.cursor.x >= pos.x {
-			move_cursor(buf, .{ buf.cursor.x - pos.x, buf.cursor.y + 1 });
-		}
-		buf.is_dirty = true;
-	} else {
-		execute_buffer_operation(buf, .{
-			kind = .SPLIT_LINE,
-			y = pos.y,
-			x = pos.x,
-		});
-	}
-}
-
-// EDITING BUFFER COMMANDS END
-
-// not sure from where this is called?
-normalize_cursor_x :: (using buf: *Buffer) {
-	move_cursor_x(buf, min(buf.cursor.x, buf.lines[buf.cursor.y].count));
-}
-
-// not sure from where this is called?
-normalize_cursor :: (using buf: *Buffer) {
-	cursor.y = clamp(cursor.y, 0, lines.count-1);
-	normalize_cursor_x(buf);
-}
-
-// this is kinda a helper
-// (count is number)
-move_cursor :: (res: Motion_Result, count: int = 1) {
-	if res.status != .OK
-		return;
-	buf := context.current_buffer;
-	if res.start.x == res.end.x {
-		y := buf.cursor.y + (res.end.y - buf.cursor.y) * count;
-		move_cursor_y(buf, y);
-	} else if res.start.y == res.end.y {
-		x := buf.cursor.x + (res.end.x - buf.cursor.x) * count;
-		move_cursor_x(buf, x);
-	} else {
-		// count not supported
-		move_cursor(buf, res.end);
-	}
-}
+// not sure how i wanna use this buffer char info yet..
 
 Buffer_Char_Info :: struct {
 	size: int = 1;
 	replaced: string; // 
-}
-
-_get_real_x_in_line :: (line: *Line, x: int) -> int {
-	if x == 0
-		return 0;
-	ret: int = 0;
-	for 0..min(x-1, line.count-1) {
-		ret += _get_char_info(line.chars[it]).size;
-	}
-	//ret += 1; // the NEXT char counts as size 1
-	return ret;
-}
-
-_from_real_x_in_line :: (line: *Line, real_x: int) -> int {
-	for line.chars {
-		if real_x <= 0
-			return it_index;
-		real_x -= _get_char_info(it).size;
-		if real_x < 0
-			return it_index;
-	}
-	return line.chars.count;
 }
 
 _get_char_info :: (ch: u8) -> Buffer_Char_Info {
@@ -722,5 +379,7 @@ _get_char_info :: (ch: u8) -> Buffer_Char_Info {
 	// defaults:
 	return .{};
 }
+
+#scope_file
 
 #import "Math";
