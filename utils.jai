@@ -28,12 +28,13 @@ array_adds :: (a: *[..]u8, s: string) {
 	array_add(a, .. cast([]u8)s);
 }
 
-time_this :: (name: string) #expand {
+time_this :: (name: string, really_time := true) #expand {
 	start_time := current_time_monotonic();
 	`defer {
 		end_time := current_time_monotonic();
 		duration := to_float64_seconds(end_time - start_time);
-		log("% took % ms", name, duration * 1000);
+		if really_time
+			log("TIME: % took % ms", name, duration * 1000);
 	}
 }
 
@@ -51,6 +52,15 @@ in_range_inclusive :: (v: int, l: int, r: int) -> bool {
 // exclusive int implies [l, r)
 in_range_exclusive :: (v: int, l: int, r: int) -> bool {
 	return l <= v && v < r;
+}
+
+peek :: (s: string) -> u8 {
+	return peek(cast([]u8)s);
+}
+
+default_of :: inline ($T: Type) -> T {
+	v: T;
+	return v;
 }
 
 #scope_file

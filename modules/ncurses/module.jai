@@ -58,8 +58,21 @@ A_VERTICAL :: #run NCURSES_BITS(1,22);
 
 // THESE ARE NOT FROM NCURSES
 
+KEY_ESCAPE : s32 : 0x1b;
+
+// ctrl and alt keys
+// alt + 2 = ctrl
+// ctrl + 2 = ctrl | alt
+// Seems like alt is 2 mask and ctrl is 4 
+// Shift is 1 mask, but might get a different key if just shift is pressed...
+// (actually they're not rly masks.. more like addition)
+
 KEY_CRIGHT : s32 : 569;
 KEY_CLEFT  : s32 : 554;
 KEY_CUP    : s32 : 575;
 KEY_CDOWN  : s32 : 534;
-KEY_ESCAPE : s32 : 0x1b;
+
+KEY_ARIGHT : s32 : 567;
+KEY_ALEFT  : s32 : 552;
+KEY_AUP    : s32 : 573;
+KEY_ADOWN  : s32 : 532;

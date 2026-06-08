@@ -1,4 +1,17 @@
 
+// indentation
+// (saving files duh)
+// ? fast matching
+// buffers for status lines..
+//
+// Thinking: some kind of enter-insert-mode command that doesn't reset running dot command
+// ^ makes dot function as a macro 
+// Same for leaving command mode without reseting running dot command.
+// ...
+// multiple clipboards + definition of a system clipboard
+// more options for search/replace 
+
+
 // hmm..
 Keybind :: struct {
 	chars: []s32;
@@ -14,11 +27,14 @@ to_keybind :: inline (kb: $T/.[string, []s32]) -> Keybind {
 	};
 }
 
+// This is temp allocated.. im not sure why i'd want it to be normally allocated!
+// If it's in an error message, it's used as an argument.
 keybind_to_string :: (kb: $T/.[Keybind, []s32, [..]s32]) -> string {
 	chars := #ifx T == Keybind then kb.chars else kb;
 	ret: [..]u8;
+	ret.allocator = temp;
 	for chars {
-		s := to_string(keyname(it));
+		s := to_string(keyname(it),, allocator=temp);
 		if s.count > 1
 			array_add(*ret, "<");
 		for s
@@ -40,7 +56,7 @@ file_logger :: (message: string, data: *void, info: Log_Info) {
 }
 
 init_logger :: () {
-	LOGFILE :: "/dev/pts/0";
+	LOGFILE :: "/dev/pts/2";
 	f := New(File); // leak
 	f.* = file_open(LOGFILE, for_writing = true);
 	assert(is_valid(f));
@@ -98,39 +114,17 @@ Command_State :: struct {
 	waiting_for_char: [..]Waiting_For_Char;
 }
 
-Search_State :: struct {
-	regex_chars: [..]u8;
-	#overlay(regex_chars) regex_string: string;
-	Match :: struct {
-		index: Position;
-		count: int;
-	}
-	matches: [..]Match;
-	match_time: Editime = -1;
-	selected_match: int = 0;
-}
-
-Exec_State :: struct {
-	chars: [..]u8;
-	#overlay(chars) str: string;
-}
-
-Edit_Mode :: enum {
+Edit_Mode :: enum int {
 	NONE :: 0;
 	INSERT;
 	COMMAND;
-	SEARCH;
 	EXEC;
+	NOP; // different to none
 }
 
-/*
-Any_Status :: enum {
-	OK :: 0,
-	ERROR,
-	CONTINUE_CHAR,
-	CONTINUE_MOTION,
+Clipboard :: struct {
+	lines: []string; // count > 0 when valid
 }
-*/
 
 Editime :: #type,distinct int;
 
@@ -139,24 +133,72 @@ Editool :: struct {
 		RELATIVE_LINES;
 		GOOFY_COLORS;
 	}
+	// system
 	flags: Flags = .RELATIVE_LINES;
-	// ...
-	main_buffer: Buffer;
-	//current_buffer: *Buffer;
-	current_window: *Window;
-	mode: Edit_Mode = .NONE;
 	should_quit: bool;
-	motions: [..]Motion;
-	commands: [..]Command;
-	command_state: Command_State;
-	search_state: Search_State;
-	exec_state: Exec_State;
+	should_reset_edit_mode: bool;
 	added_chars: [..]s32; // synthentic input
 	time: Editime; // time in relation to user input
+	mode: Edit_Mode = .NONE;
+	// WINDOWS
+	buffer_window: *Window; // current buffer window
+	container_window: *Window; // might be null? if floating is active
+	next_window: *Window = null;
+	windows: [..]*Window;
+	floating_window: *Window = null;
+	root: *Window; // .CONTAINER
+	second_root: *Window = null; // also .CONTAINER
+	windows_to_destroy: [..]*Window;
+	windows_to_force_destroy: [..]*Window;
+	floating_nwindow: *WINDOW; 
+	// BUFFERS
+	buffers: [..]*Buffer;
+	// commands n shit
+	motions: [..]Motion;
+	commands: [..]Command;
+	exec_commands: [..]Exec_Command;
+	// commands n shit 2
+	command_state: Command_State;
+	search: Search_State;
+	#overlay(search) search_state: Search_State;
+	exec: Exec;
+	// TESTING
+	alerts: [..]string; // cleared after window draw !
+	//
+	current_dot_command: [..]s32;
+	next_dot_command: [..]s32;
+	clipboard: Clipboard;
+	//collecting_next_dot_command := false; // if mode == .INSERT
 }
 
+push_dot_command :: () {
+	using context.edit;
+	log("update dot command (% -> %)", current_dot_command, next_dot_command);
+	log_stack_trace(context.stack_trace);
+	if next_dot_command.count > 0 {
+		array_reset(*current_dot_command);
+		current_dot_command = next_dot_command;
+		{
+			empty: [..]s32;
+			next_dot_command = empty;
+		}
+	}
+}
+
+// internal ! and very bad
+edit_error :: (fmt: string, args: .. Any) {
+	edit_alert(fmt, .. args, is_internal = true);
+} @PrintLike
+
+// assumed to be a warning
+edit_alert :: (fmt: string, args: .. Any, is_internal := false) {
+	s := sprint(fmt, .. args);
+	log_error("ALERT: %", s);
+	array_add(*context.edit.alerts, s);
+} @PrintLike
+
 #add_context edit: Editool;
-#add_context using,only(command_state, current_window) edit;
+#add_context using,only(command_state, container_window, buffer_window, search, exec) edit;
 
 insert_tty_input :: (chars: $T/.[ []s32, string ]) {
 	for chars
@@ -168,26 +210,54 @@ is_printable_char :: (ch: s32) -> bool {
 	return 0x20 <= ch && ch < 0x7f;
 }
 
+is_alnum :: (ch: s32) -> bool {
+	return is_printable_char(ch) && is_alnum(cast(u8)ch);
+}
+
+reset_edit_mode :: () {
+	context.edit.should_reset_edit_mode = true;
+}
+
 change_edit_mode :: (mode: Edit_Mode) {
-	if context.edit.mode == mode
+	_change_edit_mode(mode, _force = false);
+}
+
+_change_edit_mode :: (mode: Edit_Mode, _force: bool) {
+	if !_force && context.edit.mode == mode
 		return;
 	// reset
 	if context.edit.mode == .COMMAND
-		reset_command_mode();
-	if context.edit.mode == .SEARCH
-		reset_search_mode();
+		exit_command_mode();
 	if context.edit.mode == .EXEC
-		reset_exec_mode();
-	// set
+		exit_exec_mode();
+	if context.buffer_window != null {
+		// hacky...
+		if mode == .INSERT && get_current_buffer().caps & .MODE_INSERT == 0 {
+			mode = .COMMAND;
+		}
+		if mode == .COMMAND && get_current_buffer().caps & .MODE_COMMAND == 0 {
+			mode = .INSERT;
+		}
+		if mode == .INSERT && get_current_buffer().caps & .MODE_INSERT == 0 {
+			mode = .NOP;
+		}
+	}
 	context.edit.mode = mode;
 	// start
-	if mode == .COMMAND
+	if context.edit.mode == .COMMAND
 		enter_command_mode();
-	if mode == .SEARCH
-		enter_search_mode();
 }
 
-reset_command_mode :: () {
+enter_command_mode :: () {
+	push_dot_command();
+	handle_command_step();
+}
+
+exit_command_mode :: () {
+	_reset_command_mode();
+}
+
+_reset_command_mode :: () {
 	log("resetting command mode");
 	using context.command_state;
 	array_reset(*waiting_for_char);
@@ -195,12 +265,8 @@ reset_command_mode :: () {
 	array_reset(*all_chars); 
 	waiting_chars_reset(*context.command_state); 
 	if context.edit.mode == .COMMAND {
-		enter_command_mode();
+		handle_command_step();
 	}
-}
-
-enter_command_mode :: () {
-	handle_command_step();
 }
 
 keybind_matches :: (keybind: Keybind, chars: $T/.[[]s32, string]) -> bool {
@@ -223,7 +289,7 @@ keybind_matches_start :: (keybind: Keybind, chars: []s32) -> bool {
 	return true;
 }
 
-
+// optionally returns command result, if any was executed
 _handle_motion_result :: (motion: *Motion, in: Motion_In, res: Motion_Result, waiting: *Waiting_For_Motion,
 		waiting_idx: int, can_char := false) -> (should_reset: bool) {
 	if res.status == {
@@ -234,7 +300,7 @@ _handle_motion_result :: (motion: *Motion, in: Motion_In, res: Motion_Result, wa
 			return _handle_command_result(waiting.command, waiting.command_in, command_res, can_char = can_char);
 		case .CONTINUE_CHAR;
 			if !can_char {
-				log_error("Motion cannot continue char!\n");
+				edit_alert("Motion cannot continue char!\n");
 				return true;
 			}
 			array_add(*context.command_state.waiting_for_char, .{
@@ -245,23 +311,44 @@ _handle_motion_result :: (motion: *Motion, in: Motion_In, res: Motion_Result, wa
 			});
 			return false;
 		case .ERROR;
-			log_error("Motion failed: %\n", res.error_message);
+			if res.error_message
+				edit_alert("Motion '%' failed: %", keybind_to_string(motion.keybind), res.error_message);
+			else
+				edit_alert("Motion '%' failed", keybind_to_string(motion.keybind));
 			return true;
 	}
-	log_error("BAD motion status: %\n", res.status);
+	edit_alert("BAD motion status: %\n", res.status);
 	return true;
 }
 
 _handle_command_result :: (command: *Command, in: Command_In, res: Command_Result, can_motion := false, can_char := false) -> (should_reset: bool) {
 	if res.status == {
 		case .OK;
+			// fails if multiple commands are executed at once?
+			//assert(context.edit.next_dot_command.count == 0); 
+			if res.inserted_chars {
+				array_reset(*context.edit.next_dot_command);
+			}
+			if context.edit.added_chars.count == 0 {
+				if !res.modifies_dot {
+					array_reset(*context.edit.next_dot_command);
+				} else {
+					if context.edit.mode == .COMMAND {
+						push_dot_command();
+					}
+				}
+			}
 			return true;
 		case .ERROR;
-			log_error("Command failed: %\n", res.error_message);
+			array_reset(*context.edit.next_dot_command);
+			if res.error_message
+				edit_alert("Command '%' failed: %", keybind_to_string(command.keybind), res.error_message);
+			else
+				edit_alert("Command '%' failed", keybind_to_string(command.keybind));
 			return true;
 		case .CONTINUE_MOTION;
 			if !can_motion {
-				log_error("Command cannot continue motion!");
+				edit_alert("Command cannot continue motion!");
 				return true;
 			}
 			array_add(*context.command_state.waiting_for_motion, .{
@@ -272,7 +359,7 @@ _handle_command_result :: (command: *Command, in: Command_In, res: Command_Resul
 			return false;
 		case .CONTINUE_CHAR;
 			if !can_char {
-				log_error("Command cannot continue char!");
+				edit_alert("Command cannot continue char!");
 				return true;
 			}
 			array_add(*context.command_state.waiting_for_char, .{
@@ -281,16 +368,46 @@ _handle_command_result :: (command: *Command, in: Command_In, res: Command_Resul
 				command_in = in,
 			});
 			return false;
+		case;
+			array_reset(*context.edit.next_dot_command);
+			edit_alert("BAD command status: %\n", res.status);
+			return true;
 	}
-	log_error("BAD command status: %\n", res.status);
-	return true;
 }
 
-// handles command step but only for commands (not waiting motions or chars or anything else)
-// returns true if it should continue
+// At the end there's either.
+// 1. No command matched, but there's possible commands waiting. Don't reset.
+// 2. No command matched, and there's no more commands waiting. Reset.
+// 3. A command matched, but it should continue. Doesn't count as a match. Don't reset.
+// 4. A command matched, but it failed. Reset.
+// 5. A command matched and it was ok. Should keep it's result. Reset.
+
+// Handles command step but only for commands (not waiting motions or chars or anything else).
+// Returns true if it should continue.
+// Now with commands from the buffer !
 handle_command_step :: () -> (should_reset: bool, found_command: bool) {
 	found_command := false;
 	should_reset := true;
+	{
+		win := get_selected_window_of_kind(.BUFFER);
+		if win {
+			// thats fairly simple actually.....
+			for * win.buffer.commands {
+				if keybind_matches(it.keybind, context.command_state.chars) {
+					in := Command_In.{ number = max(1, context.command_state.number) };
+					res := it.proc(in); 
+					log("Found command '%' - %\n", keybind_to_string(it.keybind), res);
+					reset := _handle_command_result(it, in, res, can_motion = true, can_char = true);
+					should_reset &&= reset;
+					found_command = true;
+					break;
+				}
+				if keybind_matches_start(it.keybind, context.command_state.chars) {
+					should_reset = false;
+				}
+			}
+		}
+	}
 	for * context.edit.commands {
 		if keybind_matches(it.keybind, context.command_state.chars) {
 			in := Command_In.{ number = max(1, context.command_state.number) };
@@ -309,123 +426,30 @@ handle_command_step :: () -> (should_reset: bool, found_command: bool) {
 	return should_reset, found_command;
 }
 
-reset_search_mode :: () {
-}
-
-enter_search_mode :: () {
-	using context.edit.search_state;
-	array_reset(*regex_chars);
-	array_reset(*matches);
-	selected_match = 0;
-}
-
-// updates matches only when you jump actually
-// what do i name this??
-jump_to_search_match_offset :: (offset: int) {
-	using context.edit.search_state;
-	win := context.current_window;
-	buf := win.buffer;
-	if match_time < buf.modify_time {
-		_update_search_matches();
-	}
-	if matches.count == 0
-		return;
-	y := win.cursor.y;
-	log("selected match: %\n", selected_match);
-	selected_match = matches.count - 1;
-	for matches {
-		if it.index <= win.cursor.position {
-			selected_match = it_index;
-		} else {
-			break;
-		}
-	}
-	if win.cursor.position != matches[selected_match].index && offset < 0 {
-		selected_match += 1;
-	}
-	log("selected match: %\n", selected_match);
-	selected_match = (selected_match + offset) % matches.count;
-	selected_match = (selected_match + matches.count) % matches.count;
-	move_cursor(win, matches[selected_match].index, jump = true);
-}
-
-// returns true if match was *valid*
-_update_search_matches :: () -> bool {
-	using context.edit.search_state;
-	array_reset(*matches);
-	selected_match = -1;
-	if regex_string.count == 0
-		return false;
-	time_this("Search");
-	full_regex_string := tprint("(.*+)(%)", regex_string); // non-greedy whatever
-	// @UniformBug with how .NonGreedy works, i think? (inverts instead of choosing a default)
-	//compile_flags := (.LikePerl | .NonGreedy | .MatchNL) & ~.OneLine;
-	compile_flags: Uniform.ParseFlags = (.LikePerl | .NonGreedy);
-	re, ok := Uniform.compile(full_regex_string, compile_flags,, allocator=temp);
-	if !ok {
-		log_error("Regex compile failed");
-		return false;
-	}
-	match_time = context.edit.time;
-	defer Uniform.uninit(*re,,allocator=temp);
-	//text: [..]u8;
-	//indices: [..]Position;
-	//text.allocator, indices.allocator = temp;
-	MAX_MATCHES :: 10000;
-	for line, y: context.current_window.lines {
-		if matches.count >= MAX_MATCHES
-			break;
-		//array_add(*text, it);
-		//array_add(*indices, it_index);
-		s: string = cast(string)line.chars;
-		idx := 0;
-		while matches.count < MAX_MATCHES { // limit 
-			ok, m := Uniform.match(s, re, .ANCHOR_START);
-			if !ok
-				break;
-			prefix_str := m[1];
-			match_str := m[2];
-			if match_str.count == 0 {
-				log_error("what");
-				break;
-			}
-			idx += prefix_str.count;
-			defer idx += match_str.count;
-			vec2_idx := Position.{ idx, y};
-			array_add(*matches, .{
-				index = vec2_idx,
-				count = match_str.count,
-			});
-			log("Found match at %: %", vec2_idx, match_str);
-			s = advance(s, prefix_str.count + match_str.count);
-		}
-	}
-	return true;
-}
-
-do_some_extra_stuff_to_the_buffer_colors :: () {
-	win := context.current_window;
+do_some_extra_stuff_to_the_buffer_colors :: (win: *Window) {
 	buf: *Buffer = win.buffer;
 	{
-		using context.edit.search_state;
-		if match_time < buf.modify_time {
-			_update_search_matches();
-		}
-		for matches {
-			y := it.index.y;
-			line := *buf.lines[it.index.y];
-			if it.index.x + it.count > line.count {
-				log_error("Ruh roh, something went wrong with search (%)", it);
+		//using context.edit.search_state;
+		maybe_update_search_matches(win);
+		for buf.search_matches.matches {
+			y := it.position.y;
+			if it.position.y >= buf.lines.count {
+				log_error("Ruh roh, something went wrong with search y (%)", it);
+				continue;
 			}
-			for it.index.x..min(line.count, it.index.x + it.count)-1 {
-				fg, bg := uncolor_fg_bg(line.colors[it]);
-				bg = 2;
-				line.colors[it] = color_fg_bg(fg, bg);
+			line := *buf.lines[it.position.y];
+			if it.position.x + it.count > line.count {
+				log_error("Ruh roh, something went wrong with search x (%)", it);
+				continue;
+			}
+			for it.position.x..min(line.count, it.position.x + it.count)-1 {
+				line.modifiers[it].bg_color = 2;
 			}
 		}
 	}
-	{
-		using win;
+	if win.kind == .BUFFER && win.buffer == context.buffer_window.buffer {
+		using,except(cursor) win;
+		cursor := context.buffer_window.cursor;
 		line := *lines[cursor.y];
 		if cursor.x < line.count {
 			ch := line.chars[cursor.x];
@@ -444,61 +468,36 @@ do_some_extra_stuff_to_the_buffer_colors :: () {
 				pos = find_char_in_window("[", "]", -1);
 			}
 			if pos.y >= 0 {
-				log("found match at %\n", pos);
-				fg, bg := uncolor_fg_bg(lines[pos.y].colors[pos.x]);
-				fg = 7; // this seems to be black?
-				bg = 0;
-				lines[pos.y].colors[pos.x] = color_fg_bg(fg, bg);
+				mod := *lines[pos.y].modifiers[pos.x];
+				mod.fg_color = 7;
+				mod.bg_color = 0;
+				//fg, bg := uncolor_fg_bg(lines[pos.y].colors[pos.x]);
+				//fg = 7; // this seems to be black?
+				//bg = 0;
+				//lines[pos.y].colors[pos.x] = color_fg_bg(fg, bg);
 			}
 		}
 	}
-}
-
-handle_search_char :: (ch: s32) {
-	using context.edit.search_state;
-	if ch == {
-		case KEY_ESCAPE; #through;
-		case #char "\n";
-			change_edit_mode(.COMMAND);
-			return;
-		case KEY_BACKSPACE;
-			if regex_chars.count > 0 {
-				pop(*regex_chars);
-			} else {
-				change_edit_mode(.COMMAND);
-				return;
+	{
+		using buf;
+		for buf.marks {
+			if it.position.y >= lines.count {
+				log_error("fucky wucky mark (y)");
+				continue;
 			}
-		case;
-			if is_printable_char(ch)
-				array_add(*regex_chars, xx ch);
-	}
-	_update_search_matches();
-}
-
-reset_exec_mode :: () {
-	using context.edit.exec_state;
-	array_reset(*chars);
-}
-
-handle_exec_char :: (ch: s32) {
-	using context.edit.exec_state;
-	if ch == {
-		case KEY_ESCAPE; 
-			change_edit_mode(.COMMAND);
-			return;
-		case #char "\n";
-			change_edit_mode(.COMMAND);
-			return;
-		case KEY_BACKSPACE;
-			if chars.count > 0 {
-				pop(*chars);
-			} else {
-				change_edit_mode(.COMMAND);
-				return;
+			line := *lines[it.position.y];
+			if it.position.x > line.count {
+				log_error("fucky wucky mark (x)");
+				continue;
 			}
-		case;
-			if is_printable_char(ch)
-				array_add(*chars, xx ch);
+			mod := *line.modifiers[it.position.x];
+			mod.fg_color = 7;
+			mod.bg_color = 0;
+			//fg, bg := uncolor_fg_bg(line.colors[it.position.x]);
+			//fg = 7; // this seems to be black?
+			//bg = 0;
+			//line.colors[it.position.x] = color_fg_bg(fg, bg);
+		}
 	}
 }
 
@@ -568,15 +567,33 @@ handle_command_char :: (ch: s32) {
 		should_reset = false;
 	}
 	if should_reset {
-		if !found_command
-			log("Didn't find command: %\n", keybind_to_string(context.command_state.chars,, allocator=temp));
-		reset_command_mode();
+		if !found_command {
+			array_reset(*context.edit.next_dot_command);
+			should_alert := true;
+			if context.command_state.chars.count == 1 && context.command_state.chars[0] == KEY_ESCAPE
+				should_alert = false;
+				
+			// doesn't print numbers here..
+			if should_alert
+				edit_alert("Didn't find command: '%'\n", keybind_to_string(context.command_state.chars,, allocator=temp));
+		} else { // found_command
+		}
+		_reset_command_mode();
 		return;
 	}
 }
 
 handle_insert_char :: (ch: s32) {
-	win := context.current_window;
+	win := context.buffer_window;
+	for * win.buffer.insert_commands {
+		if keybind_matches(it.keybind, .[ch]) {
+			// calling bad commands here might mess up !!
+			in: Command_In = .{};
+			assert(it.proc != null);
+			res := it.proc(in);
+			_handle_command_result(it, in, res);
+		}
+	}
 	if is_printable_char(ch) {
 		write_char(win, xx ch);
 	} else if ch == {
@@ -594,19 +611,33 @@ handle_insert_char :: (ch: s32) {
 			if motion != null {
 				move_cursor(motion.proc(.{}));
 			} else {
-				log("Unhandled insert char: %\n", keybind_to_string(.[ ch ],, allocator=temp));
+				edit_alert("Unhandled insert char: %\n", keybind_to_string(.[ ch ],, allocator=temp));
 			}
 	}
 }
 
+FLOATING_PADDING :: Vec2i.{ 20, 10 };
+
 handle_char :: (ch: s32) {
-	win := context.edit.current_window;
+	win := context.edit.buffer_window;
 	{ 
 		// do something independant of mode?
 		if ch == {
 			case KEY_RESIZE;
-				refresh_window_size(win);
+				refresh_window_size(context.edit.root, force = true);
+				{
+					p := FLOATING_PADDING;
+					w := context.edit.floating_nwindow;
+					wresize(w, 1, 1);
+					wmove(w, 0, 0);
+					wmove(w, xx p.y, xx p.x);
+					wresize(w, LINES - xx (p.y * 2), xx(COLS - p.x * 2));
+				}
 				return;
+		}
+		if context.edit.mode == .COMMAND || 
+				(context.edit.mode == .INSERT && context.edit.next_dot_command.count > 0) {
+			array_add(*context.edit.next_dot_command, ch);
 		}
 		// special case rn for these!!
 		if context.edit.mode == .INSERT || context.edit.mode == .COMMAND {
@@ -624,23 +655,28 @@ handle_char :: (ch: s32) {
 	{
 		was_handled := true;
 		if context.edit.mode == {
+			case .NOP;
+				// pass
 			case .INSERT;
 				handle_insert_char(ch);
 			case .COMMAND;
 				handle_command_char(ch);
-			case .SEARCH;
-				handle_search_char(ch);
+			//case .SEARCH;
+				//handle_search_char(ch);
 			case .EXEC;
 				handle_exec_char(ch);
 			case;
-				log("what? %", context.edit.mode);
+				edit_alert("Unhandled edit mode: %", context.edit.mode);
 				was_handled = false;
 		}
 		if was_handled
 			return;
 	}
-	log("Unhandled char %\n", ch);
+	edit_alert("Unhandled char %\n", ch);
 }
+
+// these 3 add_* are in main instead of their files...
+// thats fine?
 
 add_motion :: inline ($keybind: $T/.[string, []s32], proc: Motion.Proc, char_proc: Motion.Char_Proc = null) {
 	array_add(*context.edit.motions, .{
@@ -664,258 +700,7 @@ add_command :: inline (name: string = "", keybind: $T/.[string, []s32],
 	});
 }
 
-add_all_motions :: () {
-	// MOTIONS
-	add_motion(
-		keybind = "w",
-		proc = #bake_arguments(motion_word(step = 1, flags = .NONE)),
-	);
-	add_motion(
-		keybind = "W",
-		proc = #bake_arguments(motion_word(step = 1, flags = .FULL)),
-	);
-	add_motion(
-		keybind = "b",
-		proc = #bake_arguments(motion_word(step = -1, flags = .NONE)),
-	);
-	add_motion(
-		keybind = "B",
-		proc = #bake_arguments(motion_word(step = -1, flags = .FULL)),
-	);
-	add_motion(
-		keybind = "i]",
-		proc = #bake_arguments(motion_inner(ch = #char "]", inclusive = false)),
-	);
-	add_motion(
-		keybind = "i)",
-		proc = #bake_arguments(motion_inner(ch = #char ")", inclusive = false)),
-	);
-	add_motion(
-		keybind = "i\"",
-		proc = #bake_arguments(motion_inner(ch = #char "\"", inclusive = false)),
-	);
-	add_motion(
-		keybind = "iw",
-		proc = #bake_arguments(motion_inner(ch = #char "w", inclusive = false)),
-	);
-	add_motion(
-		keybind = "iW",
-		proc = #bake_arguments(motion_inner(ch = #char "W", inclusive = false)),
-	);
-	add_motion(
-		keybind = "a]",
-		proc = #bake_arguments(motion_inner(ch = #char "]", inclusive = true)),
-	);
-	add_motion(
-		keybind = "a)",
-		proc = #bake_arguments(motion_inner(ch = #char ")", inclusive = true)),
-	);
-	add_motion(
-		keybind = "a\"",
-		proc = #bake_arguments(motion_inner(ch = #char "\"", inclusive = true)),
-	);
-	/*
-	add_motion(
-		keybind = "aw",
-		proc = #bake_arguments(motion_inner(ch = #char "w", inclusive = true)),
-	});
-	add_motion(
-		keybind = "aW",
-		proc = #bake_arguments(motion_inner(ch = #char "W", inclusive = true)),
-	);
-	*/
-	add_motion(
-		keybind = "j",
-		proc = #bake_arguments(motion_step(step = .{ y = 1 })),
-	);
-	add_motion(
-		keybind = "k",
-		proc = #bake_arguments(motion_step(step = .{ y = -1 })),
-	);
-	add_motion(
-		keybind = .[ KEY_LEFT ],
-		proc = #bake_arguments(motion_step(step = .{ x = -1 })),
-	);
-	add_motion(
-		keybind = .[ KEY_RIGHT ],
-		proc = #bake_arguments(motion_step(step = .{ x = 1 })),
-	);
-	add_motion(
-		keybind = .[ KEY_UP ],
-		proc = #bake_arguments(motion_step(step = .{ y = -1 })),
-	);
-	add_motion(
-		keybind = .[ KEY_DOWN ],
-		proc = #bake_arguments(motion_step(step = .{ y = 1 })),
-	);
-	add_motion(
-		keybind = .[ KEY_HOME ],
-		proc = #bake_arguments(motion_end_of_line(step = -1)),
-	);
-	add_motion(
-		keybind = .[ KEY_END ],
-		proc = #bake_arguments(motion_end_of_line(step = 1)),
-	);
-	add_motion(
-		keybind = "f",
-		proc = motion_find_char,
-		char_proc = #bake_arguments motion_find_char_char(step = 1, inclusive = true),
-	);
-	add_motion(
-		keybind = "F",
-		proc = motion_find_char,
-		char_proc = #bake_arguments motion_find_char_char(step = -1, inclusive = true),
-	);
-	add_motion(
-		keybind = "t",
-		proc = motion_find_char,
-		char_proc = #bake_arguments motion_find_char_char(step = 1, inclusive = false),
-	);
-	add_motion(
-		keybind = "T",
-		proc = motion_find_char,
-		char_proc = #bake_arguments motion_find_char_char(step = -1, inclusive = false),
-	);
-	add_motion(
-		keybind = .[ KEY_CRIGHT ],
-		proc = make_motion_alias("W"),
-	);
-	add_motion(
-		keybind = .[ KEY_CLEFT ],
-		proc = make_motion_alias("B"),
-	);
-	add_motion(
-		keybind = "gg",
-		proc = #bake_arguments motion_end_of_file(step = -1),
-	);
-	add_motion(
-		keybind = "G",
-		proc = #bake_arguments motion_end_of_file(step = 1),
-	);
-	add_motion(
-		keybind = .[ KEY_NPAGE ],
-		proc = #bake_arguments motion_page_step(step = 1),
-	);
-	add_motion(
-		keybind = .[ KEY_PPAGE ],
-		proc = #bake_arguments motion_page_step(step = -1),
-	);
-	add_motion(
-		keybind = "{",
-		proc = #bake_arguments motion_empty_line(step = -1),
-	);
-	add_motion(
-		keybind = "}",
-		proc = #bake_arguments motion_empty_line(step = 1),
-	);
-}
-
-add_all_commands :: () {
-	// COMMANDS
-	add_command(
-		keybind = "",
-		proc = command_motion,
-		motion_proc = command_motion_motion,
-	);
-	add_command(
-		keybind = "q",
-		proc = command_quit,
-	);
-	add_command(
-		keybind = "dd",
-		proc = command_delete_line,
-	);
-	add_command(
-		keybind = "i",
-		proc = #run wrap_command(#bake_arguments(change_edit_mode(mode = .INSERT))),
-	);
-	add_command(
-		keybind = "/",
-		proc = #run wrap_command(#bake_arguments(change_edit_mode(mode = .SEARCH))),
-	);
-	add_command(
-		keybind = ":",
-		proc = #run wrap_command(#bake_arguments(change_edit_mode(mode = .EXEC))),
-	);
-	add_command(
-		keybind = "A",
-		proc = make_command_alias(.[ KEY_END, #char "i" ]),
-	);
-	add_command(
-		keybind = "I",
-		proc = make_command_alias(.[ KEY_HOME, #char "i" ]),
-	);
-	add_command(
-		keybind = "d",
-		proc = command_delete,
-		motion_proc = #bake_arguments command_delete_motion(enter_insert_mode = false),
-	);
-	add_command(
-		keybind = "c",
-		proc = command_delete,
-		motion_proc = #bake_arguments command_delete_motion(enter_insert_mode = true),
-	);
-	add_command(
-		keybind = "D",
-		proc = make_command_alias(.[ #char "d", KEY_END ]),
-	);
-	add_command(
-		keybind = "C",
-		proc = make_command_alias(.[ #char "c", KEY_END ]),
-	);
-	add_command(
-		keybind = .[ KEY_SR ],
-		proc = #bake_arguments command_scroll_offset(step = -1),
-	);
-	add_command(
-		keybind = .[ KEY_SF ],
-		proc = #bake_arguments command_scroll_offset(step = 1),
-	);
-	add_command(
-		keybind = "Z",
-		proc = command_scroll_center,
-	);
-	add_command(
-		keybind = "zz",
-		proc = command_scroll_center,
-	);
-	add_command(
-		keybind = "u",
-		proc = command_undo,
-	);
-	add_command(
-		keybind = "r",
-		proc = command_redo,
-	);
-	add_command(
-		keybind = "R",
-		proc = command_replace,
-		char_proc = command_replace_char,
-	);
-	add_command(
-		keybind = "n",
-		proc = #bake_arguments command_jump_search(step = 1),
-	);
-	add_command(
-		keybind = "N",
-		proc = #bake_arguments command_jump_search(step = -1),
-	);
-	add_command(
-		keybind = "?",
-		proc = (_: Command_In) -> Command_Result {
-			using win := context.current_window;
-			line := *lines[cursor.y];
-			if cursor.x < line.count {
-				log("Under cursor:\n");
-				fg, bg := uncolor_fg_bg(line.colors[cursor.x]);
-				char := line.chars[cursor.x];
-				log("char: '%' (%), fg: %, bg: %\n", string.{ data = *char, count = 1 }, char, fg, bg);
-			}
-			return .{};
-		}
-	);
-}
-
+//select_window :: (win
 COLOR_COUNT :: 16;
 
 // returns pair index, still need to call COLOR_PAIR
@@ -984,6 +769,10 @@ editool_init :: () {
 	// editool
 	add_all_motions();
 	add_all_commands();
+	add_all_execs();
+	create_container_window(null, stdscr); // root!
+	editool_search_init();
+	editool_exec_init();
 	change_edit_mode(.COMMAND);
 	context.edit.time = 1;
 }
@@ -998,16 +787,53 @@ main :: () {
 		// init buffer
 		filename: string = "";
 		args := get_command_line_arguments();
+		assert(args.count <= 2);
 		if args.count > 1
 			filename = args[1];
-		context.edit.main_buffer = create_buffer_from_filename(filename);
-		context.edit.current_window = create_window_from_buffer(*context.edit.main_buffer);
+		//parent := create_container_window(context.edit.root);
+		parent := context.edit.root;
+		buf := get_file_buffer(filename);
+		//
+		win1 := create_buffer_window(parent, buf);
+		select_window(win1);
+		{
+			p := FLOATING_PADDING;
+			context.edit.floating_nwindow =
+					derwin(stdscr, LINES - xx (p.y * 2), xx(COLS - p.x * 2), xx p.y, xx p.x);
+		}
 	}
 	//
 	while true {
+		edit := *context.edit;
+		{
+			// housekeeping here + before drawing
+			if edit.should_reset_edit_mode {
+				_change_edit_mode(edit.mode, _force = true);
+				edit.should_reset_edit_mode = false;
+			}
+			windows_to_destroy := edit.windows_to_destroy;
+			windows_to_force_destroy := edit.windows_to_force_destroy;
+			edit.windows_to_destroy = default_of([..]*Window);
+			edit.windows_to_force_destroy = default_of([..]*Window);
+			for windows_to_destroy {
+				_destroy_window(it);
+			}
+			for windows_to_force_destroy {
+				_destroy_window(it, _force = true);
+			}
+			array_reset(*windows_to_destroy);
+			array_reset(*windows_to_force_destroy);
+		}
 		ch: s32 = ---;
 		if context.edit.added_chars.count == 0 {
-			draw_window(context.edit.current_window);
+			if edit.floating_window != null && edit.buffer_window != edit.floating_window {
+				set_floating(edit.floating_window, false);
+			}
+			draw_windows_recursive(context.edit.root);
+			for context.edit.alerts
+				free(it);
+			array_reset(*context.edit.alerts);
+			//refresh();
 			ch = getch();
 			context.edit.time += 1;
 		} else {
@@ -1032,6 +858,8 @@ main :: () {
 #load "buffer.jai";
 #load "syntax.jai";
 #load "window.jai";
+#load "exec.jai";
+#load "search.jai";
 
 #import "Basic";
 #import "File";

@@ -1,8 +1,9 @@
 
-
+// has reasonable defaults
 Syntax_Element :: struct {
 	Kind :: enum {
 		// in order of priority ?
+		DEFAULT;
 		TAB;
 		DIRECTIVE; 
 		KEYWORD1;
@@ -17,6 +18,7 @@ Syntax_Element :: struct {
 		NUMBER;
 		COMMENT;
 		DECLARATION;
+		EOL_SPACE;
 		COUNT;
 	}
 	Flags :: enum_flags {
@@ -27,7 +29,8 @@ Syntax_Element :: struct {
 	COUNT :: Kind.COUNT;
 	match: string;
 	match_suffix: string; // not captured
-	color: s32 = 14; // something bright ?
+	color: s32 = -1; // 
+	replace: string; // ** this isn't a direct replace, but it keeps length ** 
 }
 
 Syntax :: struct {
@@ -47,6 +50,7 @@ Syntax :: struct {
 	elements[TAB].color = 12; // white
 	elements[COMMENT].color = 4; // grey
 	elements[DECLARATION].color = 14; // dark gren (24 or 30 or 6?)
+	elements[EOL_SPACE].color = 4; // grey, same as comment
 	normal_color: s32 = 0;
 	is_compiled: bool = false;
 	regex: Uniform.Regexp;
@@ -58,7 +62,8 @@ compile_syntax :: (using syntax: *Syntax) {
 		builder: String_Builder;
 		builder.allocator = temp;
 		// match anything (lazy) + 1 or more non word character or start of line
-		print(*builder, "(.*?(?:^|\\W))"); 
+		//print(*builder, "(.*?(?:^|\\W))"); // CAN'T DO THIS
+		print(*builder, "(.*?)"); 
 		print(*builder, "(");
 		for syntax.elements {
 			defer {
@@ -70,12 +75,15 @@ compile_syntax :: (using syntax: *Syntax) {
 				print(*builder, "(%)", "asdhujsgfuyrsdghuieqw3h");
 				continue;
 			}
-			extra := "";
+			extra_end := "";
+			extra_start := "";
 			//log("% % %", it_index, it.flags, extra);
 			if it.flags & .IS_NOT_WORD == 0 {
-				extra = "(?:\\W|$)";
+				// is word
+				extra_end = "(?:\\W|$)"; 
+				extra_start = "(?:^|\\W)"; // CAN'T DO WITH THIS
 			}
-			print(*builder, "(%)%0%", it.match, it.match_suffix, extra);
+			print(*builder, "%(%)%0%", extra_start, it.match, it.match_suffix, extra_end);
 		}
 		print(*builder, ")");
 		regex_str = builder_to_string(*builder,, allocator=temp);
@@ -109,6 +117,7 @@ get_jai_syntax :: () -> Syntax {
 		"enum_flags",
 		"operator",
 		"inline",
+		"interface",
 	], "|");
 	syntax.elements[TYPE1].match = #run join(.. .[
 		"int",
@@ -144,21 +153,23 @@ get_jai_syntax :: () -> Syntax {
 	syntax.elements[TYPE2].match = "[A-Z]\\w*[a-z]\\w*+";
 	syntax.elements[DIRECTIVE].match = "#\\w*(?:\\,\\w*+)*+";
 	syntax.elements[STRING].match = "\"(?:[^\"])*\"";
-	//syntax.elements[NUMBER].match = "\\d*\\.?\\d*";
-	//syntax.elements[NUMBER].match = "\\d+\\(?:\\.\\d*)?";
 	syntax.elements[NUMBER].match = "\\d+(?:\\.\\d+)?";
 	syntax.elements[TAB].match = "\\t++";
 	syntax.elements[COMMENT].match = "//.*?$";
 	syntax.elements[CONSTANT2].match = "(?:\\$?[A-Z][A-Z_]*+|\\$\\w++)";
 	syntax.elements[CONSTANT3].match = elements[DECLARATION].match;
 	elements[CONSTANT3].match_suffix = #run sprint("\\s*:\\s*(?:%)?\\w*:", decl_type);
+	syntax.elements[EOL_SPACE].match = " +$";
+	syntax.elements[EOL_SPACE].replace = "-";
 	//
 	elements[STRING].flags |= .IS_NOT_WORD;
 	elements[NUMBER].flags |= .IS_NOT_WORD;
 	elements[TAB].flags |= .IS_NOT_WORD;
+	elements[COMMENT].flags |= .IS_NOT_WORD;
 	elements[TYPE2].flags |= .IS_NOT_WORD;
 	elements[CONSTANT2].flags |= .IS_NOT_WORD;
 	elements[CONSTANT3].flags |= .IS_NOT_WORD;
+	elements[EOL_SPACE].flags |= .IS_NOT_WORD;
 	compile_syntax(*syntax);
 	return syntax;
 }
