@@ -118,7 +118,6 @@ Edit_Mode :: enum int {
 	NONE :: 0;
 	INSERT;
 	COMMAND;
-	EXEC;
 	NOP; // different to none
 }
 
@@ -174,7 +173,6 @@ Editool :: struct {
 push_dot_command :: () {
 	using context.edit;
 	log("update dot command (% -> %)", current_dot_command, next_dot_command);
-	log_stack_trace(context.stack_trace);
 	if next_dot_command.count > 0 {
 		array_reset(*current_dot_command);
 		current_dot_command = next_dot_command;
@@ -228,8 +226,8 @@ _change_edit_mode :: (mode: Edit_Mode, _force: bool) {
 	// reset
 	if context.edit.mode == .COMMAND
 		exit_command_mode();
-	if context.edit.mode == .EXEC
-		exit_exec_mode();
+	//if context.edit.mode == .EXEC
+		//exit_exec_mode();
 	if context.buffer_window != null {
 		// hacky...
 		if mode == .INSERT && get_current_buffer().caps & .MODE_INSERT == 0 {
@@ -661,10 +659,8 @@ handle_char :: (ch: s32) {
 				handle_insert_char(ch);
 			case .COMMAND;
 				handle_command_char(ch);
-			//case .SEARCH;
-				//handle_search_char(ch);
-			case .EXEC;
-				handle_exec_char(ch);
+			//case .EXEC;
+				//handle_exec_char(ch);
 			case;
 				edit_alert("Unhandled edit mode: %", context.edit.mode);
 				was_handled = false;
@@ -858,6 +854,7 @@ main :: () {
 #load "buffer.jai";
 #load "syntax.jai";
 #load "window.jai";
+#load "window_ext.jai";
 #load "exec.jai";
 #load "search.jai";
 

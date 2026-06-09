@@ -249,7 +249,8 @@ execute_buffer_operation :: (win: *Window, _op: Buffer_Op) {
 	}
 }
 
-// leak?
+// leak? (?)
+// The only time this touches `win` instead of just its buffer, is when .MOVE_CURSOR flag is true !!!
 _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op: *Buffer_Op, flags: Execute_Buffer_Op_Flags) -> bool {
 	if op.kind == {
 		case .INSERT_CHARS;

@@ -55,9 +55,10 @@ editool_search_init :: () {
 		keybind = to_keybind("\n"),
 		proc = wrap_command(execute_search),
 	});
-	window = create_buffer_window(null, context.search.buffer,
-			select = false, is_hidden = true);
-	window.user_message = "SEARCH";
+	parent := context.edit.second_root;
+	window = create_buffer_window(parent, context.search.buffer,
+			select = false, is_hidden = false);
+	window.user_title = "SEARCH";
 }
 
 start_search :: () {
@@ -80,6 +81,9 @@ execute_search :: () {
 	}
 }
 
+// TODO: this auto changes to command mode,
+// because of how commands work...
+// i think ?? either way, it's wrong
 stop_search :: () {
 	_clear_search();
 	select_normal_window();
@@ -95,7 +99,7 @@ stop_search :: () {
 
 get_search_info_for_status_bar :: (win: *Window) -> string {
 	using,except(buffer) context.edit.search_state;
-	assert(win.kind == .BUFFER);
+	assert(win.kind == .BUFFER, "%", win.kind);
 	_maybe_recompile_search();
 	if search_string == ""
 		return "";

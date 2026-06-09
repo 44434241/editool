@@ -3,7 +3,7 @@
 
 Exec :: struct {
 	chars: [..]u8;
-	#overlay(chars) str: string;
+	#overlay(chars) as_string: string;
 	window: *Window;
 	buffer: *Buffer;
 }
@@ -23,13 +23,38 @@ Exec_Result :: struct {
 	error_message: string; // error message is constant or temp allocated
 }
 
+get_exec_info_for_status_bar :: () -> string {
+	using context.exec;
+	str := buffer.lines[0].as_string;
+	if !str
+		return "";
+	return tprint("EXEC :%", str);
+}
+
 start_exec :: () {
+	using context.exec;
+	_clear_exec();
+	select_window(window);
+	change_edit_mode(.INSERT);
 }
 
 execute_exec :: () {
+	using context.exec;
+	s := copy_string(window.lines[0].as_string,, allocator=temp);
+	_clear_exec();
+	select_normal_window();
+	change_edit_mode(.COMMAND);
+	eval_exec(s);
 }
 
 stop_exec :: () {
+	_clear_exec();
+	select_normal_window();
+}
+
+_clear_exec :: () {
+	using context.exec;
+	delete_chars(window, .{0, 0}, window.lines[0].count);
 }
 
 
@@ -38,7 +63,6 @@ editool_exec_init :: () {
 	buffer = create_custom_buffer();
 	buffer.flags |= .NO_SEARCH;
 	line: *Line = array_add(*buffer.lines);
-	array_adds(*line.chars, ":exec ");
 	buffer.caps |= .MODE_INSERT | .MODE_COMMAND;
 	buffer.caps |= .INSERT_CHARS | .DELETE_CHARS;
 	array_add(*buffer.commands, .{
@@ -53,37 +77,14 @@ editool_exec_init :: () {
 		keybind = to_keybind("\n"),
 		proc = wrap_command(execute_exec),
 	});
-	window = create_buffer_window(null, buffer,
-			select = false, is_hidden = true);
-	window.user_message = "EXEC";
+	window = create_buffer_window(context.edit.second_root, buffer,
+			select = false, is_hidden = false);
+	window.user_title = "EXEC";
 }
 
 exit_exec_mode :: () {
 	using context.edit.exec;
 	array_reset(*chars);
-}
-
-handle_exec_char :: (ch: s32) {
-	using context.edit.exec;
-	if ch == {
-		case KEY_ESCAPE; 
-			change_edit_mode(.COMMAND);
-			return;
-		case #char "\n";
-			eval_exec(cast(string)chars);
-			change_edit_mode(.COMMAND);
-			return;
-		case KEY_BACKSPACE;
-			if chars.count > 0 {
-				pop(*chars);
-			} else {
-				change_edit_mode(.COMMAND);
-				return;
-			}
-		case;
-			if is_printable_char(ch)
-				array_add(*chars, xx ch);
-	}
 }
 
 eval_exec :: (_s: string) {
@@ -316,7 +317,7 @@ add_all_execs :: () {
 						create_buffer_window(context.edit.root, buf);
 					} else {
 						destroy_window(context.buffer_window, _force = true);
-						new_win := get_active_non_floating_window();
+						new_win := get_window(.BUFFER, not_floating = true, not_special = true);
 						change_buffer(new_win, buf);
 					}
 					return .{};

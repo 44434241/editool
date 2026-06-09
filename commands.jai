@@ -307,8 +307,8 @@ command_replace_char :: (in: Command_In, char: s32) -> Command_Result {
 	}
 	win := context.buffer_window;
 	pos := win.cursor.position;
-	delete_at_x_offset(win, 0);
-	write_char(win, xx char);
+	delete_chars(win, pos, 1);
+	write_char(win, pos, xx char);
 	move_cursor(win, pos);
 	return .{
 		modifies_dot = true,
@@ -517,7 +517,7 @@ add_all_commands :: () {
 	);
 	add_command(
 		keybind = ":",
-		proc = #run wrap_command(#bake_arguments(change_edit_mode(mode = .EXEC))),
+		proc = #run wrap_command(start_exec),
 	);
 	add_command(
 		keybind = "A",
@@ -646,24 +646,28 @@ add_all_commands :: () {
 	add_command(
 		keybind = "?",
 		proc = (_: Command_In) -> Command_Result {
-			using win := context.buffer_window;
-			line := *lines[cursor.y];
-			log("===============================================");
-			if cursor.x < line.count {
-				log("Under cursor:\n");
-				mod := line.modifiers[cursor.x];
-				char := line.chars[cursor.x];
-				//log("char: '%' (%), fg: %, bg: %\n", string.{ data = *char, count = 1 }, char, fg, bg);
-				log("char: '%', mod: %\n", string.{ data = *char, count = 1 }, mod);
+			log("=================== INFO START ===============================================");
+			{
+				using win := context.buffer_window;
+				line := *lines[cursor.y];
+				if cursor.x < line.count {
+					log("Under cursor:\n");
+					mod := line.modifiers[cursor.x];
+					char := line.chars[cursor.x];
+					//log("char: '%' (%), fg: %, bg: %\n", string.{ data = *char, count = 1 }, char, fg, bg);
+					log("char: '%', mod: %\n", string.{ data = *char, count = 1 }, mod);
+				}
+				log("Cursor marks (idx: %):\n", cursor_mark_index);
+				for cursor_marks {
+					log("%: %\n", it_index, it);
+				}
 			}
-			log("Root window has % children\n", context.edit.root.children.count);
-			log("Floating window: %\n", context.edit.floating_window);
+			using context.edit;
+			log("Root window has % children\n", root.children.count);
+			log("Window counts: %, buffer count: %\n", windows.count, buffers.count);
+			log("Windows: root: %, floating: %, container: %, buffer: % ('%')", root, floating_window, container_window, buffer_window, buffer_window.user_title);
 			log("Current dot: %\n", keybind_to_string(context.edit.current_dot_command));
-			log("Cursor marks (idx: %):\n", cursor_mark_index);
-			for cursor_marks {
-				log("%: %\n", it_index, it);
-			}
-			log("===============================================");
+			log("=================== INFO END ===============================================");
 			return .{};
 		}
 	);
