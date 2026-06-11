@@ -1,16 +1,18 @@
 
-// indentation
-// (saving files duh)
-// ? fast matching
-// buffers for status lines..
 //
 // Thinking: some kind of enter-insert-mode command that doesn't reset running dot command
 // ^ makes dot function as a macro 
 // Same for leaving command mode without reseting running dot command.
 // ...
+// ? fast matching
 // multiple clipboards + definition of a system clipboard
 // more options for search/replace 
-
+// file
+// - proper flags for files being dirty/read only/etc
+// - fix filename normalization
+// - directories
+// more-generalized indentation?
+// OTHER TODO: (i need a list for this) pwn library for jai?
 
 // hmm..
 Keybind :: struct {
@@ -144,12 +146,11 @@ Editool :: struct {
 	container_window: *Window; // might be null? if floating is active
 	next_window: *Window = null;
 	windows: [..]*Window;
-	floating_window: *Window = null;
+	floating_windows: [..]*Window;
 	root: *Window; // .CONTAINER
 	second_root: *Window = null; // also .CONTAINER
 	windows_to_destroy: [..]*Window;
 	windows_to_force_destroy: [..]*Window;
-	floating_nwindow: *WINDOW; 
 	// BUFFERS
 	buffers: [..]*Buffer;
 	// commands n shit
@@ -614,7 +615,6 @@ handle_insert_char :: (ch: s32) {
 	}
 }
 
-FLOATING_PADDING :: Vec2i.{ 20, 10 };
 
 handle_char :: (ch: s32) {
 	win := context.edit.buffer_window;
@@ -624,12 +624,6 @@ handle_char :: (ch: s32) {
 			case KEY_RESIZE;
 				refresh_window_size(context.edit.root, force = true);
 				{
-					p := FLOATING_PADDING;
-					w := context.edit.floating_nwindow;
-					wresize(w, 1, 1);
-					wmove(w, 0, 0);
-					wmove(w, xx p.y, xx p.x);
-					wresize(w, LINES - xx (p.y * 2), xx(COLS - p.x * 2));
 				}
 				return;
 		}
@@ -789,13 +783,14 @@ main :: () {
 		//parent := create_container_window(context.edit.root);
 		parent := context.edit.root;
 		buf := get_file_buffer(filename);
+		assert(buf != null);
 		//
 		win1 := create_buffer_window(parent, buf);
 		select_window(win1);
 		{
-			p := FLOATING_PADDING;
-			context.edit.floating_nwindow =
-					derwin(stdscr, LINES - xx (p.y * 2), xx(COLS - p.x * 2), xx p.y, xx p.x);
+			//p := FLOATING_PADDING;
+			//context.edit.floating_nwindow =
+					//derwin(stdscr, LINES - xx (p.y * 2), xx(COLS - p.x * 2), xx p.y, xx p.x);
 		}
 	}
 	//
@@ -822,9 +817,14 @@ main :: () {
 		}
 		ch: s32 = ---;
 		if context.edit.added_chars.count == 0 {
-			if edit.floating_window != null && edit.buffer_window != edit.floating_window {
-				set_floating(edit.floating_window, false);
-			}
+			// Old: If a floating window exists, and the current buffer is not the floating window, then stop floating it.
+			// New: If the current buffer is not floating, unfloat all floating windows.
+			/*
+			if !edit.buffer_window.is_floating {
+				for array_copy(edit.floating_windows,, allocator=temp) {
+					set_floating(it, false);
+				}
+			}*/
 			draw_windows_recursive(context.edit.root);
 			for context.edit.alerts
 				free(it);

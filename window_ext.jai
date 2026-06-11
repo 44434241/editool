@@ -393,13 +393,39 @@ split_line :: (using win: *Window) {
 	split_line(win, cursor.position);
 }
 
+_indentation_of_next_line :: (buf: *Buffer, y: int) -> int {
+	ret: int = 0;
+	for buf.lines[y].chars {
+		if it != #char "\t"
+			break;
+		ret += 1;
+	}
+	for buf.lines[y].chars {
+		if it == #char "{"
+			ret += 1;
+		//if it == #char "}"
+			//ret -= 1;
+	}
+	ret = max(ret, 0);
+	return ret;
+}
+
 split_line :: (using win: *Window, pos: Position) {
+	curr_y := pos.y; // to prevent this aliasing thing
 	// probably validated...
-	execute_buffer_operation(win, .{
+	ok := execute_buffer_operation(win, .{
 		kind = .SPLIT_LINE,
 		y = pos.y,
 		x = pos.x,
 	});
+	if ok {
+		indent := _indentation_of_next_line(buffer, curr_y);
+		edit_alert("indent (%): %", pos.y, indent);
+		indent_chars := NewArray(indent, u8, initialized = false,, allocator=temp);
+		for * indent_chars
+			it.* = #char "\t";
+		_write_normal_string(win, .{0, curr_y+1}, cast(string)indent_chars);
+	}
 }
 
 // Still not sure if i wanna put anything else in buffer operations...

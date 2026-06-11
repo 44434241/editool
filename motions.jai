@@ -329,7 +329,7 @@ motion_end_of_file  :: (in: Motion_In, step: int) -> Motion_Result {
 	};
 }
 
-// { } 
+// '{', '}' 
 motion_empty_line  :: (in: Motion_In, step: int) -> Motion_Result {
 	assert(step == 1 || step == -1);
 	using win := context.buffer_window;
@@ -338,15 +338,21 @@ motion_empty_line  :: (in: Motion_In, step: int) -> Motion_Result {
 	start: Position = cursor.position;
 	if lines[start.y].count == 0
 		start.y += step;
+	seen_normal_line := false;
 	while true {
-		y += step;
 		is_eof := clamp(y, 0, win.lines.count - 1) != y;
-		if is_eof || win.lines[y].count == 0
+		if !is_eof && win.lines[y].count != 0 {
+			seen_normal_line = true;
+		}
+		if seen_normal_line && (is_eof || win.lines[y].count == 0) {
 			to_find -= 1;
+			seen_normal_line = false;
+		}
 		if to_find == 0
 			break;
 		if is_eof
 			return .{ status = .ERROR };
+		y += step;
 	}
 	return .{
 		start = start,
@@ -527,3 +533,4 @@ add_all_motions :: () {
 		char_proc = motion_mark_char,
 	);
 }
+

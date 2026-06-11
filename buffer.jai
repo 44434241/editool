@@ -30,11 +30,8 @@ as_ncurses_attribute :: (mod: Char_Mod) -> s32 {
 }
 
 BufId :: #type,distinct s64;
-
 BUF_ID_NULL :: 0;
-
 _running_buffer_id: BufId = 1;
-
 
 next_buffer_id :: () -> BufId {
 	ret := _running_buffer_id;
@@ -49,14 +46,13 @@ Buffer :: struct {
 	Kind :: enum {
 		NONE :: 0;
 		FILE;
-		DIR; // HMMMMM
-		FZF;
+		//DIR; // HMMMMM
+		//FZF;
 		CUSTOM;
 	}
 	File_Flags :: enum_flags {
 		NO_FILE; // failed to read
 		READ_ONLY; // not implemented
-		DIRTY;
 		NONE :: 0;
 	}
 	// capabilities
@@ -174,13 +170,20 @@ _create_buffer_from_filename :: (filename: string) -> *Buffer {
 	} else {
 		buf.file_flags |= .NO_FILE;
 	}
-	buf.file_flags &= ~.DIRTY;
 	return buf;
 }
 
+buffer_as_string :: (using buf: *Buffer) -> string {
+	chars: [..]u8;
+	for buf {
+		array_add(*chars, it);
+	}
+	return cast(string)chars;
+}
+
 // this is probably slow !
-for_expansion :: (using buffer: *Buffer, body: Code, flags: For_Flags) #expand {
-	#assert flags == 0;
+for_expansion :: (using buffer: *Buffer, body: Code, for_flags: For_Flags) #expand {
+	#assert for_flags == 0;
 	`it_index: Position = ---;
 	`it: u8 = ---;
 	for line, y: lines {
@@ -234,7 +237,7 @@ Execute_Buffer_Op_Flags :: enum_flags {
 }
 
 // buffer operation THROUGH window
-execute_buffer_operation :: (win: *Window, _op: Buffer_Op) {
+execute_buffer_operation :: (win: *Window, _op: Buffer_Op) -> bool {
 	op := _op;
 	if op.kind == .INSERT_CHARS {
 		op.chars = array_copy(op.chars);
@@ -247,6 +250,7 @@ execute_buffer_operation :: (win: *Window, _op: Buffer_Op) {
 		operations.count = buf.operation_index; // @Leak
 		array_add(*operations, op);
 	}
+	return ok;
 }
 
 // leak? (?)
@@ -282,7 +286,6 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 		}
 		buf.modify_time = context.edit.time;
 		buf.is_dirty = true;
-		buf.file_flags |= .DIRTY;
 		for buf.windows {
 			// Mark x might get out of bounds..
 			// But if it gets normalized, then undo will be overly complicated.
@@ -348,10 +351,10 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 		shift_cursor_y(.{0, y}, count);
 	}
 	shift_cursor_y :: (pos: Position, count: int) #expand {
+		for * buf.marks {
+			_shift_cursor_y(*it.position, pos, count, null);
+		}
 		for buf.windows {
-			for * buf.marks {
-				_shift_cursor_y(*it.position, pos, count, null);
-			}
 			moved_line_y: bool = false;
 			_shift_cursor_y(*it.cursor.position, pos, count, *moved_line_y);
 			if moved_line_y {
@@ -360,10 +363,10 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 		}
 	}
 	shift_cursor_x :: (pos: Position, count: int) #expand {
+		for * buf.marks {
+			_shift_cursor_x(*it.position, pos, count, null);
+		}
 		for buf.windows {
-			for * buf.marks {
-				_shift_cursor_x(*it.position, pos, count, null);
-			}
 			moved_real_x := false;
 			_shift_cursor_x(*it.cursor.position, pos, count, *moved_real_x);
 			if moved_real_x
@@ -495,9 +498,10 @@ _refresh_buffer_modifiers :: (win: *Window, using buf: *Buffer, ly: int, ry: int
 			if !matched
 				break;
 			// captures[0] = full
-			// captures[1] = prefix
-			// captures[2] = value + suffix
+			// captures[1] = suffix + value + prefix
+			// captures[2] = value
 			// whichever captures[3..3+COUNT] = value
+			// ^ this is wrong..
 			start_capture := captures[1];
 			something_capture := captures[2];
 			//color := ifx captures[3].count then syntax.kw_color1 else syntax.kw_color2;
@@ -514,11 +518,6 @@ _refresh_buffer_modifiers :: (win: *Window, using buf: *Buffer, ly: int, ry: int
 			//color := syntax.elements[0].color;
 			capture_offset := something_capture.data - string_to_match.data;
 			idx += capture_offset;
-			{
-				// TODO: make everything simpler by assuming this logic
-				ok := start_capture.count == capture_offset;
-				//assert(ok, "something capture is at index % and its view is offset at %", start_capture.count, capture_offset);
-			}
 			for 0..something_capture.count-1 {
 				using syntax_element;
 				mod := *mods[idx+it];

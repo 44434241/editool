@@ -664,8 +664,8 @@ add_all_commands :: () {
 			}
 			using context.edit;
 			log("Root window has % children\n", root.children.count);
-			log("Window counts: %, buffer count: %\n", windows.count, buffers.count);
-			log("Windows: root: %, floating: %, container: %, buffer: % ('%')", root, floating_window, container_window, buffer_window, buffer_window.user_title);
+			log("Window counts: %, buffer count: %, floating count: %\n", windows.count, buffers.count, floating_windows.count);
+			log("Windows: root: %, container: %, buffer: % ('%')", root, container_window, buffer_window, buffer_window.user_title);
 			log("Current dot: %\n", keybind_to_string(context.edit.current_dot_command));
 			log("=================== INFO END ===============================================");
 			return .{};

@@ -21,6 +21,7 @@ Search_State :: struct {
 		SEARCH_REPLACE;
 		ERROR;
 	}
+	last_win_id: WinId;
 	status: Status = .ERROR;
 	chars: [..]u8; // input chars
 	#overlay(chars) char_string: string;
@@ -55,6 +56,10 @@ editool_search_init :: () {
 		keybind = to_keybind("\n"),
 		proc = wrap_command(execute_search),
 	});
+	array_add(*buffer.insert_commands, .{
+		keybind = to_keybind(.[ KEY_ESCAPE ]),
+		proc = wrap_command(stop_search),
+	});
 	parent := context.edit.second_root;
 	window = create_buffer_window(parent, context.search.buffer,
 			select = false, is_hidden = false);
@@ -63,6 +68,7 @@ editool_search_init :: () {
 
 start_search :: () {
 	using context.search;
+	last_win_id = context.buffer_window.id;
 	_clear_search();
 	select_window(window);
 	change_edit_mode(.INSERT);
@@ -71,8 +77,12 @@ start_search :: () {
 // pressed enter
 execute_search :: () {
 	using context.search;
+	win := find_window(last_win_id);
+	if win
+		select_window(win);
+	else
+		select_normal_window();
 	change_edit_mode(.COMMAND);
-	select_normal_window();
 	if status == .SEARCH_REPLACE {
 		_do_search_replace(context.buffer_window);
 		maybe_update_search_matches(context.buffer_window, force_update=true);
@@ -85,8 +95,13 @@ execute_search :: () {
 // because of how commands work...
 // i think ?? either way, it's wrong
 stop_search :: () {
+	using context.search;
+	win := find_window(last_win_id);
 	_clear_search();
-	select_normal_window();
+	if win
+		select_window(win);
+	else
+		select_normal_window();
 }
 
 
@@ -156,6 +171,12 @@ _maybe_recompile_search :: () {
 			search_string = string.{ data = chars.data, count = idx };
 			replace_string = cast(string)advance(chars, idx + 1);
 			status = .SEARCH_REPLACE;
+			for replace_string {
+				if it == #char "/" {
+					status = .ERROR;
+					return;
+				}
+			}
 			break;
 		}
 		idx += 1;

@@ -1,4 +1,6 @@
 
+// todo: '@ asd' notes
+
 // has reasonable defaults
 Syntax_Element :: struct {
 	Kind :: enum {
@@ -159,8 +161,9 @@ get_jai_syntax :: () -> Syntax {
 	syntax.elements[CONSTANT2].match = "(?:\\$?[A-Z][A-Z_]*+|\\$\\w++)";
 	syntax.elements[CONSTANT3].match = elements[DECLARATION].match;
 	elements[CONSTANT3].match_suffix = #run sprint("\\s*:\\s*(?:%)?\\w*:", decl_type);
-	syntax.elements[EOL_SPACE].match = " +$";
-	syntax.elements[EOL_SPACE].replace = "-";
+	// I'd want EOL_SPACE to match line chars *before* the cursor
+	//syntax.elements[EOL_SPACE].match = " +$";
+	//syntax.elements[EOL_SPACE].replace = "-";
 	//
 	elements[STRING].flags |= .IS_NOT_WORD;
 	elements[NUMBER].flags |= .IS_NOT_WORD;

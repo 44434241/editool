@@ -6,6 +6,7 @@ Exec :: struct {
 	#overlay(chars) as_string: string;
 	window: *Window;
 	buffer: *Buffer;
+	last_win_id: WinId;
 }
 
 Exec_Command :: struct {
@@ -33,6 +34,7 @@ get_exec_info_for_status_bar :: () -> string {
 
 start_exec :: () {
 	using context.exec;
+	last_win_id = context.buffer_window.id;
 	_clear_exec();
 	select_window(window);
 	change_edit_mode(.INSERT);
@@ -40,16 +42,25 @@ start_exec :: () {
 
 execute_exec :: () {
 	using context.exec;
+	win := find_window(last_win_id);
+	if win
+		select_window(win);
+	else
+		select_normal_window();
 	s := copy_string(window.lines[0].as_string,, allocator=temp);
 	_clear_exec();
-	select_normal_window();
 	change_edit_mode(.COMMAND);
 	eval_exec(s);
 }
 
 stop_exec :: () {
+	using context.exec;
+	win := find_window(last_win_id);
+	if win
+		select_window(win);
+	else
+		select_normal_window();
 	_clear_exec();
-	select_normal_window();
 }
 
 _clear_exec :: () {
@@ -76,6 +87,10 @@ editool_exec_init :: () {
 	array_add(*buffer.insert_commands, .{
 		keybind = to_keybind("\n"),
 		proc = wrap_command(execute_exec),
+	});
+	array_add(*buffer.insert_commands, .{
+		keybind = to_keybind(.[ KEY_ESCAPE ]),
+		proc = wrap_command(stop_exec),
 	});
 	window = create_buffer_window(context.edit.second_root, buffer,
 			select = false, is_hidden = false);
@@ -246,18 +261,20 @@ add_all_execs :: () {
 		select_window(win.parent);
 		return true;
 	}, 0));
-	add_exec("split", #run make_exec_proc((count: int = 0) -> bool {
-		count = max(count, 0);
-		parent := get_selected_window_of_kind(.CONTAINER);
-		while parent != null && count > 0 {
-			parent = parent.parent;
-		}
+	add_exec("split", #run make_exec_proc((name: string) -> bool {
+		parent := context.container_window;
 		if !parent
 			return false;
-		win := create_buffer_window(parent, context.buffer_window.buffer);
+		buf := context.buffer_window.buffer;
+		if name {
+			buf = get_file_buffer(name);
+		}
+		if !buf
+			return false;
+		win := create_buffer_window(parent, buf);
 		select_window(win);
 		return true;
-	}, 0));
+	}, ""));
 	add_exec("mode", (mode: Window.Container_Mode) -> bool {
 		win := get_selected_window_of_kind(.CONTAINER);
 		if !win
@@ -273,10 +290,6 @@ add_all_execs :: () {
 		return true;
 	});
 	// default argument is true here
-	add_exec("float", #run make_exec_proc((flag: bool) -> bool {
-		ok := set_floating(context.buffer_window, flag);
-		return ok;
-	}, true));
 	add_exec("caps", (caps: Buffer.Caps, add: bool) -> bool {
 		win := get_selected_window_of_kind(.BUFFER);
 		if !win
@@ -292,15 +305,41 @@ add_all_execs :: () {
 		destroy_window(context.buffer_window); // if it can't destroy, it will notify later?
 		return true;
 	});
+	add_exec("save", () -> bool {
+		using win := context.buffer_window;
+		if buffer.kind != .FILE {
+			return false;
+		}
+		if buffer.file_flags & .NO_FILE {
+			return false;
+		}
+		s := buffer_as_string(buffer,, allocator=temp);
+		edit_alert("Writing % bytes to '%'", s.count, buffer.filename);
+		ok := write_entire_file(buffer.filename, s);
+		if ok
+			buffer.is_dirty = false;
+		return ok;
+	});
 	add_exec("something", () -> bool {
-		start_search();
+		buf := create_custom_buffer();
+		array_add(*buf.lines);
+		buf.caps |= .MODE_COMMAND;
+		win := create_buffer_window(null, buf, flags = .BUFFER_LINE_NO, is_hidden = true, select=false);
+		set_floating(win, .{
+			lx = .{ .END, -30 },
+			rx = .{ .END, -10 },
+			ly = .{ .END, -10 },
+			ry = .{ .END, -5 },
+		});
+		win.before_draw = (win: *Window) {
+			other_line := context.buffer_window.lines[context.buffer_window.cursor.y];
+			array_reset(*win.lines[0].chars);
+			array_add(*win.lines[0].chars, .. other_line.chars);
+		};
 		return true;
 	});
 	add_exec("ff", #run make_exec_proc((dir: string) -> bool {
-		//parent := get_selected_window_of_kind(.CONTAINER);
-		//if !parent
-			//return false;
-		//parent: 
+		// this leaks buffer/window
 		buf := create_custom_buffer();
 		buf.caps |= .MODE_COMMAND;
 		{
@@ -313,13 +352,14 @@ add_all_execs :: () {
 					using win := context.buffer_window;
 					str := lines[cursor.y].as_string;
 					buf := get_file_buffer(str);
-					#if 0 {
-						create_buffer_window(context.edit.root, buf);
-					} else {
-						destroy_window(context.buffer_window, _force = true);
-						new_win := get_window(.BUFFER, not_floating = true, not_special = true);
-						change_buffer(new_win, buf);
+					if !buf {
+						return .{
+							status = .ERROR,
+						};
 					}
+					destroy_window(context.buffer_window, _force = true);
+					new_win := get_window(.BUFFER, not_floating = true, not_special = true);
+					change_buffer(new_win, buf);
 					return .{};
 				},
 			});
@@ -351,8 +391,13 @@ add_all_execs :: () {
 			line: *Line = array_add(*buf.lines);
 			array_adds(*line.chars, it);
 		}
-		win := create_buffer_window(null, buf, is_hidden = true);
-		set_floating(win, true);
+		win := create_buffer_window(null, buf, flags = .BUFFER_LINE_NO, is_hidden = true);
+		set_floating(win, .{
+			lx = .{ .BEGIN, 20 },
+			rx = .{ .END, -20 },
+			ly = .{ .BEGIN, 10 },
+			ry = .{ .END, -10 },
+		});
 		return true;
 	}, ""));
 }
