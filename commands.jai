@@ -31,24 +31,12 @@ Command_Result :: struct {
 }
 
 Command_Input :: struct {
+	window: *Window; // .BUFFER 
 	number: int = 1; // > 0
 }
 
 Command_Res :: Command_Result;
 Command_In :: Command_Input;
-
-/*
-// maybe dont return pointer?
-get_command :: (keybind: string) -> *Command {
-	if !keybind
-		return null;
-	for * context.edit.commands {
-		if keybind_matches(it.keybind, keybind)
-			return it;
-	}
-	return null;
-}
-*/
 
 // this could recurse, actually..
 make_command_alias :: ($chars: $T/.[ []s32, string ]) -> Command.Proc {
@@ -122,7 +110,7 @@ command_delete :: (_: Command_In) -> Command_Result {
 }
 
 command_delete_motion :: (in: Command_In, motion: Motion_Result, enter_insert_mode: bool) -> Command_Result {
-	win := context.buffer_window;
+	win := in.window;
 	copy_motion(win, motion);
 	if motion.start.y != motion.end.y {
 		delete_line_range(win, motion.start.y, motion.start.y + (motion.end.y - motion.start.y) * in.number);
@@ -137,7 +125,7 @@ command_delete_motion :: (in: Command_In, motion: Motion_Result, enter_insert_mo
 }
 
 command_delete_line :: (in: Command_In) -> Command_Result {
-	using win := context.buffer_window;
+	using win := in.window;
 	copy_line_range(win, cursor.y, cursor.y + in.number - 1); // assumed to not fail?
 	delete_lines(win, cursor.y, in.number);
 	return .{
@@ -150,7 +138,7 @@ command_yank :: (_: Command_In) -> Command_Result {
 }
 
 command_yank_motion :: (in: Command_In, motion: Motion_Result) -> Command_Result {
-	win := context.buffer_window;
+	win := in.window;
 	ok := copy_motion(win, motion);
 	if !ok {
 		return .{
@@ -161,7 +149,7 @@ command_yank_motion :: (in: Command_In, motion: Motion_Result) -> Command_Result
 }
 
 command_yank_line :: (in: Command_In) -> Command_Result {
-	using win := context.buffer_window;
+	using win := in.window;
 	ok := copy_line_range(win, cursor.y, cursor.y + in.number - 1); 
 	if !ok {
 		return .{
@@ -175,7 +163,7 @@ command_yank_line :: (in: Command_In) -> Command_Result {
 command_paste :: (in: Command_In, on_next_char: bool) -> Command_Result {
 	ok := true;
 	for 1..in.number {
-		ok &&= _paste(context.buffer_window, on_next_char);
+		ok &&= _paste(in.window, on_next_char);
 		if !ok
 			break;
 	}
@@ -188,22 +176,8 @@ command_paste :: (in: Command_In, on_next_char: bool) -> Command_Result {
 	return .{};
 }
 
-command_scroll_offset :: (in: Command_In, step: int) -> Command_Result {
-	assert(step == -1 || step == 1);
-	win := context.buffer_window;
-	offset_scroll(win, step * in.number);
-	return .{};
-}
-
-command_scroll_center :: (in: Command_In) -> Command_Result {
-	win := context.buffer_window;
-	scroll := win.cursor.y - win.size.y / 2;
-	set_scroll(win, scroll);
-	return .{};
-}
-
 command_undo :: (in: Command_In) -> Command_Result {
-	win := context.buffer_window;
+	win := in.window;
 	iter_count := 0;
 	for iter: 1..in.number {
 		last_op := peek_last_operation(win.buffer);
@@ -235,7 +209,7 @@ command_undo :: (in: Command_In) -> Command_Result {
 }
 
 command_redo :: (in: Command_In) -> Command_Result {
-	win := context.buffer_window;
+	win := in.window;
 	iter_count := 0;
 	for iter: 1..in.number {
 		next_op := peek_next_operation(win.buffer);
@@ -305,7 +279,7 @@ command_replace_char :: (in: Command_In, char: s32) -> Command_Result {
 			error_message = tprint("Not printable char: %", keybind_to_string(.[ char ])),
 		};
 	}
-	win := context.buffer_window;
+	win := in.window;
 	pos := win.cursor.position;
 	delete_chars(win, pos, 1);
 	write_char(win, pos, xx char);
@@ -326,8 +300,8 @@ command_indent :: (_: Command_In) -> Command_Result {
 
 command_indent_indent :: (in: Command_In, step: int) -> Command_Result {
 	assert(step == 1 || step == -1);
-	using win := context.buffer_window;
-	_do_indent(cursor.y, cursor.y + in.number - 1, step);
+	using win := in.window;
+	_do_indent(in.window, cursor.y, cursor.y + in.number - 1, step);
 	return .{
 		modifies_dot = true,
 	};
@@ -335,7 +309,7 @@ command_indent_indent :: (in: Command_In, step: int) -> Command_Result {
 
 // this is kinda specific
 command_go_to_indent_start :: (in: Command_In, enter_insert_mode: bool) -> Command_Result {
-	using win := context.buffer_window;
+	using win := in.window;
 	line := *lines[cursor.y];
 	for 0..line.count {
 		if it < line.count && line.chars[it] == #char "\t"
@@ -354,13 +328,13 @@ command_go_to_indent_start :: (in: Command_In, enter_insert_mode: bool) -> Comma
 
 command_indent_motion :: (in: Command_In, motion: Motion_Result, step: int) -> Command_Result {
 	assert(step == 1 || step == -1);
-	using win := context.buffer_window;
+	using win := in.window;
 	if motion.start.x == motion.start.x {
 		ly := motion.start.y;
 		ry := motion.end.y;
 		if ly > ry
 			ly, ry = ry, ly;
-		_do_indent(ly, ry, step * in.number);
+		_do_indent(in.window, ly, ry, step * in.number);
 		return .{
 			modifies_dot = true,
 		};
@@ -373,7 +347,7 @@ command_indent_motion :: (in: Command_In, motion: Motion_Result, step: int) -> C
 
 // TODO: doesn't have any logic for interpreting tabs as spaces!!
 // count can be negative?
-_do_indent :: (ly: int, ry: int, count: int) {
+_do_indent :: (using win: *Window, ly: int, ry: int, count: int) {
 	TABS :: #run -> string {
 		chars: [..]u8;
 		for 1..256
@@ -384,7 +358,6 @@ _do_indent :: (ly: int, ry: int, count: int) {
 		log_error("why are you indenting so much???");
 		count = TABS.count;
 	}
-	using win := context.buffer_window;
 	ly = clamp(ly, 0, win.lines.count-1);
 	ry = clamp(ry, 0, win.lines.count-1);
 	for y: ly..ry {
@@ -419,7 +392,7 @@ command_mark_create_char :: (in: Command_In, char: s32) -> Command_Result {
 			error_message = "Invalid mark name",
 		};
 	}
-	win := context.buffer_window;
+	win := in.window;
 	m := create_mark(win);
 	m.name = xx char;
 	set_mark(win.buffer, m);
@@ -429,7 +402,7 @@ command_mark_create_char :: (in: Command_In, char: s32) -> Command_Result {
 command_cursor_undo :: (in: Command_In) -> Command_Result {
 	ok: bool = false;
 	for 1..in.number {
-		here_ok := cursor_undo(context.buffer_window);
+		here_ok := cursor_undo(in.window);
 		if !here_ok
 			break;
 		ok = true;
@@ -444,7 +417,7 @@ command_cursor_undo :: (in: Command_In) -> Command_Result {
 command_cursor_redo :: (in: Command_In) -> Command_Result {
 	ok: bool = false;
 	for 1..in.number {
-		here_ok := cursor_redo(context.buffer_window);
+		here_ok := cursor_redo(in.window);
 		if !here_ok
 			break;
 		ok = true;
@@ -464,7 +437,7 @@ command_change_edit_mode :: (in: Command_In, mode: Edit_Mode) -> Command_Res {
 }
 
 command_delete_chars :: (in: Command_In) -> Command_Result {
-	win := context.buffer_window;
+	win := in.window;
 	if !delete_chars(win, in.number) {
 		return .{
 			status = .ERROR,
@@ -568,22 +541,6 @@ add_all_commands :: () {
 		proc = make_command_alias(.[ #char "c", KEY_END ]),
 	);
 	add_command(
-		keybind = .[ KEY_SR ],
-		proc = #bake_arguments command_scroll_offset(step = -1),
-	);
-	add_command(
-		keybind = .[ KEY_SF ],
-		proc = #bake_arguments command_scroll_offset(step = 1),
-	);
-	add_command(
-		keybind = "Z",
-		proc = command_scroll_center,
-	);
-	add_command(
-		keybind = "zz",
-		proc = command_scroll_center,
-	);
-	add_command(
 		keybind = "u",
 		proc = command_undo,
 	);
@@ -645,10 +602,10 @@ add_all_commands :: () {
 	);
 	add_command(
 		keybind = "?",
-		proc = (_: Command_In) -> Command_Result {
+		proc = (in: Command_In) -> Command_Result {
 			log("=================== INFO START ===============================================");
 			{
-				using win := context.buffer_window;
+				using win := in.window;
 				line := *lines[cursor.y];
 				if cursor.x < line.count {
 					log("Under cursor:\n");
@@ -665,7 +622,8 @@ add_all_commands :: () {
 			using context.edit;
 			log("Root window has % children\n", root.children.count);
 			log("Window counts: %, buffer count: %, floating count: %\n", windows.count, buffers.count, floating_windows.count);
-			log("Windows: root: %, container: %, buffer: % ('%')", root, container_window, buffer_window, buffer_window.user_title);
+			log("Windows: root: %, container: %, buffer: % ('%'), from in: %", root, container_window, buffer_window, buffer_window.user_title, in.window);
+			log("window id: %, buffer id: %", context.buffer_window.id, context.buffer_window.buffer.id);
 			log("Current dot: %\n", keybind_to_string(context.edit.current_dot_command));
 			log("=================== INFO END ===============================================");
 			return .{};
@@ -769,4 +727,18 @@ _paste :: (using win: *Window, on_next_char: bool) -> bool {
 	}
 	move_cursor(win, end_cursor_pos);
 	return true;
+}
+
+add_command :: inline (name: string = "", keybind: $T/.[string, []s32],
+			proc: Command.Proc, motion_proc: Command.Motion_Proc = null, char_proc: Command.Char_Proc = null, loc := #caller_location) {
+	actual_name := name;
+	if !actual_name
+		actual_name = sprint("%:%:%", loc.fully_pathed_filename, loc.line_number, loc.character_number);
+	array_add(*context.edit.commands, .{
+		name = actual_name,
+		keybind = to_keybind(keybind),
+		proc = proc,
+		motion_proc = motion_proc,
+		char_proc = char_proc,
+	});
 }

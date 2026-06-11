@@ -5,6 +5,7 @@ Motion_Result :: struct {
 	Flags :: enum_flags {
 		X_ONLY;
 		Y_ONLY;
+		SCROLL_ONLY;
 		NONE :: 0;
 	}
 	Status :: enum {
@@ -20,10 +21,14 @@ Motion_Result :: struct {
 	error_message: string; // not printed rn
 	is_jump: bool = false;
 	scroll: int = -1;
+	window: *Window;
+	motion: *Motion;
 }
 
+Motion_Res :: Motion_Result;
 
 Motion_Input :: struct {
+	window: *Window; // 
 	number: int = 1; // > 0
 }
 
@@ -32,6 +37,9 @@ Motion_In :: Motion_Input;
 Motion :: struct {
 	Flags :: enum_flags {
 		SUPPORTS_NUMBER; // idk..
+		X_ONLY;
+		Y_ONLY;
+		SCROLL_ONLY;
 		NONE :: 0;
 	}
 	flags: Flags; // not used..
@@ -56,23 +64,26 @@ make_motion_alias :: ($chars: $T/.[ []s32, string ]) -> Motion.Proc {
 	inner_proc :: (in: Motion_In) -> Motion_Result {
 		motion := get_motion(chars);
 		if !motion {
-			return .{ status = .ERROR, error_message = "Can't find motion alias" };
+			return .{
+				status = .ERROR,
+				error_message = "Can't find motion alias"
+			};
 		}
 		return motion.proc(in);
 	}
 	return inner_proc;
 }
 
-find_char_in_line :: (ch: u8, opposite_ch: u8, step: int, count: int) -> int {
-	x := context.buffer_window.cursor.x;
+find_char_in_line :: (win: *Window, ch: u8, opposite_ch: u8, step: int, count: int) -> int {
+	x := win.cursor.x;
 	if step < 0
 		x -= 1;
-	return find_char_in_line(x, ch, opposite_ch, step, count);
+	return find_char_in_line(win, x, ch, opposite_ch, step, count);
 }
 
-find_char_in_line :: (x: int, ch: u8, opposite_ch: u8, step: int, count: int = 1) -> int {
+find_char_in_line :: (win: *Window, x: int, ch: u8, opposite_ch: u8, step: int, count: int = 1) -> int {
 	assert(step == 1 || step == -1);
-	line := *context.buffer_window.lines[context.buffer_window.cursor.y];
+	line := *win.lines[win.cursor.y];
 	char_cnt := count;
 	idx := x;
 	while true {
@@ -91,9 +102,8 @@ find_char_in_line :: (x: int, ch: u8, opposite_ch: u8, step: int, count: int = 1
 }
 
 // starts from cursor
-find_char_in_window :: (ch: u8, opposite_ch: u8, step: int, count: int = 1) -> Position {
+find_char_in_window :: (win: *Window, ch: u8, opposite_ch: u8, step: int, count: int = 1) -> Position {
 	assert(step == 1 || step == -1);
-	win := context.buffer_window;
 	y := win.cursor.y;
 	x := win.cursor.x + step;
 	//x = min(x, win.lines[y].count-1);
@@ -120,18 +130,19 @@ find_char_in_window :: (ch: u8, opposite_ch: u8, step: int, count: int = 1) -> P
 
 motion_inner :: (in: Motion_In, $ch: u8, $inclusive: bool) -> Motion_Result {
 	left_x, right_x: int = ---;
+	win := in.window;
 	// TODO: weird bug with deleting exclusive inner ()[], deletes ()[] too..
 	#if ch == "(" || ch == ")" {
-		left_x = find_char_in_line("(", ")", -1, in.number);
-		right_x = find_char_in_line(")", "(", 1, in.number);
+		left_x = find_char_in_line(win, "(", ")", -1, in.number);
+		right_x = find_char_in_line(win, ")", "(", 1, in.number);
 		//
 	} else #if ch == "[" || ch == "]" {
-		left_x = find_char_in_line("[", "]", -1, in.number);
-		right_x = find_char_in_line("]", "[", 1, in.number);
+		left_x = find_char_in_line(win, "[", "]", -1, in.number);
+		right_x = find_char_in_line(win, "]", "[", 1, in.number);
 		//
 	} else #if ch == "\"" || ch == " " || ch == "'" {
-		left_x = find_char_in_line(ch, 0, -1, in.number);
-		right_x = find_char_in_line(ch, 0, 1, in.number);
+		left_x = find_char_in_line(win, ch, 0, -1, in.number);
+		right_x = find_char_in_line(win, ch, 0, 1, in.number);
 		//
 	} else #if ch == "w" {
 		#assert !inclusive;
@@ -155,7 +166,7 @@ motion_inner :: (in: Motion_In, $ch: u8, $inclusive: bool) -> Motion_Result {
 		left_x += 1;
 		right_x -= 1;
 	}
-	cursor := context.buffer_window.cursor;
+	cursor := in.window.cursor;
 	return {
 		start = .{ left_x, cursor.y },
 		end = .{ right_x, cursor.y },
@@ -171,7 +182,7 @@ Motion_Word_Flags :: enum_flags {
 
 // TODO: in.number not supported
 motion_word :: (in: Motion_In, $step: int = 1, $flags: Motion_Word_Flags = 0) -> Motion_Result {
-	using,except(flags) win := context.edit.buffer_window;
+	using,except(flags) win := in.window;
 	assert(step == 1 || step == -1);
 	line := *win.lines[cursor.y];
 	// TODO: early returns don't support number (though it doesn't matter that much, maybe its better?)
@@ -263,14 +274,14 @@ motion_find_char_char :: (in: Motion_In, char: s32, $step: int, $inclusive: bool
 	if !is_printable_char(char) {
 		return .{ status = .ERROR };
 	}
-	x := context.buffer_window.cursor.x + step;
-	idx := find_char_in_line(x, xx char, 0, step, in.number);
+	win := in.window;
+	x := win.cursor.x + step;
+	idx := find_char_in_line(win, x, xx char, 0, step, in.number);
 	if idx < 0 {
 		return .{ status = .ERROR };
 	}
 	if !inclusive
 		idx -= step;
-	win := context.edit.buffer_window;
 	return .{
 		start = win.cursor.position,
 		end = .{ idx, win.cursor.position.y },
@@ -280,7 +291,7 @@ motion_find_char_char :: (in: Motion_In, char: s32, $step: int, $inclusive: bool
 
 motion_page_step :: (in: Motion_In, step: int) -> Motion_Result {
 	assert(step == 1 || step == -1);
-	win := context.buffer_window;
+	win := in.window;
 	return .{
 		start = win.cursor.position,
 		end = .{ x = win.cursor.x, y = win.cursor.y + step * (win.size.y-1) * in.number },
@@ -291,7 +302,7 @@ motion_page_step :: (in: Motion_In, step: int) -> Motion_Result {
 motion_step :: (in: Motion_In, step: Position) -> Motion_Result {
 	assert(step.x == 0 || step.y == 0);
 	assert(step.x != 0 || step.y != 0);
-	win := context.buffer_window;
+	win := in.window;
 	return .{
 		start = win.cursor.position,
 		end = win.cursor.position + step * in.number,
@@ -301,9 +312,9 @@ motion_step :: (in: Motion_In, step: Position) -> Motion_Result {
 
 // either start of line or end of line
 // Number unsupported here, don't know how to define that..
-motion_end_of_line  :: (_: Motion_In, step: int) -> Motion_Result {
+motion_end_of_line  :: (in: Motion_In, step: int) -> Motion_Result {
 	assert(step == 1 || step == -1);
-	win := context.buffer_window;
+	win := in.window;
 	x := ifx step < 0 then 0 else win.lines[win.cursor.y].count;
 	return .{
 		start = win.cursor.position,
@@ -317,7 +328,7 @@ motion_end_of_line  :: (_: Motion_In, step: int) -> Motion_Result {
 // TODO: Should define that it supports 0 number ?
 motion_end_of_file  :: (in: Motion_In, step: int) -> Motion_Result {
 	assert(step == 1 || step == -1);
-	win := context.buffer_window;
+	win := in.window;
 	y := ifx step < 0 then 0 else win.lines.count - 1;
 	if in.number > 1
 		y = in.number;
@@ -332,7 +343,7 @@ motion_end_of_file  :: (in: Motion_In, step: int) -> Motion_Result {
 // '{', '}' 
 motion_empty_line  :: (in: Motion_In, step: int) -> Motion_Result {
 	assert(step == 1 || step == -1);
-	using win := context.buffer_window;
+	using win := in.window;
 	to_find := in.number;
 	y := win.cursor.y;
 	start: Position = cursor.position;
@@ -366,7 +377,7 @@ motion_mark :: (_: Motion_In) -> Motion_Result {
 }
 
 motion_mark_char :: (in: Motion_In, char: s32) -> Motion_Result {
-	win := context.buffer_window;
+	win := in.window;
 	ok, mark := find_mark(win.buffer, char);
 	if !ok {
 		return .{
@@ -383,54 +394,108 @@ motion_mark_char :: (in: Motion_In, char: s32) -> Motion_Result {
 	};
 }
 
+motion_scroll_offset :: (in: Motion_In, $step: int) -> Motion_Result {
+	assert(step == -1 || step == 1);
+	win := in.window;
+	return .{
+		start = win.cursor.position,
+		end = win.cursor.position,
+		flags = .SCROLL_ONLY,
+		scroll = win.scroll + step * in.number,
+	};
+}
+
+motion_scroll_center :: (in: Motion_In) -> Motion_Result {
+	win := in.window;
+	scroll := win.cursor.y - win.size.y / 2;
+	return .{
+		start = win.cursor.position,
+		end = win.cursor.position,
+		flags = .SCROLL_ONLY,
+		scroll = scroll,
+	};
+}
+
 add_all_motions :: () {
 	// MOTIONS
 	add_motion(
+		keybind = .[ KEY_SR ],
+		proc = #bake_arguments motion_scroll_offset(step = -1),
+		flags = .SCROLL_ONLY,
+	);
+	add_motion(
+		keybind = .[ KEY_SF ],
+		proc = #bake_arguments motion_scroll_offset(step = 1),
+		flags = .SCROLL_ONLY,
+	);
+	add_motion(
+		keybind = "Z",
+		proc = motion_scroll_center,
+		flags = .SCROLL_ONLY,
+	);
+	add_motion(
+		keybind = "zz",
+		proc = motion_scroll_center,
+		flags = .SCROLL_ONLY,
+	);
+	add_motion(
 		keybind = "w",
+		flags = .X_ONLY,
 		proc = #bake_arguments(motion_word(step = 1, flags = .NONE)),
 	);
 	add_motion(
 		keybind = "W",
+		flags = .X_ONLY,
 		proc = #bake_arguments(motion_word(step = 1, flags = .FULL)),
 	);
 	add_motion(
 		keybind = "b",
+		flags = .X_ONLY,
 		proc = #bake_arguments(motion_word(step = -1, flags = .NONE)),
 	);
 	add_motion(
 		keybind = "B",
+		flags = .X_ONLY,
 		proc = #bake_arguments(motion_word(step = -1, flags = .FULL)),
 	);
 	add_motion(
 		keybind = "i]",
+		flags = .X_ONLY,
 		proc = #bake_arguments(motion_inner(ch = #char "]", inclusive = false)),
 	);
 	add_motion(
 		keybind = "i)",
+		flags = .X_ONLY,
 		proc = #bake_arguments(motion_inner(ch = #char ")", inclusive = false)),
 	);
 	add_motion(
 		keybind = "i\"",
+		flags = .X_ONLY,
 		proc = #bake_arguments(motion_inner(ch = #char "\"", inclusive = false)),
 	);
 	add_motion(
 		keybind = "iw",
+		flags = .X_ONLY,
 		proc = #bake_arguments(motion_inner(ch = #char "w", inclusive = false)),
 	);
 	add_motion(
 		keybind = "iW",
+		flags = .X_ONLY,
 		proc = #bake_arguments(motion_inner(ch = #char "W", inclusive = false)),
 	);
 	add_motion(
 		keybind = "a]",
+		flags = .X_ONLY,
 		proc = #bake_arguments(motion_inner(ch = #char "]", inclusive = true)),
 	);
 	add_motion(
 		keybind = "a)",
+		flags = .X_ONLY,
 		proc = #bake_arguments(motion_inner(ch = #char ")", inclusive = true)),
 	);
 	add_motion(
 		keybind = "a\"",
+		flags = .X_ONLY,
 		proc = #bake_arguments(motion_inner(ch = #char "\"", inclusive = true)),
 	);
 	/*
@@ -445,78 +510,96 @@ add_all_motions :: () {
 	*/
 	add_motion(
 		keybind = "j",
+		flags = .Y_ONLY,
 		proc = #bake_arguments(motion_step(step = .{ y = 1 })),
 	);
 	add_motion(
 		keybind = "k",
+		flags = .Y_ONLY,
 		proc = #bake_arguments(motion_step(step = .{ y = -1 })),
 	);
 	add_motion(
 		keybind = .[ KEY_LEFT ],
+		flags = .X_ONLY,
 		proc = #bake_arguments(motion_step(step = .{ x = -1 })),
 	);
 	add_motion(
 		keybind = .[ KEY_RIGHT ],
+		flags = .X_ONLY,
 		proc = #bake_arguments(motion_step(step = .{ x = 1 })),
 	);
 	add_motion(
 		keybind = .[ KEY_UP ],
+		flags = .Y_ONLY,
 		proc = #bake_arguments(motion_step(step = .{ y = -1 })),
 	);
 	add_motion(
 		keybind = .[ KEY_DOWN ],
+		flags = .Y_ONLY,
 		proc = #bake_arguments(motion_step(step = .{ y = 1 })),
 	);
 	add_motion(
 		keybind = .[ KEY_HOME ],
+		flags = .X_ONLY,
 		proc = #bake_arguments(motion_end_of_line(step = -1)),
 	);
 	add_motion(
 		keybind = .[ KEY_END ],
+		flags = .X_ONLY,
 		proc = #bake_arguments(motion_end_of_line(step = 1)),
 	);
 	add_motion(
 		keybind = "f",
 		proc = motion_find_char,
+		flags = .X_ONLY,
 		char_proc = #bake_arguments motion_find_char_char(step = 1, inclusive = true),
 	);
 	add_motion(
 		keybind = "F",
 		proc = motion_find_char,
+		flags = .X_ONLY,
 		char_proc = #bake_arguments motion_find_char_char(step = -1, inclusive = true),
 	);
 	add_motion(
 		keybind = "t",
 		proc = motion_find_char,
+		flags = .X_ONLY,
 		char_proc = #bake_arguments motion_find_char_char(step = 1, inclusive = false),
 	);
 	add_motion(
 		keybind = "T",
 		proc = motion_find_char,
+		flags = .X_ONLY,
 		char_proc = #bake_arguments motion_find_char_char(step = -1, inclusive = false),
 	);
 	add_motion(
 		keybind = .[ KEY_CRIGHT ],
+		flags = .X_ONLY,
 		proc = make_motion_alias("W"),
 	);
 	add_motion(
 		keybind = .[ KEY_CLEFT ],
+		flags = .X_ONLY,
 		proc = make_motion_alias("B"),
 	);
 	add_motion(
 		keybind = "gg",
+		flags = .Y_ONLY,
 		proc = #bake_arguments motion_end_of_file(step = -1),
 	);
 	add_motion(
 		keybind = "G",
+		flags = .Y_ONLY,
 		proc = #bake_arguments motion_end_of_file(step = 1),
 	);
 	add_motion(
 		keybind = .[ KEY_NPAGE ],
+		flags = .Y_ONLY,
 		proc = #bake_arguments motion_page_step(step = 1),
 	);
 	add_motion(
 		keybind = .[ KEY_PPAGE ],
+		flags = .Y_ONLY,
 		proc = #bake_arguments motion_page_step(step = -1),
 	);
 	add_motion(
@@ -534,3 +617,11 @@ add_all_motions :: () {
 	);
 }
 
+add_motion :: inline ($keybind: $T/.[string, []s32], flags: Motion.Flags = .NONE, proc: Motion.Proc, char_proc: Motion.Char_Proc = null) {
+	array_add(*context.edit.motions, .{
+		keybind = to_keybind(keybind),
+		flags = flags,
+		proc = proc,
+		char_proc = char_proc,
+	});
+}

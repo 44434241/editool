@@ -98,6 +98,7 @@ compile_syntax :: (using syntax: *Syntax) {
 
 get_jai_syntax :: () -> Syntax {
 	// TODO: multiple variable declarations like "a, b: int;" are not supported
+	// @ notes
 	using syntax: Syntax;
 	elements[KEYWORD1].match = #run join(.. .[
 		"for",
@@ -120,6 +121,9 @@ get_jai_syntax :: () -> Syntax {
 		"operator",
 		"inline",
 		"interface",
+		"size_of",
+		"type_of",
+		"type_info",
 	], "|");
 	syntax.elements[TYPE1].match = #run join(.. .[
 		"int",
@@ -166,7 +170,7 @@ get_jai_syntax :: () -> Syntax {
 	//syntax.elements[EOL_SPACE].replace = "-";
 	//
 	elements[STRING].flags |= .IS_NOT_WORD;
-	elements[NUMBER].flags |= .IS_NOT_WORD;
+	//elements[NUMBER].flags |= .IS_NOT_WORD;
 	elements[TAB].flags |= .IS_NOT_WORD;
 	elements[COMMENT].flags |= .IS_NOT_WORD;
 	elements[TYPE2].flags |= .IS_NOT_WORD;

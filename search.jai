@@ -44,6 +44,7 @@ editool_search_init :: () {
 	//array_adds(*line.chars, "keybind ");
 	buffer.caps |= .MODE_INSERT | .MODE_COMMAND;
 	buffer.caps |= .INSERT_CHARS | .DELETE_CHARS;
+	buffer.caps |= .MOVE;
 	array_add(*buffer.commands, .{
 		keybind = to_keybind("\n"),
 		proc = wrap_command(execute_search),

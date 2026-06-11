@@ -4,8 +4,8 @@ Line :: struct {
 	#overlay(chars.count) count: int;
 	#overlay(chars) as_string: string;
 	//
-	modifiers: [256]Char_Mod;
-	#overlay(modifiers) mods: [256]Char_Mod; // alias
+	modifiers: [1024]Char_Mod = ---; // A LOT !
+	#overlay(modifiers) mods: type_of(modifiers); // alias
 	//
 }
 
@@ -68,9 +68,12 @@ Buffer :: struct {
 		MODE_INSERT;
 		MODE_COMMAND;
 		// Aliases:
+		ERASE_CHARS :: DELETE_CHARS;
+		ERASE_LINES :: DELETE_LINES;
 		INSERT :: INSERT_CHARS | INSERT_LINES;
 		DELETE :: DELETE_CHARS | DELETE_LINES;
 		MOVE :: MOVE_X | MOVE_Y;
+		MODE_ALL :: MODE_INSERT | MODE_COMMAND;
 		ALL :: INSERT | DELETE | MOVE | MODE_INSERT | MODE_COMMAND;
 		NONE :: 0;
 	}
@@ -96,6 +99,8 @@ Buffer :: struct {
 	filename: string;
 	file_flags: File_Flags;
 	syntax: Syntax;
+	// extra stuff
+	user_data: *void; // @Leak
 }
 
 find_or_create_file_buffer :: (_filename: string) -> *Buffer {
@@ -104,7 +109,7 @@ find_or_create_file_buffer :: (_filename: string) -> *Buffer {
 		filename = _normalize_path(filename,, allocator=temp);
 		if is_directory(filename) {
 			// TODO: idk fix shit
-			assert(false, "Trying to open directory...");
+			assert(false, "Trying to open directory (% -> %)...", _filename, filename);
 		}
 		for context.edit.buffers {
 			if it.filename == filename
@@ -301,7 +306,7 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 	assert(op.count >= 0);
 	assert(op.y >= 0);
 	assert(op.x >= 0, "% %", op.x, op.count);
-	_shift_cursor_x :: (it: *Position, pos: Position, count: int, moved_real_x: *bool) {
+	_shift_x :: (it: *Position, pos: Position, count: int, moved_real_x: *bool) {
 		if pos.y == it.y {
 			if count > 0 {
 				if it.x >= pos.x {
@@ -318,7 +323,7 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 			}
 		}
 	}
-	_shift_cursor_y :: (it: *Position, pos: Position, count: int, moved_line_y: *bool) {
+	_shift_y :: (it: *Position, pos: Position, count: int, moved_line_y: *bool) {
 		if count > 0 {
 			is_after: bool = ---;
 			if true
@@ -347,28 +352,32 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 			}
 		}
 	}
-	shift_cursor_y :: (y: int, count: int) #expand {
-		shift_cursor_y(.{0, y}, count);
+	shift_y :: (y: int, count: int) #expand {
+		shift_y(.{0, y}, count);
 	}
-	shift_cursor_y :: (pos: Position, count: int) #expand {
+	shift_y :: (pos: Position, count: int) #expand {
+		if buf.caps & .MOVE_Y == 0
+			return;
 		for * buf.marks {
-			_shift_cursor_y(*it.position, pos, count, null);
+			_shift_y(*it.position, pos, count, null);
 		}
 		for buf.windows {
 			moved_line_y: bool = false;
-			_shift_cursor_y(*it.cursor.position, pos, count, *moved_line_y);
+			_shift_y(*it.cursor.position, pos, count, *moved_line_y);
 			if moved_line_y {
 				update_from_cursor_virtual_x(it);
 			}
 		}
 	}
-	shift_cursor_x :: (pos: Position, count: int) #expand {
+	shift_x :: (pos: Position, count: int) #expand {
+		if buf.caps & .MOVE_X == 0
+			return;
 		for * buf.marks {
-			_shift_cursor_x(*it.position, pos, count, null);
+			_shift_x(*it.position, pos, count, null);
 		}
 		for buf.windows {
 			moved_real_x := false;
-			_shift_cursor_x(*it.cursor.position, pos, count, *moved_real_x);
+			_shift_x(*it.cursor.position, pos, count, *moved_real_x);
 			if moved_real_x
 				refresh_cursor_virtual_x(it);
 		}
@@ -382,7 +391,7 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 				x := op.x + it_index;
 				array_insert_at(*line.chars, it, x);
 			}
-			shift_cursor_x(.{op.x, op.y}, op.chars.count);
+			shift_x(.{op.x, op.y}, op.chars.count);
 		case .DELETE_CHARS;
 			// slow
 			line := *lines[op.y];
@@ -395,7 +404,7 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 			for < op.x..op.x+op.count-1 {
 				array_ordered_remove_by_index(*line.chars, it);
 			}
-			shift_cursor_x(.{ op.x, op.y }, -op.count);
+			shift_x(.{ op.x, op.y }, -op.count);
 		case .SPLIT_LINE;
 			assert(op.y < lines.count);
 			assert(op.x <= lines[op.y].count);
@@ -403,8 +412,8 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 			curr_line: *Line = *lines[op.y];
 			array_add(*new_line.chars, .. advance(curr_line.chars, op.x));
 			curr_line.chars.count = op.x;
-			shift_cursor_y(.{op.x, op.y}, 1);
-			shift_cursor_x(.{0, op.y+1}, -curr_line.count);
+			shift_y(.{op.x, op.y}, 1);
+			shift_x(.{0, op.y+1}, -curr_line.count);
 		case .MERGE_LINES;
 			assert(op.y + 1 < lines.count);
 			assert(op.count == 1);
@@ -416,8 +425,8 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 			next_line: *Line = *lines[op.y+1];
 			array_add(*line.chars, .. next_line.chars);
 			array_ordered_remove_by_index(*lines, op.y+1); // @Leak
-			shift_cursor_x(.{0, op.y+1 }, line_len);
-			shift_cursor_y(op.y, -1);
+			shift_x(.{0, op.y+1 }, line_len);
+			shift_y(op.y, -1);
 		case .INSERT_LINES;
 			assert(op.lines.count == op.count);
 			for op.lines {
@@ -426,7 +435,7 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 				y := op.y + it_index;
 				array_insert_at(*lines, line, y);
 			}
-			shift_cursor_y(op.y, op.lines.count); // this isn't tested for non undos
+			shift_y(op.y, op.lines.count); // this isn't tested for non undos
 		case .DELETE_LINES;
 			assert(op.y + op.count <= lines.count);
 			if flags & .FILL_FOR_REVERSE {
@@ -440,7 +449,7 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 			for < op.y..op.y+op.count-1 { 
 				array_ordered_remove_by_index(*lines, it); // @Leak
 			}
-			shift_cursor_y(op.y, -op.count);
+			shift_y(op.y, -op.count);
 			// TODO: this should be handled differently !!
 			if lines.count == 0
 				array_add(*lines);
@@ -482,7 +491,7 @@ _refresh_buffer_modifiers :: (win: *Window, using buf: *Buffer, ly: int, ry: int
 	for lines_to_refresh {
 		true_line_no := it_index + ly;
 		using,only(mods) it;
-		assert (it.count <= mods.count);
+		//assert (it.count <= mods.count, "%", it.count);
 		for * mods {
 			it.* = .{};
 			it.fg_color = syntax.normal_color;
@@ -520,10 +529,12 @@ _refresh_buffer_modifiers :: (win: *Window, using buf: *Buffer, ly: int, ry: int
 			idx += capture_offset;
 			for 0..something_capture.count-1 {
 				using syntax_element;
-				mod := *mods[idx+it];
-				mod.fg = color;
-				if replace.count > 0 {
-					mod.replaced = string.{ data = *replace[it%replace.count], count = 1 };
+				if idx + it < mods.count {
+					mod := *mods[idx+it];
+					mod.fg = color;
+					if replace.count > 0 {
+						mod.replaced = string.{ data = *replace[it%replace.count], count = 1 };
+					}
 				}
 			}
 			idx += something_capture.count;
@@ -566,6 +577,9 @@ _get_char_info :: (ch: u8) -> Buffer_Char_Info {
 
 #scope_file
 
+#run {
+	log("%\n", _normalize_path("./asdf.jai"));
+}
 // sheesh
 // TODO: './', '../' not supported
 _normalize_path :: (_path: string) -> string {

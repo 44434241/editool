@@ -63,6 +63,14 @@ default_of :: inline ($T: Type) -> T {
 	return v;
 }
 
+round_to_int :: (v: float) -> int {
+	flr := floor(v);
+	if (v - flr) >= 0.5
+		return xx flr + 1;
+	else
+		return xx flr;
+}
+
 #scope_file
 
 #import "Math";

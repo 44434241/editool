@@ -216,6 +216,8 @@ move_cursor :: (using win: *Window, pos: Position, jump := false) {
 }
 
 move_cursor_y :: (using win: *Window, y: int) {
+	if buffer.caps & .MOVE_Y == 0
+		return;
 	cursor.y = clamp(y, 0, lines.count-1); // normalizes self, because needs to get virtual x
 	virtual_x := _from_real_x_in_line(*win.lines[cursor.y], cursor.virtual_real_x);
 	cursor.x = virtual_x;
@@ -223,6 +225,8 @@ move_cursor_y :: (using win: *Window, y: int) {
 }
 
 move_cursor_x :: (using win: *Window, x: int) {
+	if buffer.caps & .MOVE_X == 0
+		return;
 	cursor.x = clamp(x, 0, lines[cursor.y].count);
 	refresh_cursor_virtual_x(win);
 	normalize_cursor(win, with_scroll = false);
@@ -243,13 +247,26 @@ offset_cursor :: (using win: *Window, x: int, y: int) {
 	move_cursor(win, .{ cursor.x + x, cursor.y + y });
 }
 
+offset_cursor_y :: (using win: *Window, y: int) {
+	move_cursor_y(win, cursor.y + y);
+}
+
+offset_cursor_x :: (using win: *Window, x: int) {
+	move_cursor_x(win, cursor.x + x);
+}
+
 // this is kinda a helper
 // (count is number)
 // this also moves scroll !!
 move_cursor :: (res: Motion_Result, count: int = 1) {
 	if res.status != .OK
 		return;
-	win := context.buffer_window;
+	win := res.window;
+	if win.motion_proc {
+		ok := win.motion_proc(win, res);
+		if !ok
+			return;
+	} 
 	if res.is_jump {
 		move_cursor(win, res.end, jump = true);
 	} else if res.start.x == res.end.x || (res.flags & .Y_ONLY) {
@@ -263,7 +280,7 @@ move_cursor :: (res: Motion_Result, count: int = 1) {
 		move_cursor(win, res.end);
 	}
 	if res.scroll >= 0
-		set_scroll(win, res.scroll); // set scroll first, incase its a jump
+		set_scroll(win, res.scroll); 
 }
 
 /// CURSOR END

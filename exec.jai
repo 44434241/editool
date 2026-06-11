@@ -76,6 +76,7 @@ editool_exec_init :: () {
 	line: *Line = array_add(*buffer.lines);
 	buffer.caps |= .MODE_INSERT | .MODE_COMMAND;
 	buffer.caps |= .INSERT_CHARS | .DELETE_CHARS;
+	buffer.caps |= .MOVE;
 	array_add(*buffer.commands, .{
 		keybind = to_keybind("\n"),
 		proc = wrap_command(execute_exec),
@@ -338,7 +339,240 @@ add_all_execs :: () {
 		};
 		return true;
 	});
-	add_exec("ff", #run make_exec_proc((dir: string) -> bool {
+	add_exec("size_fixed", (v: int) -> bool {
+		win := get_window(.NONE);
+		item := Container_Item.{ fixed_size = v };
+		update_container_item(win, item);
+		return true;
+	});
+	add_exec("size_weighted", (v: float) -> bool {
+		win := get_window(.NONE);
+		item := Container_Item.{ weighted_size = v };
+		update_container_item(win, item);
+		return true;
+	});
+	add_exec("fr", #run make_exec_proc((something: string) -> bool {
+		Fzf_State :: struct {
+			search: string;
+			buf1: *Buffer;
+			buf2: *Buffer;
+			win1: *Window;
+			win2: *Window;
+			greps: []Grep_Item;
+		}
+		buf1 := create_custom_buffer();
+		array_add(*buf1.lines);
+		buf1.caps |= .MODE_COMMAND;
+		buf1.caps |= .MOVE_Y;
+		buf2 := create_custom_buffer();
+		buf2.caps |= .MODE_ALL | .INSERT_CHARS | .ERASE_CHARS | .MOVE_X;
+		array_add(*buf2.lines);
+		parent := create_container_window(null, mode = .HORIZONTAL, is_hidden = true);
+		win1 := create_buffer_window(parent, buf1, flags = .BUFFER_LINE_NO, select = false);
+		win2 := create_buffer_window(parent, buf2, select = false);
+		state := New(Fzf_State); // @Leak
+		state.* = .{
+			buf1 = buf1,
+			buf2 = buf2,
+			win1 = win1,
+			win2 = win2,
+		};
+		win1.user_data = state;
+		win2.user_data = state;
+		buf1.user_data = state;
+		buf2.user_data = state;
+		maybe_update_state :: (state: *Fzf_State, force := false) {
+			if state.win2.lines[0].as_string != state.search || force {
+				state.search = state.win2.lines[0].as_string;
+				//if state.search.count <= 0 && false
+					//return;
+				ok, greps := do_grep(state.search);
+				edit_alert("Fr '%': %", state.search, ok);
+				if ok || true {
+					time_this("Set fr");
+					array_reset(*state.win1.lines); // @Leak
+					free(state.greps.data);
+					state.greps = greps; 
+					for * greps {
+						if it.line.count && peek(it.line) == #char "\n"
+							it.line.count -= 1;
+						line: *Line = array_add(*state.win1.lines);
+						array_adds(*line.chars, tprint("%:%: %", it.filename, it.line_number, it.line));
+					}
+					if !greps.count
+						array_add(*state.win1.lines);
+					normalize_cursor(state.win1, with_scroll = true);
+				}
+			}
+		}
+		win2.map_window_for_motion = (win: *Window, motion: *Motion) -> *Window {
+			if motion.flags & (.Y_ONLY | .SCROLL_ONLY) {
+				edit_alert("mapping window !!");
+				state := win.user_data.(*Fzf_State);
+				return state.win1;
+			}
+			return win;
+		};
+		win1.before_draw = (win: *Window) {
+			state := win.user_data.(*Fzf_State);
+			maybe_update_state(state);
+		}
+		win1.apply_mods = (win: *Window, lines: []Line) {
+			for * win.lines[win.cursor.y].mods {
+				it.bg_color = 4;
+			}
+		};
+		enter_command := Command.{
+			keybind = to_keybind("\n"),
+			proc = (in: Command_In) -> Command_Result {
+				win := context.buffer_window;
+				state := win.user_data.(*Fzf_State);
+				if state.greps.count == 0 {
+					return .{ status = .ERROR };
+				}
+				grep := state.greps[state.win1.cursor.y];
+				buf := get_file_buffer(grep.filename);
+				destroy_window(win.parent, _force = true);
+				new_win := get_window(.BUFFER, not_floating = true, not_special = true);
+				edit_alert("new_win: %\n", new_win.*);
+				change_buffer(new_win, buf);
+				move_cursor(new_win, .{ 0, grep.line_number });
+				set_scroll(new_win, grep.line_number - new_win.size.y / 2);
+				change_edit_mode(.COMMAND);
+				return .{};
+			},
+		};
+		array_add(*buf2.commands, enter_command);
+		array_add(*buf2.insert_commands, enter_command);
+		array_add(*buf2.insert_commands, .{
+			keybind = to_keybind(.[ KEY_ESCAPE ]),
+			proc = (_: Command_In) -> Command_Result {
+				destroy_window(context.buffer_window.parent, _force = true);
+				return .{};
+			}
+		});
+		set_floating(parent, .{
+			lx = .{ .BEGIN, 20 },
+			rx = .{ .END, -20 },
+			ly = .{ .BEGIN, 10 },
+			ry = .{ .END, -10 },
+		});
+		maybe_update_state(state, force = true);
+		update_container_item(win2, .{ fixed_size = 1 });
+		select_window(win2);
+		change_edit_mode(.INSERT);
+		return true;
+	}, ""));
+	add_exec("ff", #run make_exec_proc((something: string) -> bool {
+		Ff_State :: struct {
+			search: string;
+			buf1: *Buffer;
+			buf2: *Buffer;
+			win1: *Window;
+			win2: *Window;
+		}
+		buf1 := create_custom_buffer();
+		array_add(*buf1.lines);
+		buf1.caps |= .MODE_COMMAND;
+		buf1.caps |= .MOVE_Y;
+		buf2 := create_custom_buffer();
+		buf2.caps |= .MODE_ALL | .INSERT_CHARS | .ERASE_CHARS | .MOVE_X;
+		array_add(*buf2.lines);
+		parent := create_container_window(null, mode = .HORIZONTAL, is_hidden = true);
+		win1 := create_buffer_window(parent, buf1, flags = .BUFFER_LINE_NO, select = false);
+		win2 := create_buffer_window(parent, buf2, select = false);
+		state := New(Ff_State); // @Leak
+		state.* = .{
+			buf1 = buf1,
+			buf2 = buf2,
+			win1 = win1,
+			win2 = win2,
+		};
+		win1.user_data = state;
+		win2.user_data = state;
+		buf1.user_data = state;
+		buf2.user_data = state;
+		maybe_update_state :: (state: *Ff_State, force := false) {
+			if state.win2.lines[0].as_string != state.search || force {
+				state.search = state.win2.lines[0].as_string;
+				//if state.search.count <= 0 && false
+					//return;
+				_, output := run_command("fd", state.search, ".", "-u", capture_and_return_output = true,, allocator=temp);
+				edit_alert("Ff '%'", state.search);
+				log("OUTPUT: %", output);
+				if true {
+					time_this("Set ff");
+					array_reset(*state.win1.lines); // @Leak
+					for < split(output, #char "\n") {
+						if it.count == 0
+							continue;
+						line: *Line = array_add(*state.win1.lines);
+						array_adds(*line.chars, it);
+					}
+					if output.count == 0
+						array_add(*state.win1.lines);
+					normalize_cursor(state.win1, with_scroll = true);
+				}
+			}
+		}
+		win2.map_window_for_motion = (win: *Window, motion: *Motion) -> *Window {
+			if motion.flags & (.Y_ONLY | .SCROLL_ONLY) {
+				edit_alert("mapping window !!");
+				state := win.user_data.(*Ff_State);
+				return state.win1;
+			}
+			return win;
+		};
+		win1.before_draw = (win: *Window) {
+			state := win.user_data.(*Ff_State);
+			maybe_update_state(state);
+		}
+		win1.apply_mods = (win: *Window, lines: []Line) {
+			for * win.lines[win.cursor.y].mods {
+				it.bg_color = 4;
+			}
+		};
+		enter_command := Command.{
+			keybind = to_keybind("\n"),
+			proc = (in: Command_In) -> Command_Result {
+				win := context.buffer_window;
+				state := win.user_data.(*Ff_State);
+				if state.win1.lines[0].count == 0 {
+					return .{ status = .ERROR };
+				}
+				edit_alert("count: %", win.lines[0].count);
+				fn := state.win1.lines[state.win1.cursor.y].as_string;
+				buf := get_file_buffer(fn);
+				destroy_window(win.parent, _force = true);
+				new_win := get_window(.BUFFER, not_floating = true, not_special = true);
+				edit_alert("new_win: %\n", new_win.*);
+				change_buffer(new_win, buf);
+				change_edit_mode(.COMMAND);
+				return .{};
+			},
+		};
+		array_add(*buf2.commands, enter_command);
+		array_add(*buf2.insert_commands, enter_command);
+		array_add(*buf2.insert_commands, .{
+			keybind = to_keybind(.[ KEY_ESCAPE ]),
+			proc = (_: Command_In) -> Command_Result {
+				destroy_window(context.buffer_window.parent, _force = true);
+				return .{};
+			}
+		});
+		set_floating(parent, .{
+			lx = .{ .BEGIN, 20 },
+			rx = .{ .END, -20 },
+			ly = .{ .BEGIN, 10 },
+			ry = .{ .END, -10 },
+		});
+		maybe_update_state(state, force = true);
+		update_container_item(win2, .{ fixed_size = 1 });
+		select_window(win2);
+		change_edit_mode(.INSERT);
+		return true;
+	}, ""));
+	add_exec("___ff", #run make_exec_proc((something: string) -> bool {
 		// this leaks buffer/window
 		buf := create_custom_buffer();
 		buf.caps |= .MODE_COMMAND;
@@ -382,15 +616,27 @@ add_all_execs :: () {
 				},
 			});
 		}
-		files := file_list(ifx dir else ".", recursive = true);
-		for files {
-			#if 1 {
-				if !ends_with(it, ".jai")
-					continue;
+		#if 1 {
+			files := file_list(ifx something else ".", recursive = true);
+			for files {
+				#if 1 {
+					if !ends_with(it, ".jai")
+						continue;
+				}
+				line: *Line = array_add(*buf.lines);
+				array_adds(*line.chars, it);
 			}
-			line: *Line = array_add(*buf.lines);
-			array_adds(*line.chars, it);
+		} else {
+			ok, greps := do_grep(something,, allocator=temp);
+			if !ok
+				edit_error("grep failed");
+			for greps {
+				line: *Line = array_add(*buf.lines);
+				array_adds(*line.chars, tprint("%:%:% %", it.filename, it.line_number, it.start, it.line));
+			}
 		}
+		if buf.lines.count == 0
+			array_add(*buf.lines);
 		win := create_buffer_window(null, buf, flags = .BUFFER_LINE_NO, is_hidden = true);
 		set_floating(win, .{
 			lx = .{ .BEGIN, 20 },
@@ -409,6 +655,17 @@ _convert_arg :: inline (idx: int, arg: string, $T: Type) -> T #expand {
 		return arg;
 	} else #if T == int {
 		val, ok, remainder := to_integer(arg);
+		if remainder
+			ok = false;
+		if !ok {
+			`return .{
+				status = .ERROR,
+				error_message = tprint("Cannot convert argument % '%' to %", idx+1, arg, T),
+			};
+		}
+		return val;
+	} else #if T == float {
+		val, ok, remainder := string_to_float(arg);
 		if remainder
 			ok = false;
 		if !ok {

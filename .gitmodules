@@ -1,3 +1,6 @@
 [submodule "modules/uniform"]
 	path = modules/uniform
 	url = https://github.com/rluba/uniform
+[submodule "modules/jaison"]
+	path = modules/jaison
+	url = https://github.com/rluba/jaison

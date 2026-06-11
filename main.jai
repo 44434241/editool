@@ -8,9 +8,9 @@
 // multiple clipboards + definition of a system clipboard
 // more options for search/replace 
 // file
-// - proper flags for files being dirty/read only/etc
 // - fix filename normalization
 // - directories
+// properly freeing/destroying buffers & windows without leaking
 // more-generalized indentation?
 // OTHER TODO: (i need a list for this) pwn library for jai?
 
@@ -66,56 +66,6 @@ init_logger :: () {
 	context.logger_data = f;
 }
 
-Waiting_Chars :: struct {
-	number: int = 0;
-	chars: [..]s32;
-	no_number := false;
-}
-
-waiting_chars_reset :: (waiting: *Waiting_Chars) {
-	waiting.number = 0;
-	array_reset(*waiting.chars);
-}
-
-// returns true if chars was added
-update_waiting_chars :: (waiting: *Waiting_Chars, ch: s32) -> bool {
-	if waiting.chars.count == 0 && is_digit(ch) && !waiting.no_number {
-		digit := ch - #char "0";
-		//if waiting.number == 0 && digit != 0
-			//waiting.number = 1;
-		waiting.number = waiting.number * 10 + digit;
-		return false;
-	}
-	array_add(*waiting.chars, ch);
-	return true;
-}
-
-// for now, only a command is waiting for a motion
-Waiting_For_Motion :: struct {
-	#as using _: Waiting_Chars;
-	command: *Command; // pointer i guess..
-	command_in: Command_In;
-}
-
-// either a motion + waiting for motion, or command
-Waiting_For_Char :: struct {
-	#as using _: Waiting_Chars;
-	motion: *Motion; // pointer i guess..
-	command: *Command;
-	// a waiting command asked for this motion, and the result will be given to it
-	waiting_for_motion_index: int = -1;  // if motion != null
-	motion_in: Motion_In;
-	command_in: Command_In;
-}
-
-Command_State :: struct {
-	#as using _: Waiting_Chars;
-	all_chars: [..]s32;
-	//#overlay(chars) str: string
-	waiting_for_motion: [..]Waiting_For_Motion;
-	waiting_for_char: [..]Waiting_For_Char;
-}
-
 Edit_Mode :: enum int {
 	NONE :: 0;
 	INSERT;
@@ -169,19 +119,6 @@ Editool :: struct {
 	next_dot_command: [..]s32;
 	clipboard: Clipboard;
 	//collecting_next_dot_command := false; // if mode == .INSERT
-}
-
-push_dot_command :: () {
-	using context.edit;
-	log("update dot command (% -> %)", current_dot_command, next_dot_command);
-	if next_dot_command.count > 0 {
-		array_reset(*current_dot_command);
-		current_dot_command = next_dot_command;
-		{
-			empty: [..]s32;
-			next_dot_command = empty;
-		}
-	}
 }
 
 // internal ! and very bad
@@ -247,27 +184,6 @@ _change_edit_mode :: (mode: Edit_Mode, _force: bool) {
 		enter_command_mode();
 }
 
-enter_command_mode :: () {
-	push_dot_command();
-	handle_command_step();
-}
-
-exit_command_mode :: () {
-	_reset_command_mode();
-}
-
-_reset_command_mode :: () {
-	log("resetting command mode");
-	using context.command_state;
-	array_reset(*waiting_for_char);
-	array_reset(*waiting_for_motion); // @Leak
-	array_reset(*all_chars); 
-	waiting_chars_reset(*context.command_state); 
-	if context.edit.mode == .COMMAND {
-		handle_command_step();
-	}
-}
-
 keybind_matches :: (keybind: Keybind, chars: $T/.[[]s32, string]) -> bool {
 	if keybind.chars.count != chars.count
 		return false;
@@ -286,143 +202,6 @@ keybind_matches_start :: (keybind: Keybind, chars: []s32) -> bool {
 			return false;
 	}
 	return true;
-}
-
-// optionally returns command result, if any was executed
-_handle_motion_result :: (motion: *Motion, in: Motion_In, res: Motion_Result, waiting: *Waiting_For_Motion,
-		waiting_idx: int, can_char := false) -> (should_reset: bool) {
-	if res.status == {
-		case .OK;
-			assert(waiting.command != null);
-			assert(waiting.command.motion_proc != null);
-			command_res := waiting.command.motion_proc(waiting.command_in, res);
-			return _handle_command_result(waiting.command, waiting.command_in, command_res, can_char = can_char);
-		case .CONTINUE_CHAR;
-			if !can_char {
-				edit_alert("Motion cannot continue char!\n");
-				return true;
-			}
-			array_add(*context.command_state.waiting_for_char, .{
-				no_number = res.continue_no_number,
-				motion_in = in,
-				motion = motion,
-				waiting_for_motion_index = waiting_idx,
-			});
-			return false;
-		case .ERROR;
-			if res.error_message
-				edit_alert("Motion '%' failed: %", keybind_to_string(motion.keybind), res.error_message);
-			else
-				edit_alert("Motion '%' failed", keybind_to_string(motion.keybind));
-			return true;
-	}
-	edit_alert("BAD motion status: %\n", res.status);
-	return true;
-}
-
-_handle_command_result :: (command: *Command, in: Command_In, res: Command_Result, can_motion := false, can_char := false) -> (should_reset: bool) {
-	if res.status == {
-		case .OK;
-			// fails if multiple commands are executed at once?
-			//assert(context.edit.next_dot_command.count == 0); 
-			if res.inserted_chars {
-				array_reset(*context.edit.next_dot_command);
-			}
-			if context.edit.added_chars.count == 0 {
-				if !res.modifies_dot {
-					array_reset(*context.edit.next_dot_command);
-				} else {
-					if context.edit.mode == .COMMAND {
-						push_dot_command();
-					}
-				}
-			}
-			return true;
-		case .ERROR;
-			array_reset(*context.edit.next_dot_command);
-			if res.error_message
-				edit_alert("Command '%' failed: %", keybind_to_string(command.keybind), res.error_message);
-			else
-				edit_alert("Command '%' failed", keybind_to_string(command.keybind));
-			return true;
-		case .CONTINUE_MOTION;
-			if !can_motion {
-				edit_alert("Command cannot continue motion!");
-				return true;
-			}
-			array_add(*context.command_state.waiting_for_motion, .{
-				no_number = res.continue_no_number,
-				command = command,
-				command_in = in,
-			});
-			return false;
-		case .CONTINUE_CHAR;
-			if !can_char {
-				edit_alert("Command cannot continue char!");
-				return true;
-			}
-			array_add(*context.command_state.waiting_for_char, .{
-				no_number = res.continue_no_number,
-				command = command,
-				command_in = in,
-			});
-			return false;
-		case;
-			array_reset(*context.edit.next_dot_command);
-			edit_alert("BAD command status: %\n", res.status);
-			return true;
-	}
-}
-
-// At the end there's either.
-// 1. No command matched, but there's possible commands waiting. Don't reset.
-// 2. No command matched, and there's no more commands waiting. Reset.
-// 3. A command matched, but it should continue. Doesn't count as a match. Don't reset.
-// 4. A command matched, but it failed. Reset.
-// 5. A command matched and it was ok. Should keep it's result. Reset.
-
-// Handles command step but only for commands (not waiting motions or chars or anything else).
-// Returns true if it should continue.
-// Now with commands from the buffer !
-handle_command_step :: () -> (should_reset: bool, found_command: bool) {
-	found_command := false;
-	should_reset := true;
-	{
-		win := get_selected_window_of_kind(.BUFFER);
-		if win {
-			// thats fairly simple actually.....
-			for * win.buffer.commands {
-				if keybind_matches(it.keybind, context.command_state.chars) {
-					in := Command_In.{ number = max(1, context.command_state.number) };
-					res := it.proc(in); 
-					log("Found command '%' - %\n", keybind_to_string(it.keybind), res);
-					reset := _handle_command_result(it, in, res, can_motion = true, can_char = true);
-					should_reset &&= reset;
-					found_command = true;
-					break;
-				}
-				if keybind_matches_start(it.keybind, context.command_state.chars) {
-					should_reset = false;
-				}
-			}
-		}
-	}
-	for * context.edit.commands {
-		if keybind_matches(it.keybind, context.command_state.chars) {
-			in := Command_In.{ number = max(1, context.command_state.number) };
-			res := it.proc(in); 
-			log("Found command '%' - %\n", keybind_to_string(it.keybind), res);
-			reset := _handle_command_result(it, in, res, can_motion = true, can_char = true);
-			should_reset &&= reset;
-			found_command = true;
-			break;
-		}
-		if keybind_matches_start(it.keybind, context.command_state.chars) {
-			log("shouldn't reset?");
-			should_reset = false;
-		}
-	}
-	return should_reset, found_command;
 }
 
 do_some_extra_stuff_to_the_buffer_colors :: (win: *Window) {
@@ -454,17 +233,17 @@ do_some_extra_stuff_to_the_buffer_colors :: (win: *Window) {
 			ch := line.chars[cursor.x];
 			pos: Position = .{ -1, -1 };
 			if ch == #char "(" {
-				pos = find_char_in_window(")", "(",  1);
+				pos = find_char_in_window(win, ")", "(",  1);
 			} else if ch == #char ")" {
-				pos = find_char_in_window("(", ")", -1);
+				pos = find_char_in_window(win, "(", ")", -1);
 			} else if ch == #char "{" {
-				pos = find_char_in_window("}", "{",  1);
+				pos = find_char_in_window(win, "}", "{",  1);
 			} else if ch == #char "}" {
-				pos = find_char_in_window("{", "}", -1);
+				pos = find_char_in_window(win, "{", "}", -1);
 			} else if ch == #char "[" {
-				pos = find_char_in_window("]", "[",  1);
+				pos = find_char_in_window(win, "]", "[",  1);
 			} else if ch == #char "]" {
-				pos = find_char_in_window("[", "]", -1);
+				pos = find_char_in_window(win, "[", "]", -1);
 			}
 			if pos.y >= 0 {
 				mod := *lines[pos.y].modifiers[pos.x];
@@ -500,94 +279,14 @@ do_some_extra_stuff_to_the_buffer_colors :: (win: *Window) {
 	}
 }
 
-handle_command_char :: (ch: s32) {
-	// printable ch!
-	should_reset := true;
-	found_command := false;
-	if context.command_state.waiting_for_char.count > 1 {
-		log_error("too much waiting for char?");
-	}
-	for *waiting: context.command_state.waiting_for_char {
-		if !update_waiting_chars(waiting, ch) {
-			should_reset = false;
-			continue;
-		}
-		if waiting.chars.count > 1
-			continue; // this might happen in the future?
-		assert(waiting.chars.count == 1);
-		assert(waiting.chars[0] == ch);
-		if waiting.motion != null {
-			in := waiting.motion_in;
-			in.number *= max(1, waiting.number);
-			assert(waiting.motion.char_proc != null);
-			res := waiting.motion.char_proc(in, xx ch);
-			waiting_for_motion: *Waiting_For_Motion = *context.command_state.waiting_for_motion[waiting.waiting_for_motion_index];
-			reset := _handle_motion_result(waiting.motion, in, res, waiting_for_motion, waiting.waiting_for_motion_index);
-			should_reset &&= reset;
-		} else {
-			assert(waiting.command != null);
-			in := waiting.command_in;
-			in.number *= max(1, waiting.number);
-			assert(waiting.command.char_proc != null);
-			res := waiting.command.char_proc(in, xx ch);
-			reset := _handle_command_result(waiting.command, in, res);
-			should_reset &&= reset;
-		}
-		found_command = true;
-	}
-	for *waiting, waiting_idx:  context.command_state.waiting_for_motion {
-		if found_command
-			break;
-		assert(waiting.command.motion_proc != null);
-		if !update_waiting_chars(waiting, ch) {
-			should_reset = false;
-			continue;
-		}
-		// thisis slow ?
-		for * context.edit.motions {
-			if keybind_matches(it.keybind, waiting.chars) {
-				in := Motion_In.{ number = max(waiting.number, 1) };
-				res := it.proc(in);
-				reset := _handle_motion_result(it, in, res, waiting, waiting_idx, can_char = true);
-				should_reset &&= reset;
-				found_command = true;
-				break waiting;
-			}
-			if keybind_matches_start(it.keybind, waiting.chars)
-				should_reset = false;
-		}
-	}
-	array_add(*context.command_state.all_chars, ch);
-	if update_waiting_chars(*context.command_state, ch) {
-		step_reset, step_command := handle_command_step();
-		should_reset &= step_reset;
-		found_command |= step_command;
-	} else {
-		should_reset = false;
-	}
-	if should_reset {
-		if !found_command {
-			array_reset(*context.edit.next_dot_command);
-			should_alert := true;
-			if context.command_state.chars.count == 1 && context.command_state.chars[0] == KEY_ESCAPE
-				should_alert = false;
-				
-			// doesn't print numbers here..
-			if should_alert
-				edit_alert("Didn't find command: '%'\n", keybind_to_string(context.command_state.chars,, allocator=temp));
-		} else { // found_command
-		}
-		_reset_command_mode();
-		return;
-	}
-}
-
 handle_insert_char :: (ch: s32) {
 	win := context.buffer_window;
 	for * win.buffer.insert_commands {
 		if keybind_matches(it.keybind, .[ch]) {
 			// calling bad commands here might mess up !!
-			in: Command_In = .{};
+			in: Command_In = .{
+				window = context.buffer_window,
+			};
 			assert(it.proc != null);
 			res := it.proc(in);
 			_handle_command_result(it, in, res);
@@ -608,7 +307,8 @@ handle_insert_char :: (ch: s32) {
 		case;
 			motion: *Motion = get_motion(.[ ch ]);
 			if motion != null {
-				move_cursor(motion.proc(.{}));
+				res := execute_motion(motion);
+				move_cursor(res);
 			} else {
 				edit_alert("Unhandled insert char: %\n", keybind_to_string(.[ ch ],, allocator=temp));
 			}
@@ -623,8 +323,6 @@ handle_char :: (ch: s32) {
 		if ch == {
 			case KEY_RESIZE;
 				refresh_window_size(context.edit.root, force = true);
-				{
-				}
 				return;
 		}
 		if context.edit.mode == .COMMAND || 
@@ -653,8 +351,6 @@ handle_char :: (ch: s32) {
 				handle_insert_char(ch);
 			case .COMMAND;
 				handle_command_char(ch);
-			//case .EXEC;
-				//handle_exec_char(ch);
 			case;
 				edit_alert("Unhandled edit mode: %", context.edit.mode);
 				was_handled = false;
@@ -667,28 +363,6 @@ handle_char :: (ch: s32) {
 
 // these 3 add_* are in main instead of their files...
 // thats fine?
-
-add_motion :: inline ($keybind: $T/.[string, []s32], proc: Motion.Proc, char_proc: Motion.Char_Proc = null) {
-	array_add(*context.edit.motions, .{
-		keybind = to_keybind(keybind),
-		proc = proc,
-		char_proc = char_proc,
-	});
-}
-
-add_command :: inline (name: string = "", keybind: $T/.[string, []s32],
-			proc: Command.Proc, motion_proc: Command.Motion_Proc = null, char_proc: Command.Char_Proc = null, loc := #caller_location) {
-	actual_name := name;
-	if !actual_name
-		actual_name = sprint("%:%:%", loc.fully_pathed_filename, loc.line_number, loc.character_number);
-	array_add(*context.edit.commands, .{
-		name = actual_name,
-		keybind = to_keybind(keybind),
-		proc = proc,
-		motion_proc = motion_proc,
-		char_proc = char_proc,
-	});
-}
 
 //select_window :: (win
 COLOR_COUNT :: 16;
@@ -703,6 +377,11 @@ uncolor_fg_bg :: (col: s32) -> (fg: int, bg: int) {
 	fg, bg := col % (COLOR_COUNT+1) - 1, col / (COLOR_COUNT+1) - 1;
 	return fg, bg;
 	//return COLOR_PAIR(xx ((fg + 1) + (bg + 1) * COLOR_COUNT));
+}
+
+editool_assertion_failed :: (loc: Source_Code_Location, message: string) -> bool {
+	editool_deinit();
+	return runtime_support_assertion_failed(loc, message);
 }
 
 // doesn't init any buffers!!
@@ -765,6 +444,7 @@ editool_init :: () {
 	editool_exec_init();
 	change_edit_mode(.COMMAND);
 	context.edit.time = 1;
+	context.assertion_failed = editool_assertion_failed;
 }
 
 editool_deinit :: () {
@@ -851,15 +531,18 @@ main :: () {
 #load "utils.jai";
 #load "motions.jai";
 #load "commands.jai";
+#load "command_mode.jai";
 #load "buffer.jai";
 #load "syntax.jai";
 #load "window.jai";
 #load "window_ext.jai";
 #load "exec.jai";
 #load "search.jai";
+#load "fzf.jai";
 
 #import "Basic";
 #import "File";
 #import "String";
 #import "ncurses";
+#import "jaison";
 Uniform :: #import "uniform";

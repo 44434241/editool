@@ -23,6 +23,12 @@
 // That would require the root window to be a single fixed window.
 // ^ Seems like the play. 
 
+Container_Item :: struct {
+	fixed_size: int = -1;
+	weighted_size: float = -1;
+	_calculated_size: int;
+}
+
 Anchor :: enum {
 	NONE :: 0;
 	BEGIN;
@@ -116,6 +122,7 @@ Window :: struct {
 	buffer_line_no_position: int = -1; // y
 	second_root_position: int = -1; // if .is_root
 	floating_position: Floating_Position; // if is floating
+	container_item: Container_Item; // .parent is .CONTAINER
 	// CONTAINER
 	Container_Mode :: enum {
 		NONE :: 0;
@@ -143,7 +150,14 @@ Window :: struct {
 	_in_cursor_op: bool; // trying to undo or redo
 	user_title: string;
 	// callbacks ... should be careful
+	// 
 	before_draw: #type (*Window) -> ();
+	apply_mods: #type (*Window, []Line) -> ();
+	motion_proc: #type (*Window, Motion_Result) -> bool; // unused
+	//
+	map_window_for_motion: #type (*Window, *Motion) -> *Window;
+	//map_window_for_command: #type (*Command) -> *Window;
+	user_data: *void;
 }
 
 /// DRAWING
@@ -198,13 +212,12 @@ draw_windows_recursive :: (win: *Window) {
 }
 
 _draw_window :: (using win: *Window) {
-	log("drawing window % (current is %), message: %\n", win, context.buffer_window, user_message);
+	if win.before_draw
+		win.before_draw(win);
 	begin_cursor := Position.{
 		getcurx(nwindow),
 		getcury(nwindow),
 	};
-	if win.before_draw
-		win.before_draw(win);
 	defer {
 		wsyncup(nwindow); // give window content to parents
 		if win.is_root {
@@ -238,10 +251,11 @@ _draw_window :: (using win: *Window) {
 		}
 	}
 	if win.kind == .BUFFER {
-		//width, height := getmaxx(stdscr)+1, getmaxy(stdscr)+1;
 		lines_to_draw_count := min(lines.count - scroll, size.y);
 		lines_to_draw := []Line.{ data = lines.data + scroll, count = lines_to_draw_count };
 		_refresh_buffer_modifiers(win, buffer, scroll, scroll + lines_to_draw_count);
+		if win.apply_mods
+			win.apply_mods(win, lines_to_draw);
 		//
 		time_this("Draw buffer");
 		wclear(nwindow);
@@ -270,14 +284,19 @@ _draw_window :: (using win: *Window) {
 			}
 			wmove(nwindow, xx ny, xx (begin.x));
 			using,only(mods) it;
-			assert (it.count <= mods.count);
+			//assert (it.count <= mods.count);
 			for it.chars {
 				info := _get_char_info(it);
-				// doing goofy colors here.. whatever !!
-				if context.edit.flags & .GOOFY_COLORS {
-					mods[it_index].bg = xx (it_index / 1 - 1);
+				mod: Char_Mod = ---;
+				if it_index < mods.count {
+					// doing goofy colors here.. whatever !!
+					if context.edit.flags & .GOOFY_COLORS {
+						mods[it_index].bg = xx (it_index / 1 - 1);
+					}
+					mod = mods[it_index];
+				} else {
+					mod = .{};
 				}
-				mod := *mods[it_index];
 				// matches are color 2
 				attr := as_ncurses_attribute(mod);
 				wattron(nwindow, attr);
@@ -292,11 +311,13 @@ _draw_window :: (using win: *Window) {
 				}
 				wattrset(nwindow, 0);
 			}
-			attr := as_ncurses_attribute(mods[it.chars.count]);
-			wattrset(nwindow, attr);
-			// to have the correct color at the last position
-			waddch(nwindow, #char " "); // to have normal color
-			wattrset(nwindow, 0);
+			if it.chars.count < mods.count {
+				attr := as_ncurses_attribute(mods[it.chars.count]);
+				wattrset(nwindow, attr);
+				// to have the correct color at the last position
+				waddch(nwindow, #char " "); // to have normal color
+				wattrset(nwindow, 0);
+			}
 		}
 		if win.flags & .BUFFER_STATUS_LINE {
 			// draw buffer status line at `buffer_status_line_position`
@@ -377,14 +398,18 @@ _draw_window :: (using win: *Window) {
 SECOND_ROOT :: true;
 
 // U CREATE ROOT WITH THIS
-create_container_window :: (parent: *Window, nwindow: *WINDOW = null, mode: Window.Container_Mode = .VERTICAL) -> *Window {
+create_container_window :: (parent: *Window, nwindow: *WINDOW = null, mode: Window.Container_Mode = .VERTICAL, is_hidden := false) -> *Window {
+	if is_hidden {
+		assert(parent == null);
+	}
 	win := New(Window);
 	win.id = next_window_id();
+	win.is_hidden = is_hidden;
 	array_add(*context.edit.windows, win);
 	win.kind = .CONTAINER;
 	win.container_mode = mode;
 	win.parent = parent;
-	if parent == null {
+	if !is_hidden && parent == null {
 		if context.edit.root == null {
 			context.edit.root = win;
 			win.is_root = true;
@@ -399,8 +424,13 @@ create_container_window :: (parent: *Window, nwindow: *WINDOW = null, mode: Wind
 		}
 	}
 	if nwindow == null {
-		assert(parent != null);
-		nwindow = derwin(parent.nwindow, 1, 1, 0, 0);
+		if parent != null {
+			nwindow = derwin(parent.nwindow, 1, 1, 0, 0);
+		} else {
+			// Assumes that it belongs to root, will need to remove this later..
+			assert(context.edit.root != null);
+			nwindow = derwin(context.edit.root.nwindow, 1, 1, 0, 0);
+		}
 	}
 	win.nwindow = nwindow;
 	//
@@ -418,25 +448,6 @@ create_container_window :: (parent: *Window, nwindow: *WINDOW = null, mode: Wind
 		refresh_window_size(win);
 	}
 	return win;
-}
-
-add_flags :: (win: *Window, flags: Window.Flags) {
-	win.flags |= flags;
-	refresh_window_size(win);
-}
-
-remove_flags :: (win: *Window, flags: Window.Flags) {
-	win.flags &= ~flags;
-	refresh_window_size(win);
-}
-
-// find implies that it might return null
-find_window :: (id: WinId) -> *Window {
-	for context.edit.windows {
-		if it.id == id
-			return it;
-	}
-	return null;
 }
 
 // screen is explicitly initialized i guess?
@@ -485,6 +496,25 @@ create_buffer_window :: (parent: *Window, buf: *Buffer, flags: Window.Flags = .N
 	return win;
 }
 
+add_flags :: (win: *Window, flags: Window.Flags) {
+	win.flags |= flags;
+	refresh_window_size(win);
+}
+
+remove_flags :: (win: *Window, flags: Window.Flags) {
+	win.flags &= ~flags;
+	refresh_window_size(win);
+}
+
+// find implies that it might return null
+find_window :: (id: WinId) -> *Window {
+	for context.edit.windows {
+		if it.id == id
+			return it;
+	}
+	return null;
+}
+
 // buffers get leaked-ish
 // Doesn't bother to check if it can destroy !!
 destroy_window :: (win: *Window, _force := false) {
@@ -497,7 +527,6 @@ destroy_window :: (win: *Window, _force := false) {
 // this gets called at the right time!
 // Pass `_force = true` flag, if destroying a hidden window. 
 _destroy_window :: (win: *Window, _force: bool = false) -> bool {
-	assert(win.kind == .BUFFER);
 	if win.is_root {
 		edit_error("NOT DESTROYING ROOT");
 		return false;
@@ -515,31 +544,25 @@ _destroy_window :: (win: *Window, _force: bool = false) -> bool {
 			return false;
 		}
 	}
-	is_selected := get_selected_window_of_kind(win.kind) == win;
-	should_unselect := is_selected;
 	if win.is_floating {
 		reset_floating(win);
 	}
+	is_selected := get_selected_window_of_kind(win.kind) == win;
+	should_unselect := is_selected;
 	if win.parent != null {
 		idx := _child_index_of_window(win);
 		if idx < win.parent.active_child || idx + 1 == win.parent.children.count {
 			win.parent.active_child -= 1;
 		}
 		array_ordered_remove_by_index(*win.parent.children, idx);
-		if context.buffer_window == win {
-		}
-	} else {
-		if context.buffer_window == win {
-			context.buffer_window = _active_buffer_of(context.edit.root);
-		}
-	}
+	} 
 	{
 		ok, idx := array_find(context.edit.windows, win);
 		assert(ok);
 		// doesn't have to be ordered remove, i think
 		array_ordered_remove_by_index(*context.edit.windows, idx);
 	}
-	{
+	if win.kind ==.BUFFER {
 		ok, idx := array_find(win.buffer.windows, win);
 		assert(ok);
 		// doesn't have to be ordered remove, i think
@@ -559,6 +582,13 @@ _destroy_window :: (win: *Window, _force: bool = false) -> bool {
 	return true;
 }
 
+update_container_item :: (win: *Window, item: Container_Item) {
+	win.container_item = item;
+	if win.parent
+		refresh_window_size(win.parent);
+}
+
+
 // This is the most messy proc, unclear when it is or when it should be called...
 // But works! Just slow.
 refresh_window_size :: (using win: *Window, force := false) {
@@ -576,9 +606,13 @@ refresh_window_size :: (using win: *Window, force := false) {
 		win.flags &= ~(.BUFFER_STATUS_LINE | .BUFFER_MARKS | .BUFFER_LINE_NO);
 	}
 	// this and initialization are the only place window flags are touched !!!
-	if win.kind == .BUFFER && (win.buffer.kind == .FILE || win.is_floating)
-		win.flags |= .BORDER;
-	if win.kind != .BUFFER 
+	#if 1 {
+		if win.kind == .BUFFER && (win.buffer.kind == .FILE || win.is_floating)
+			win.flags |= .BORDER;
+		if win.kind != .BUFFER 
+			win.flags |= .BORDER;
+	}
+	if win.is_floating
 		win.flags |= .BORDER;
 	if win.buffer == context.search.buffer || win.buffer == context.exec.buffer || win == context.edit.second_root
 		win.flags &= ~.BORDER;
@@ -637,6 +671,56 @@ refresh_window_size :: (using win: *Window, force := false) {
 		case .BUFFER;
 			normalize_scroll(win);
 		case .CONTAINER;
+			if container_mode == .TABBED {
+				for children {
+					_ncurses_full_resize(it.nwindow, begin, size);
+					refresh_window_size(it, force = force);
+				}
+			} else {
+				total_weight: float = 0;
+				total_fixed: int = 0;
+				for children {
+					using it.container_item;
+					if fixed_size > 0 {
+						total_fixed += fixed_size;
+					} else {
+						w := ifx weighted_size > 0 then weighted_size else 1.0;
+						total_weight += w;
+					}
+				}
+				total_size := ifx container_mode == .VERTICAL then size.x else size.y;
+				total_weighted_size := max(total_size - total_fixed, 0);
+				weight: float = 0;
+				fixed: int = 0;
+				next_child_begin := ifx container_mode == .VERTICAL then begin.x else begin.y;
+				for children {
+					child_begin: int = next_child_begin;
+					child_size: int = ---;
+					using it.container_item;
+					if fixed_size > 0 {
+						child_size = fixed_size;
+					} else {
+						w := ifx weighted_size > 0 then weighted_size else 1.0;
+						new_weight := weight + w;
+						child_size = (round_to_int((new_weight / total_weight)* total_weighted_size) - round_to_int((weight / total_weight)* total_weighted_size));
+						weight = new_weight;
+					}
+					child_begin2: Vec2i = begin;
+					child_size2: Vec2i = size;
+					if container_mode == .VERTICAL {
+						child_begin2.x = child_begin;
+						child_size2.x = child_size;
+					} else {
+						child_begin2.y = child_begin;
+						child_size2.y = child_size;
+					}
+					// ...
+					next_child_begin += child_size;
+					_ncurses_full_resize(it.nwindow, child_begin2, child_size2);
+					refresh_window_size(it, force = force);
+				}
+			}
+			/*
 			for children {
 				child_begin: Vec2i = begin;
 				child_end: Vec2i = begin + size;
@@ -661,6 +745,7 @@ refresh_window_size :: (using win: *Window, force := false) {
 				_ncurses_full_resize(it.nwindow, child_begin, child_size);
 				refresh_window_size(it, force = force);
 			}
+			*/
 	}
 }
 
@@ -678,10 +763,6 @@ _set_floating :: (win: *Window, flag: bool, pos: Floating_Position) -> bool {
 		return false;
 	}
 	if flag {
-		if win.kind != .BUFFER {
-			edit_error("TODO: floating non-buffers");
-			return false;
-		}
 		if !win.is_floating {
 			array_add(*context.edit.floating_windows, win);
 			win.is_floating = true;
@@ -790,7 +871,7 @@ get_window :: (kind: Window.Kind, $not_floating := false, not_special := true, $
 			win = context.edit.root; // this will never float
 	}
 	if not_floating {
-		if win.is_floating
+		if _root_of(win).is_floating
 			win = context.edit.root;
 	}
 	assert(win != null);
