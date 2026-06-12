@@ -49,10 +49,22 @@ editool_search_init :: () {
 		if win.cursor.y != win.lines.count - 1 {
 			line: *Line = *win.lines[win.lines.count-1];
 			if line.count > 0 {
-				//line = array_add(*win.lines);
-				array_reset(*line.chars);
+				//array_reset(*line.chars);
+				execute_buffer_operation(win, .{
+					kind = .ERASE_CHARS,
+					y = win.lines.count - 1,
+					x = 0,
+					count = line.count,
+				}, even_if_no_caps = true, no_callback = true);
 			}
-			array_add(*line.chars, .. win.lines[win.cursor.y].chars);
+			//array_add(*line.chars, .. win.lines[win.cursor.y].chars);
+			execute_buffer_operation(win, .{
+				kind = .INSERT_CHARS,
+				y = win.lines.count - 1,
+				x = 0,
+				chars = win.lines[win.cursor.y].chars,
+				count = win.lines[win.cursor.y].count,
+			}, even_if_no_caps = true, no_callback = true);
 			move_cursor_y(win, win.lines.count - 1);
 			op.y = win.cursor.y;
 		}
@@ -87,7 +99,13 @@ start_search :: () {
 	last_win_id = context.buffer_window.id;
 	if window.lines[window.lines.count-1].count != 0 {
 		// hacky... this prevents undo !
-		array_add(*window.lines);
+		//array_add(*window.lines);
+		execute_buffer_operation(window, .{
+			kind = .INSERT_LINES,
+			y = window.lines.count,
+			count = 1,
+			lines = .[ "" ],
+		}, even_if_no_caps = true, no_callback = true);
 	}
 	move_cursor_y(window, window.lines.count - 1);
 	//_clear_search();
@@ -102,10 +120,29 @@ execute_search :: () {
 	if window.cursor.y + 1 != window.lines.count {
 		// move last executed line to the front
 		line: *Line = *window.lines[window.lines.count-1];
-		if line.count > 0
-			line = array_add(*window.lines);
-		array_add(*line.chars, .. window.lines[window.cursor.y].chars);
-		array_ordered_remove_by_index(*window.lines, window.cursor.y); // @Leak
+		if line.count > 0 {
+			//line = array_add(*window.lines);
+			execute_buffer_operation(window, .{
+				kind = .INSERT_LINES,
+				y = window.lines.count,
+				count = 1,
+				lines = .[ "" ],
+			}, even_if_no_caps = true, no_callback = true);
+		}
+		//array_add(*line.chars, .. window.lines[window.cursor.y].chars);
+		execute_buffer_operation(window, .{
+			kind = .INSERT_CHARS,
+			y = window.lines.count-1,
+			x = 0,
+			count = 1,
+			chars = window.lines[window.cursor.y].chars, // should be fine to pass this reference
+		}, even_if_no_caps = true, no_callback = true);
+		//array_ordered_remove_by_index(*window.lines, window.cursor.y); // @Leak
+		execute_buffer_operation(window, .{
+			kind = .ERASE_LINES,
+			y = window.cursor.y,
+			count = 1,
+		}, even_if_no_caps = true, no_callback = true);
 		move_cursor_y(window, window.lines.count - 1);
 	}
 	win := find_window(last_win_id);

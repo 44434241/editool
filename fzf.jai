@@ -35,6 +35,7 @@ do_grep :: (search: string) -> bool, []Grep_Item {
 	}
 	time_this("Do grep");
 	res, output := run_command("rg", search, ".", "--json", "-m", "10", "-S", capture_and_return_output = true,, allocator=temp);
+	//res, output := run_command("rg", search, ".", "/home/user/jai/latest", "--json", "-m", "10", "-S", capture_and_return_output = true,, allocator=temp);
 	ok := res.exit_code == 0;
 	if !ok {
 		return false, .[];
@@ -42,7 +43,7 @@ do_grep :: (search: string) -> bool, []Grep_Item {
 	ret: [..]Grep_Item;
 	//return false, .[];
 	for split(output, #char "\n") {
-		ok, val := json_parse_string(it, Rg_Match,, allocator=temp);
+		ok, val := fson_parse_string(it, Rg_Match,, allocator=temp);
 		if !ok
 			continue;
 		if val.type != "match" // @Leak

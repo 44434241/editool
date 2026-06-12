@@ -67,7 +67,7 @@ compile_syntax :: (using syntax: *Syntax) {
 		//print(*builder, "(.*?(?:^|\\W))"); // CAN'T DO THIS
 		print(*builder, "(.*?)"); 
 		print(*builder, "(");
-		for syntax.elements {
+		for * syntax.elements {
 			defer {
 				if it_index + 1 != syntax.elements.count
 					print(*builder, "|");
@@ -85,7 +85,8 @@ compile_syntax :: (using syntax: *Syntax) {
 				extra_end = "(?:\\W|$)"; 
 				extra_start = "(?:^|\\W)"; // CAN'T DO WITH THIS
 			}
-			print(*builder, "%(%)%0%", extra_start, it.match, it.match_suffix, extra_end);
+			s := tprint("%(%)%0%", extra_start, it.match, it.match_suffix, extra_end);
+			print(*builder, "%", s);
 		}
 		print(*builder, ")");
 		regex_str = builder_to_string(*builder,, allocator=temp);
@@ -154,7 +155,8 @@ get_jai_syntax :: () -> Syntax {
 	elements[DECLARATION].match = "[a-zA-Z_]\\w*+";
 	decl_type :: "[\\[\\]\\w\\.\\*]+[^\\[\\]\\w\\.\\*]";
 	//elements[DECLARATION].match_suffix = "\\s*:\\s*(?:\\**[a-zA-Z_]\\w*+\\s*;|(?:\\**[a-zA-Z_]\\w*+)?=[^;]*;)";
-	elements[DECLARATION].match_suffix = #run sprint("(?:\\s*\\,\\s*\\w+)*\\s*:\\s*(?:%|\\=|#type)", decl_type);
+	// TODO: `a, b := ...` still wrong...
+	elements[DECLARATION].match_suffix = #run sprint("(?:\\s*\\,\\s*\\w+){0}\\s*:\\s*(?:%|\\=|#type)", decl_type);
 	syntax.elements[TYPE2].match = "[A-Z]\\w*[a-z]\\w*+";
 	syntax.elements[DIRECTIVE].match = "#\\w*(?:\\,\\w*+)*+";
 	syntax.elements[STRING].match = "\"(?:[^\"\\\\]|\\\\\"|\\\\)*\"";

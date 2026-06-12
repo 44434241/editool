@@ -287,17 +287,17 @@ _draw_window :: (using win: *Window) {
 				wattrset(nwindow, 0);
 			}
 			wmove(nwindow, xx ny, xx (begin.x));
-			using,only(mods) it;
+			using,only(mods, user_mods) it;
 			//assert (it.count <= mods.count);
 			for it.chars {
 				info := _get_char_info(it);
 				mod: Char_Mod = ---;
-				if it_index < mods.count {
+				if it_index < user_mods.count {
 					// doing goofy colors here.. whatever !!
 					if context.edit.flags & .GOOFY_COLORS {
-						mods[it_index].bg = xx (it_index / 1 - 1);
+						user_mods[it_index].bg = xx (it_index / 1 - 1);
 					}
-					mod = mods[it_index];
+					mod = user_mods[it_index];
 				} else {
 					mod = .{};
 				}
@@ -315,8 +315,8 @@ _draw_window :: (using win: *Window) {
 				}
 				wattrset(nwindow, 0);
 			}
-			if it.chars.count < mods.count {
-				attr := as_ncurses_attribute(mods[it.chars.count]);
+			if it.chars.count < user_mods.count {
+				attr := as_ncurses_attribute(user_mods[it.chars.count]);
 				wattrset(nwindow, attr);
 				// to have the correct color at the last position
 				waddch(nwindow, #char " "); // to have normal color

@@ -609,10 +609,11 @@ add_all_commands :: () {
 				line := *lines[cursor.y];
 				if cursor.x < line.count {
 					log("Under cursor:\n");
-					mod := line.modifiers[cursor.x];
+					mod := line.mods[cursor.x];
+					user_mod := line.user_mods[cursor.x];
 					char := line.chars[cursor.x];
 					//log("char: '%' (%), fg: %, bg: %\n", string.{ data = *char, count = 1 }, char, fg, bg);
-					log("char: '%', mod: %\n", string.{ data = *char, count = 1 }, mod);
+					log("char: '%', mod: %, user_mod: %\n", string.{ data = *char, count = 1 }, mod, user_mod);
 				}
 				log("Cursor marks (idx: %):\n", cursor_mark_index);
 				for cursor_marks {

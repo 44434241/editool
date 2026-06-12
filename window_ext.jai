@@ -133,6 +133,7 @@ offset_scroll :: (using win: *Window, val: int) {
 }
 
 set_scroll :: (using win: *Window, val: int) {
+	edit_alert("set scroll: %", val);
 	scroll = val;
 	normalize_scroll(win);
 }

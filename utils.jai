@@ -1,4 +1,12 @@
 
+// TODO: syntax (declaration) not working here
+array_ordered_remove_range :: (arr: *[..]$T, index: int, count: int) {
+	for index..(arr.count-count)-1 {
+		arr.*[it] = arr.*[it+count];
+	}
+	arr.count -= count;
+}
+
 array_insert_at :: (array: *[..] $T, index: int) -> *T {
 	assert(index >= 0);
 	assert(index <= array.count);
@@ -69,6 +77,12 @@ round_to_int :: (v: float) -> int {
 		return xx flr + 1;
 	else
 		return xx flr;
+}
+
+array_reverse :: (arr: *[]$T) {
+	for 0..arr.count/2-1 {
+		swap(*(arr.*[it]), *(arr.*[arr.count-(it+1)]));
+	}
 }
 
 #scope_file

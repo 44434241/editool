@@ -4,8 +4,14 @@ Line :: struct {
 	#overlay(chars.count) count: int;
 	#overlay(chars) as_string: string;
 	//
-	modifiers: [1024]Char_Mod = ---; // A LOT !
-	#overlay(modifiers) mods: type_of(modifiers); // alias
+	mods: [1024]Char_Mod = ---; // A LOT !
+	user_mods: [1024]Char_Mod = ---;
+	Dirty_Flags :: enum_flags {
+		MODS; 
+		NONE :: 0;
+		ALL :: MODS;
+	}
+	dirty_flags: Dirty_Flags = .ALL;
 	//
 }
 
@@ -158,6 +164,7 @@ create_custom_buffer :: () -> *Buffer {
 	buf.id = next_buffer_id();
 	array_add(*context.edit.buffers, buf);
 	buf.kind = .CUSTOM;
+	array_add(*buf.lines);
 	//buf.syntax = get_jai_syntax(); // TODO: don't duplicate this!!
 	return buf;
 }
@@ -236,6 +243,8 @@ Buffer_Op :: struct {
 		INSERT_LINES;
 		INSERT_CHARS;
 		SPLIT_LINE;
+		ERASE_CHARS :: DELETE_CHARS;
+		ERASE_LINES :: DELETE_LINES;
 	}
 	kind: Kind;
 	flags: Flags;
@@ -258,18 +267,18 @@ Execute_Buffer_Op_Flags :: enum_flags {
 
 // buffer operation THROUGH window
 // This is the only one that respects the callback?
-execute_buffer_operation :: (win: *Window, _op: Buffer_Op) -> bool {
+execute_buffer_operation :: (win: *Window, _op: Buffer_Op, even_if_no_caps := false, no_callback := false) -> bool {
 	op := _op;
 	if op.kind == .INSERT_CHARS {
 		op.chars = array_copy(op.chars);
 	}
 	using buf: *Buffer = win.buffer;
 	ok: bool = true;
-	if ok && buf.modify_buffer_operation {
+	if ok && buf.modify_buffer_operation && !no_callback {
 		ok = buf.modify_buffer_operation(win, *op);
 	}
 	if ok {
-		ok = _execute_buffer_operation(win, buf, *op, .FILL_FOR_REVERSE);
+		ok = _execute_buffer_operation(win, buf, *op, .FILL_FOR_REVERSE, even_if_no_caps = even_if_no_caps);
 	}
 	if ok {
 		assert(buf.operation_index < operations.count);
@@ -282,24 +291,26 @@ execute_buffer_operation :: (win: *Window, _op: Buffer_Op) -> bool {
 
 // leak? (?)
 // The only time this touches `win` instead of just its buffer, is when .MOVE_CURSOR flag is true !!!
-_execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op: *Buffer_Op, flags: Execute_Buffer_Op_Flags) -> bool {
-	if op.kind == {
-		case .INSERT_CHARS;
-			if caps & .INSERT_CHARS == 0
-				return false;
-		case .INSERT_LINES; #through;
-		case .SPLIT_LINE;
-			if caps & .INSERT_LINES == 0
-				return false;
-		case .DELETE_CHARS;
-			if caps & .DELETE_CHARS == 0
-				return false;
-		case .DELETE_LINES; #through;
-		case .MERGE_LINES;
-			if caps & .DELETE_LINES == 0
-				return false;
-		case;
-			log_error("whoops, forgor %\n", op.kind);
+_execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op: *Buffer_Op, flags: Execute_Buffer_Op_Flags, even_if_no_caps := false) -> bool {
+	if !even_if_no_caps {
+		if op.kind == {
+			case .INSERT_CHARS;
+				if caps & .INSERT_CHARS == 0
+					return false;
+			case .INSERT_LINES; #through;
+			case .SPLIT_LINE;
+				if caps & .INSERT_LINES == 0
+					return false;
+			case .DELETE_CHARS;
+				if caps & .DELETE_CHARS == 0
+					return false;
+			case .DELETE_LINES; #through;
+			case .MERGE_LINES;
+				if caps & .DELETE_LINES == 0
+					return false;
+			case;
+				log_error("whoops, forgor %\n", op.kind);
+		}
 	}
 	using,only(cursor) win;
 	if flags & .FILL_FOR_REVERSE {
@@ -414,6 +425,7 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 				array_insert_at(*line.chars, it, x);
 			}
 			shift_x(.{op.x, op.y}, op.chars.count);
+			line.dirty_flags |= .ALL;
 		case .DELETE_CHARS;
 			// slow
 			line := *lines[op.y];
@@ -427,6 +439,7 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 				array_ordered_remove_by_index(*line.chars, it);
 			}
 			shift_x(.{ op.x, op.y }, -op.count);
+			line.dirty_flags |= .ALL;
 		case .SPLIT_LINE;
 			assert(op.y < lines.count);
 			assert(op.x <= lines[op.y].count);
@@ -436,6 +449,8 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 			curr_line.chars.count = op.x;
 			shift_y(.{op.x, op.y}, 1);
 			shift_x(.{0, op.y+1}, -curr_line.count);
+			new_line.dirty_flags |= .ALL;
+			curr_line.dirty_flags |= .ALL;
 		case .MERGE_LINES;
 			assert(op.y + 1 < lines.count);
 			assert(op.count == 1);
@@ -449,10 +464,11 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 			array_ordered_remove_by_index(*lines, op.y+1); // @Leak
 			shift_x(.{0, op.y+1 }, line_len);
 			shift_y(op.y, -1);
+			line.dirty_flags |= .ALL;
 		case .INSERT_LINES;
 			assert(op.lines.count == op.count);
 			for op.lines {
-				line: Line;
+				line: Line; // dirty flags already all !
 				array_add(*line.chars, .. cast([]u8)it); // alloc here? though its fine
 				y := op.y + it_index;
 				array_insert_at(*lines, line, y);
@@ -468,9 +484,7 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 				}
 				op.lines = lines;
 			}
-			for < op.y..op.y+op.count-1 { 
-				array_ordered_remove_by_index(*lines, it); // @Leak
-			}
+			array_ordered_remove_range(*lines, op.y, op.count);
 			shift_count := op.count;
 			shift_y_val := op.y;
 			if op.y == lines.count
@@ -483,6 +497,30 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 			log("unsupported op: %\n", op.kind);
 	}
 	return true;
+}
+
+replace_buffer_lines_without_caps :: (using win: *Window, new_lines: []string) {
+	cursor_pos := win.cursor.position;
+	execute_buffer_operation(win, .{
+		kind = .INSERT_LINES,
+		y = lines.count,
+		count = new_lines.count,
+		lines = new_lines,
+	}, even_if_no_caps = true);
+	if new_lines.count == 0 {
+		execute_buffer_operation(win, .{
+			kind = .INSERT_LINES,
+			y = lines.count,
+			count = 1,
+			lines = .[ "" ],
+		}, even_if_no_caps = true);
+	}
+	execute_buffer_operation(win, .{
+		kind = .ERASE_LINES,
+		y = 0,
+		count = lines.count - new_lines.count,
+	}, even_if_no_caps = true);
+	move_cursor(win, cursor_pos); // this normalizes it too
 }
 
 peek_last_operation :: (using buf: *Buffer) -> *Buffer_Op {
@@ -514,22 +552,30 @@ is_position_in_buffer :: (using buf: *Buffer, pos: Position) -> bool {
 _refresh_buffer_modifiers :: (win: *Window, using buf: *Buffer, ly: int, ry: int) {
 	time_this("Refresh buffer modifiers");
 	lines_to_refresh := []Line.{ data = lines.data + ly, count = ry - ly };
-	for lines_to_refresh {
+	for * lines_to_refresh {
 		true_line_no := it_index + ly;
 		using,only(mods) it;
 		//assert (it.count <= mods.count, "%", it.count);
-		for * mods {
-			it.* = .{};
-			it.fg_color = syntax.normal_color;
+		if it.dirty_flags & .MODS {
+			for * mods {
+				it.* = .{};
+				it.fg_color = syntax.normal_color;
+			}
 		}
+		defer it.user_mods = mods;
 		if !syntax.is_compiled
 			continue;
 		// should have a limit here i think?
 		chars := it.chars;
 		idx := 0;
+		defer it.dirty_flags &= ~.MODS;
+		line: *Line = it;
 		for 1..20 {
+			if line.dirty_flags & .MODS == 0
+				break;
 			string_to_match := advance(cast(string)chars, idx);
 			matched, captures := Uniform.match(string_to_match, syntax.regex, .ANCHOR_START,, allocator=temp);
+			//matched, captures := Uniform.match(string_to_match, syntax.regex, .AN,, allocator=temp);
 			if !matched
 				break;
 			// captures[0] = full

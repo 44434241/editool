@@ -73,7 +73,6 @@ editool_exec_init :: () {
 	using context.exec;
 	buffer = create_custom_buffer();
 	buffer.flags |= .NO_SEARCH;
-	line: *Line = array_add(*buffer.lines);
 	buffer.caps |= .MODE_INSERT | .MODE_COMMAND;
 	buffer.caps |= .INSERT_CHARS | .DELETE_CHARS;
 	buffer.caps |= .MOVE;
@@ -319,24 +318,6 @@ add_all_execs :: () {
 	}
 	add_exec("save", _save_file);
 	add_exec("s", _save_file);
-	add_exec("something", () -> bool {
-		buf := create_custom_buffer();
-		array_add(*buf.lines);
-		buf.caps |= .MODE_COMMAND;
-		win := create_buffer_window(null, buf, flags = .BUFFER_LINE_NO, is_hidden = true, select=false);
-		set_floating(win, .{
-			lx = .{ .END, -30 },
-			rx = .{ .END, -10 },
-			ly = .{ .END, -10 },
-			ry = .{ .END, -5 },
-		});
-		win.before_draw = (win: *Window) {
-			other_line := context.buffer_window.lines[context.buffer_window.cursor.y];
-			array_reset(*win.lines[0].chars);
-			array_add(*win.lines[0].chars, .. other_line.chars);
-		};
-		return true;
-	});
 	add_exec("size_fixed", (v: int) -> bool {
 		win := get_window(.NONE);
 		item := Container_Item.{ fixed_size = v };
@@ -359,7 +340,6 @@ add_all_execs :: () {
 			greps: []Grep_Item;
 		}
 		buf1 := create_custom_buffer();
-		array_add(*buf1.lines);
 		buf1.caps |= .MODE_COMMAND;
 		buf1.caps |= .MOVE_Y;
 		buf2 := create_custom_buffer();
@@ -368,7 +348,6 @@ add_all_execs :: () {
 		// That should be the intended behaviour.
 		buf1.flags |= .TEMP;
 		buf2.flags |= .TEMP;
-		array_add(*buf2.lines);
 		parent := create_container_window(null, mode = .HORIZONTAL, flags = .TEMP_FLOATING, is_hidden = true);
 		win1 := create_buffer_window(parent, buf1, flags = .BUFFER_LINE_NO, select = false);
 		win2 := create_buffer_window(parent, buf2, select = false);
@@ -392,18 +371,25 @@ add_all_execs :: () {
 				edit_alert("Fr '%': %", state.search, ok);
 				if ok || true {
 					time_this("Set fr");
-					array_reset(*state.win1.lines); // @Leak
+					/*
+					execute_buffer_operation(state.win1, .{
+						kind = .DELETE_LINES,
+						y = 0,
+						count = state.win1.lines.count,
+					}, even_if_no_caps = true);
+					*/
 					free(state.greps.data);
 					state.greps = greps; 
+					new_lines: [..]string;
+					new_lines.allocator = temp;
 					for * greps {
 						if it.line.count && peek(it.line) == #char "\n"
 							it.line.count -= 1;
-						line: *Line = array_add(*state.win1.lines);
-						array_adds(*line.chars, tprint("%:%: %", it.filename, it.line_number, it.line));
+						array_add(*new_lines, tprint("%:%: %", it.filename, it.line_number, it.line));
 					}
 					if !greps.count
-						array_add(*state.win1.lines);
-					normalize_cursor(state.win1, with_scroll = true);
+						array_add(*new_lines, "");
+					replace_buffer_lines_without_caps(state.win1, new_lines);
 				}
 			}
 		}
@@ -420,7 +406,7 @@ add_all_execs :: () {
 			maybe_update_state(state);
 		}
 		win1.apply_mods = (win: *Window, lines: []Line) {
-			for * win.lines[win.cursor.y].mods {
+			for * win.lines[win.cursor.y].user_mods {
 				it.bg_color = 1;
 				it.fg_color = 4;
 				it.attributes |= A_STANDOUT;
@@ -501,12 +487,10 @@ add_all_execs :: () {
 			win2: *Window;
 		}
 		buf1 := create_custom_buffer();
-		array_add(*buf1.lines);
 		buf1.caps |= .MODE_COMMAND;
 		buf1.caps |= .MOVE_Y;
 		buf2 := create_custom_buffer();
 		buf2.caps |= .MODE_ALL | .INSERT_CHARS | .ERASE_CHARS | .MOVE_X;
-		array_add(*buf2.lines);
 		// They won't get checked for destruction until any window they belong to gets destroyed.
 		// That should be the intended behaviour.
 		buf1.flags |= .TEMP;
@@ -535,16 +519,11 @@ add_all_execs :: () {
 				log("OUTPUT: %", output);
 				if true {
 					time_this("Set ff");
-					array_reset(*state.win1.lines); // @Leak
-					for < split(output, #char "\n") {
-						if it.count == 0
-							continue;
-						line: *Line = array_add(*state.win1.lines);
-						array_adds(*line.chars, it);
+					new_lines := split(output, #char "\n",, allocator=temp);
+					if new_lines && peek(new_lines) == "" {
+						new_lines.count -= 1;
 					}
-					if output.count == 0
-						array_add(*state.win1.lines);
-					normalize_cursor(state.win1, with_scroll = true);
+					replace_buffer_lines_without_caps(state.win1, new_lines);
 				}
 			}
 		}
@@ -561,7 +540,7 @@ add_all_execs :: () {
 			maybe_update_state(state);
 		}
 		win1.apply_mods = (win: *Window, lines: []Line) {
-			for * win.lines[win.cursor.y].mods {
+			for * win.lines[win.cursor.y].user_mods {
 				it.bg_color = 1;
 				it.fg_color = 4;
 				it.attributes |= A_STANDOUT;
@@ -620,80 +599,6 @@ add_all_execs :: () {
 		update_container_item(win2, .{ fixed_size = 1 });
 		select_window(win2);
 		change_edit_mode(.INSERT);
-		return true;
-	}, ""));
-	add_exec("___ff", #run make_exec_proc((something: string) -> bool {
-		// this leaks buffer/window
-		buf := create_custom_buffer();
-		buf.caps |= .MODE_COMMAND;
-		{
-			//buf.flags |= .SUPPORTS_INSERT;
-			array_add(*buf.commands, .{
-				name = "custom1",
-				keybind = to_keybind("\n"),
-				proc = (_: Command_In) -> Command_Result {
-					log("yup custom command !!");
-					using win := context.buffer_window;
-					str := lines[cursor.y].as_string;
-					buf := get_file_buffer(str);
-					if !buf {
-						return .{
-							status = .ERROR,
-						};
-					}
-					destroy_window(context.buffer_window, _force = true);
-					new_win := get_window(.BUFFER, not_floating = true, not_special = true);
-					change_buffer(new_win, buf);
-					return .{};
-				},
-			});
-			array_add(*buf.commands, .{
-				name = "custom1",
-				keybind = to_keybind("@"),
-				proc = (_: Command_In) -> Command_Result {
-					using win := context.buffer_window;
-					log("string under cursors line is: '%'", lines[cursor.y].as_string);
-					return .{};
-				},
-			});
-			array_add(*buf.commands, .{
-				name = "quit",
-				keybind = to_keybind(.[ KEY_ESCAPE ] ),
-				proc = (_: Command_In) -> Command_Result {
-					using win := context.buffer_window;
-					destroy_window(win, _force = true);
-					return .{};
-				},
-			});
-		}
-		#if 1 {
-			files := file_list(ifx something else ".", recursive = true);
-			for files {
-				#if 1 {
-					if !ends_with(it, ".jai")
-						continue;
-				}
-				line: *Line = array_add(*buf.lines);
-				array_adds(*line.chars, it);
-			}
-		} else {
-			ok, greps := do_grep(something,, allocator=temp);
-			if !ok
-				edit_error("grep failed");
-			for greps {
-				line: *Line = array_add(*buf.lines);
-				array_adds(*line.chars, tprint("%:%:% %", it.filename, it.line_number, it.start, it.line));
-			}
-		}
-		if buf.lines.count == 0
-			array_add(*buf.lines);
-		win := create_buffer_window(null, buf, flags = .BUFFER_LINE_NO, is_hidden = true);
-		set_floating(win, .{
-			lx = .{ .BEGIN, 20 },
-			rx = .{ .END, -20 },
-			ly = .{ .BEGIN, 10 },
-			ry = .{ .END, -10 },
-		});
 		return true;
 	}, ""));
 }

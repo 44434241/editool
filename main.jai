@@ -16,7 +16,7 @@
 // - keybinds to undo/redo ff & fr (just make it proper !)
 // - undo is still off ? but how ?
 // - multiple clipboards + definition of a system clipboard <- jai clipboard is messed up
-// 
+// - i need a proper cursor !!!
 //
 // there are still some memory leaks (idc) with:
 // - buffer lines
@@ -238,7 +238,7 @@ do_some_extra_stuff_to_the_buffer_colors :: (win: *Window) {
 				continue;
 			}
 			for it.position.x..min(line.count, it.position.x + it.count)-1 {
-				line.modifiers[it].bg_color = 2;
+				line.user_mods[it].bg_color = 2;
 			}
 		}
 	}
@@ -263,7 +263,8 @@ do_some_extra_stuff_to_the_buffer_colors :: (win: *Window) {
 				pos = find_char_in_window(win, "[", "]", -1);
 			}
 			if pos.y >= 0 {
-				mod := *lines[pos.y].modifiers[pos.x];
+				line := *lines[pos.y];
+				mod := *lines[pos.y].user_mods[pos.x];
 				mod.fg_color = 7;
 				mod.bg_color = 0;
 				//fg, bg := uncolor_fg_bg(lines[pos.y].colors[pos.x]);
@@ -273,7 +274,7 @@ do_some_extra_stuff_to_the_buffer_colors :: (win: *Window) {
 			}
 		}
 	}
-	{
+	#if 0 { // unused mark modifier thing
 		using buf;
 		for buf.marks {
 			if it.position.y >= lines.count {
@@ -285,7 +286,7 @@ do_some_extra_stuff_to_the_buffer_colors :: (win: *Window) {
 				log_error("fucky wucky mark (x)");
 				continue;
 			}
-			mod := *line.modifiers[it.position.x];
+			mod := *line.mods[it.position.x];
 			mod.fg_color = 7;
 			mod.bg_color = 0;
 			//fg, bg := uncolor_fg_bg(line.colors[it.position.x]);
@@ -579,7 +580,7 @@ main :: () {
 #import "File";
 #import "String";
 #import "ncurses";
-#import "jaison";
+#import "fson";
 Uniform :: #import "uniform";
 
 

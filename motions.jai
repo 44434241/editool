@@ -411,6 +411,7 @@ motion_scroll_offset :: (in: Motion_In, $step: int) -> Motion_Result {
 motion_scroll_center :: (in: Motion_In) -> Motion_Result {
 	win := in.window;
 	scroll := win.cursor.y - win.size.y / 2;
+	scroll = max(scroll, 0);
 	return .{
 		start = win.cursor.position,
 		end = win.cursor.position,
