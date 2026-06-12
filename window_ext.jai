@@ -210,9 +210,11 @@ normalize_cursor :: (using win: *Window, with_scroll: bool, force_jump := false)
 // 
 
 move_cursor :: (using win: *Window, pos: Position, jump := false) {
+	if jump
+		_update_cursor_mark(win, true);
 	move_cursor_y(win, pos.y);
 	move_cursor_x(win, pos.x);
-	normalize_cursor(win, with_scroll = false, force_jump = jump);
+	normalize_cursor(win, with_scroll = false, force_jump = false);
 }
 
 move_cursor_y :: (using win: *Window, y: int) {
@@ -406,10 +408,6 @@ delete_lines :: (using win: *Window, y: int, count: int = 1) {
 	});
 }
 
-split_line :: (using win: *Window) {
-	split_line(win, cursor.position);
-}
-
 _indentation_of_next_line :: (buf: *Buffer, y: int) -> int {
 	ret: int = 0;
 	for buf.lines[y].chars {
@@ -420,14 +418,18 @@ _indentation_of_next_line :: (buf: *Buffer, y: int) -> int {
 	for buf.lines[y].chars {
 		if it == #char "{"
 			ret += 1;
-		//if it == #char "}"
-			//ret -= 1;
+		if it == #char "}"
+			ret -= 1;
 	}
 	ret = max(ret, 0);
 	return ret;
 }
 
-split_line :: (using win: *Window, pos: Position) {
+split_line :: (using win: *Window, indent: bool = true) {
+	split_line(win, cursor.position, indent);
+}
+
+split_line :: (using win: *Window, pos: Position, indent: bool = true) {
 	curr_y := pos.y; // to prevent this aliasing thing
 	// probably validated...
 	ok := execute_buffer_operation(win, .{
@@ -435,7 +437,7 @@ split_line :: (using win: *Window, pos: Position) {
 		y = pos.y,
 		x = pos.x,
 	});
-	if ok {
+	if ok && indent {
 		indent := _indentation_of_next_line(buffer, curr_y);
 		edit_alert("indent (%): %", pos.y, indent);
 		indent_chars := NewArray(indent, u8, initialized = false,, allocator=temp);
@@ -526,3 +528,4 @@ _from_real_x_in_line :: (line: *Line, real_x: int) -> int {
 	}
 	return line.chars.count;
 }
+

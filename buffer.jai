@@ -26,6 +26,7 @@ as_ncurses_attribute :: (mod: Char_Mod) -> s32 {
 	ret: s32 = 0;
 	ret |= COLOR_PAIR(col);
 	ret |= mod.attributes;
+	//ret |= A_BOLD;
 	return ret;
 }
 
@@ -46,8 +47,6 @@ Buffer :: struct {
 	Kind :: enum {
 		NONE :: 0;
 		FILE;
-		//DIR; // HMMMMM
-		//FZF;
 		CUSTOM;
 	}
 	File_Flags :: enum_flags {
@@ -61,7 +60,7 @@ Buffer :: struct {
 		INSERT_LINES;
 		DELETE_CHARS; // should rename this to erase...
 		DELETE_LINES; // should rename this to erase...
-		// Move is not implemented, not sure if i even wanna do it like this..
+		// Move is (mostly) not implemented, not sure if i even wanna do it like this..
 		MOVE_X;
 		MOVE_Y;
 		//
@@ -79,6 +78,7 @@ Buffer :: struct {
 	}
 	Flags :: enum_flags {
 		NO_SEARCH;
+		TEMP; // destroy when windows stop referencing it !
 		NONE :: 0;
 	}
 	flags: Flags;
@@ -101,6 +101,7 @@ Buffer :: struct {
 	syntax: Syntax;
 	// extra stuff
 	user_data: *void; // @Leak
+	modify_buffer_operation: #type (*Window, *Buffer_Op) -> bool;
 }
 
 find_or_create_file_buffer :: (_filename: string) -> *Buffer {
@@ -130,6 +131,18 @@ find_buffer :: (id: BufId) -> *Buffer {
 			return it;
 	}
 	return null;
+}
+
+destroy_buffer :: (buffer: *Buffer) {
+	assert(buffer.windows.count == 0);
+	ok := array_ordered_remove_by_value(*context.edit.buffers, buffer);
+	assert(ok);
+	array_reset(*buffer.commands);
+	array_reset(*buffer.insert_commands);
+	array_reset(*buffer.marks);
+	array_reset(*buffer.operations); // @Leak
+	array_reset(*buffer.lines); // @Leak
+	free(buffer);
 }
 
 // this should never fail, i think, even in the future?
@@ -167,6 +180,8 @@ _create_buffer_from_filename :: (filename: string) -> *Buffer {
 	}
 	if file_ok {
 		string_lines: []string = split(file_str, #char "\n",, allocator=temp);
+		if string_lines.count > 0 && peek(string_lines) == ""
+			string_lines.count -= 1;
 		for string_lines {
 			array_adds(*peek_pointer(buf.lines).chars, it);
 			if it_index + 1 != string_lines.count
@@ -242,13 +257,20 @@ Execute_Buffer_Op_Flags :: enum_flags {
 }
 
 // buffer operation THROUGH window
+// This is the only one that respects the callback?
 execute_buffer_operation :: (win: *Window, _op: Buffer_Op) -> bool {
 	op := _op;
 	if op.kind == .INSERT_CHARS {
 		op.chars = array_copy(op.chars);
 	}
 	using buf: *Buffer = win.buffer;
-	ok := _execute_buffer_operation(win, buf, *op, .FILL_FOR_REVERSE);
+	ok: bool = true;
+	if ok && buf.modify_buffer_operation {
+		ok = buf.modify_buffer_operation(win, *op);
+	}
+	if ok {
+		ok = _execute_buffer_operation(win, buf, *op, .FILL_FOR_REVERSE);
+	}
 	if ok {
 		assert(buf.operation_index < operations.count);
 		operation_index += 1;
@@ -449,7 +471,11 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 			for < op.y..op.y+op.count-1 { 
 				array_ordered_remove_by_index(*lines, it); // @Leak
 			}
-			shift_y(op.y, -op.count);
+			shift_count := op.count;
+			shift_y_val := op.y;
+			if op.y == lines.count
+				shift_y_val -= 1;
+			shift_y(shift_y_val, -shift_count);
 			// TODO: this should be handled differently !!
 			if lines.count == 0
 				array_add(*lines);

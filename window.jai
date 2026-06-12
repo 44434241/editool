@@ -93,7 +93,7 @@ Window :: struct {
 		BUFFER_LINE_NO; // could have some enum for what type of line no is drawn...
 		BUFFER_STATUS_LINE; // eh..
 		CONTAINER_TABS; // should container display tab names?
-		FLOATING_TEMP; // MUST BE PASSED ON INIT. It starts as floating, and if it's no longer selected, then destroy it.
+		TEMP_FLOATING; // MUST BE PASSED ON INIT. It starts as floating, and if it's no longer selected, then destroy it.
 		NONE :: 0;
 	}
 	id: WinId;
@@ -101,6 +101,7 @@ Window :: struct {
 	kind: Kind;
 	nwindow: *WINDOW;
 	nsize: Vec2i;
+	#overlay(nsize) ncurses_size: Vec2i;
 	is_root: bool = false; // if parent != null
 	is_second_root: bool = false;
 	is_any_root: bool = false;
@@ -109,7 +110,6 @@ Window :: struct {
 	is_hidden: bool = false; 
 	parent: *Window; // if exists, always .CONTAINER !!!!
 	is_floating: bool; // feels hacky
-	#overlay(nsize) ncurses_size: Vec2i;
 	user_message: string;
 	// BUFFER
 	using,only(lines) buffer: *Buffer;
@@ -146,9 +146,10 @@ Window :: struct {
 	// last cursor operation that was executed
 	// ALWAYS -1 <=  x < cursor_marks.count
 	cursor_mark_index: int = -1;
-	cursor_marks: [..]Mark;
+	cursor_marks: [..]Mark; // cursor undo/redo !
 	_in_cursor_op: bool; // trying to undo or redo
 	user_title: string;
+	_is_being_destroyed: bool = false;
 	// callbacks ... should be careful
 	// 
 	before_draw: #type (*Window) -> ();
@@ -323,8 +324,8 @@ _draw_window :: (using win: *Window) {
 			// draw buffer status line at `buffer_status_line_position`
 			using,except(lines) win.buffer;
 			fn := get_window_title(win,, allocator=temp);
-			if buffer.is_dirty
-				fn = tprint("% [+]", fn);
+			//if buffer.is_dirty
+				//fn = tprint("% [+]", fn);
 			file_info := tprint(" %  FILE FLAGS: %, BUFFER CAPS: %", fn, file_flags, win.buffer.caps);
 			if win.user_message != "" {
 				file_info = tprint("% | %\n", file_info, win.user_message);
@@ -398,13 +399,14 @@ _draw_window :: (using win: *Window) {
 SECOND_ROOT :: true;
 
 // U CREATE ROOT WITH THIS
-create_container_window :: (parent: *Window, nwindow: *WINDOW = null, mode: Window.Container_Mode = .VERTICAL, is_hidden := false) -> *Window {
+create_container_window :: (parent: *Window, nwindow: *WINDOW = null, flags: Window.Flags = .NONE, mode: Window.Container_Mode = .VERTICAL, is_hidden := false) -> *Window {
 	if is_hidden {
 		assert(parent == null);
 	}
 	win := New(Window);
 	win.id = next_window_id();
 	win.is_hidden = is_hidden;
+	win.flags = flags;
 	array_add(*context.edit.windows, win);
 	win.kind = .CONTAINER;
 	win.container_mode = mode;
@@ -497,6 +499,7 @@ create_buffer_window :: (parent: *Window, buf: *Buffer, flags: Window.Flags = .N
 }
 
 add_flags :: (win: *Window, flags: Window.Flags) {
+	assert(flags & .TEMP_FLOATING == 0);
 	win.flags |= flags;
 	refresh_window_size(win);
 }
@@ -518,6 +521,9 @@ find_window :: (id: WinId) -> *Window {
 // buffers get leaked-ish
 // Doesn't bother to check if it can destroy !!
 destroy_window :: (win: *Window, _force := false) {
+	if win._is_being_destroyed
+		return;
+	win._is_being_destroyed = true;
 	if !_force
 		array_add(*context.edit.windows_to_destroy, win);
 	else
@@ -526,14 +532,14 @@ destroy_window :: (win: *Window, _force := false) {
 
 // this gets called at the right time!
 // Pass `_force = true` flag, if destroying a hidden window. 
-_destroy_window :: (win: *Window, _force: bool = false) -> bool {
+_destroy_window :: (win: *Window, _force: bool = false, _even_only_child := false) -> bool {
 	if win.is_root {
 		edit_error("NOT DESTROYING ROOT");
 		return false;
 	}
 	// if it doesn't have a
 	if win.parent {
-		if win.parent.children.count == 1 {
+		if !_even_only_child && win.parent.children.count == 1 {
 			edit_error("NOT SUPPORTED REMOVING THE ONLY CHILD WINDOW");
 			return false;
 		}
@@ -543,6 +549,19 @@ _destroy_window :: (win: *Window, _force: bool = false) -> bool {
 			edit_error("Must force to destroy a hidden window");
 			return false;
 		}
+	}
+	// `return true` from here on out
+	if win.kind == .CONTAINER {
+		for array_copy(win.children,, allocator=temp) {
+			// TODO: this might mess up if windows get destroyed in a certain order.
+			// should use window ids when saving what to destroy
+			_destroy_window(it, _even_only_child = true);
+		}
+		array_reset(*win.children);
+	}
+	array_reset(*win.cursor_marks);
+	if win.nwindow != stdscr {
+		delwin(win.nwindow);
 	}
 	if win.is_floating {
 		reset_floating(win);
@@ -567,10 +586,13 @@ _destroy_window :: (win: *Window, _force: bool = false) -> bool {
 		assert(ok);
 		// doesn't have to be ordered remove, i think
 		array_ordered_remove_by_index(*win.buffer.windows, idx);
+		if win.buffer.flags & .TEMP != 0 && win.buffer.windows.count == 0 {
+			destroy_buffer(win.buffer);
+		}
 	}
 	parent := win.parent;
 	if should_unselect {
-		if win.parent != null {
+		if win.parent != null && win.parent.active_child >= 0 {
 			select_window(parent.children[win.parent.active_child]);
 		} else {
 			select_window(context.edit.root);
@@ -606,7 +628,7 @@ refresh_window_size :: (using win: *Window, force := false) {
 		win.flags &= ~(.BUFFER_STATUS_LINE | .BUFFER_MARKS | .BUFFER_LINE_NO);
 	}
 	// this and initialization are the only place window flags are touched !!!
-	#if 1 {
+	#if 0 {
 		if win.kind == .BUFFER && (win.buffer.kind == .FILE || win.is_floating)
 			win.flags |= .BORDER;
 		if win.kind != .BUFFER 
@@ -763,17 +785,24 @@ _set_floating :: (win: *Window, flag: bool, pos: Floating_Position) -> bool {
 		return false;
 	}
 	if flag {
+		if win._is_being_destroyed {
+			edit_error("set_floating() on a destroyed window ?");
+			return false;
+		}
 		if !win.is_floating {
 			array_add(*context.edit.floating_windows, win);
 			win.is_floating = true;
 		}
 		win.floating_position = pos;
-	} else {
+	} else { // !flag
 		if win.is_floating {
 			ok := array_ordered_remove_by_value(*context.edit.floating_windows, win);
 			assert(ok);
 			win.is_floating = false;
 			refresh_window_size(win);
+		}
+		if win.flags & .TEMP_FLOATING {
+			destroy_window(win);
 		}
 	}
 	return true;
@@ -905,7 +934,10 @@ get_window_title :: (using win: *Window) -> string {
 		case .BUFFER;
 			if buffer.kind == {
 				case .FILE;
-					return ifx buffer.filename else "<none>"; 
+					s := ifx buffer.filename else "<none>";
+					if buffer.filename && buffer.is_dirty
+						s = tprint("% [+]", s);
+					return s;
 				case .CUSTOM;
 					return "<custom>";
 				case;
@@ -998,3 +1030,6 @@ _ncurses_remake :: (using win: *Window) {
 	delwin(nwindow);
 	nwindow = derwin(parent.nwindow, 1, 1, 0, 0);
 }
+
+
+

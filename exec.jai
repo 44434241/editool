@@ -233,12 +233,8 @@ make_exec_proc :: ($proc: () -> bool) -> Exec_Command.Proc {
 }
 
 add_all_execs :: () {
-	add_exec("print", (s: string) -> bool {
-		log("print from exec: %\n", s);
-		return true;
-	});
-	add_exec("add", (l: int, r: int) -> bool {
-		log("sum from exec is: %\n", l + r);
+	add_exec("force_quit", () -> bool {
+		editool_quit(force = true);
 		return true;
 	});
 	add_exec("message", (s: string) -> bool {
@@ -366,8 +362,12 @@ add_all_execs :: () {
 		buf1.caps |= .MOVE_Y;
 		buf2 := create_custom_buffer();
 		buf2.caps |= .MODE_ALL | .INSERT_CHARS | .ERASE_CHARS | .MOVE_X;
+		// They won't get checked for destruction until any window they belong to gets destroyed.
+		// That should be the intended behaviour.
+		buf1.flags |= .TEMP;
+		buf2.flags |= .TEMP;
 		array_add(*buf2.lines);
-		parent := create_container_window(null, mode = .HORIZONTAL, is_hidden = true);
+		parent := create_container_window(null, mode = .HORIZONTAL, flags = .TEMP_FLOATING, is_hidden = true);
 		win1 := create_buffer_window(parent, buf1, flags = .BUFFER_LINE_NO, select = false);
 		win2 := create_buffer_window(parent, buf2, select = false);
 		state := New(Fzf_State); // @Leak
@@ -419,31 +419,50 @@ add_all_execs :: () {
 		}
 		win1.apply_mods = (win: *Window, lines: []Line) {
 			for * win.lines[win.cursor.y].mods {
-				it.bg_color = 4;
+				it.bg_color = 1;
+				it.fg_color = 4;
+				it.attributes |= A_STANDOUT;
 			}
 		};
+		enter_proc :: (in: Command_In, split: bool) -> Command_Result {
+			win := context.buffer_window;
+			state := win.user_data.(*Fzf_State);
+			if state.greps.count == 0 {
+				return .{ status = .ERROR };
+			}
+			grep := state.greps[state.win1.cursor.y];
+			buf := get_file_buffer(grep.filename);
+			destroy_window(win.parent, _force = true);
+			//
+			new_win: *Window = ---;
+			if !split {
+				new_win = get_window(.BUFFER, not_floating = true, not_special = true);
+				change_buffer(new_win, buf);
+			} else {
+				parent := get_window(.CONTAINER, not_floating = true);
+				new_win = create_buffer_window(parent, buf);
+			}
+			//
+			edit_alert("new_win: %\n", new_win.*);
+			move_cursor(new_win, .{ 0, grep.line_number });
+			set_scroll(new_win, grep.line_number - new_win.size.y / 2);
+			change_edit_mode(.COMMAND);
+			return .{};
+		}
 		enter_command := Command.{
 			keybind = to_keybind("\n"),
-			proc = (in: Command_In) -> Command_Result {
-				win := context.buffer_window;
-				state := win.user_data.(*Fzf_State);
-				if state.greps.count == 0 {
-					return .{ status = .ERROR };
-				}
-				grep := state.greps[state.win1.cursor.y];
-				buf := get_file_buffer(grep.filename);
-				destroy_window(win.parent, _force = true);
-				new_win := get_window(.BUFFER, not_floating = true, not_special = true);
-				edit_alert("new_win: %\n", new_win.*);
-				change_buffer(new_win, buf);
-				move_cursor(new_win, .{ 0, grep.line_number });
-				set_scroll(new_win, grep.line_number - new_win.size.y / 2);
-				change_edit_mode(.COMMAND);
-				return .{};
-			},
+			proc = #bake_arguments enter_proc(split = false),
 		};
+		split_enter_command := Command.{
+			keybind = to_keybind(.[ 20 ]), // ctrl + t
+			proc = #bake_arguments enter_proc(split = true),
+		};
+		//
 		array_add(*buf2.commands, enter_command);
+		array_add(*buf2.commands, split_enter_command);
 		array_add(*buf2.insert_commands, enter_command);
+		array_add(*buf2.insert_commands, split_enter_command);
+		//
 		array_add(*buf2.insert_commands, .{
 			keybind = to_keybind(.[ KEY_ESCAPE ]),
 			proc = (_: Command_In) -> Command_Result {
@@ -478,7 +497,11 @@ add_all_execs :: () {
 		buf2 := create_custom_buffer();
 		buf2.caps |= .MODE_ALL | .INSERT_CHARS | .ERASE_CHARS | .MOVE_X;
 		array_add(*buf2.lines);
-		parent := create_container_window(null, mode = .HORIZONTAL, is_hidden = true);
+		// They won't get checked for destruction until any window they belong to gets destroyed.
+		// That should be the intended behaviour.
+		buf1.flags |= .TEMP;
+		buf2.flags |= .TEMP;
+		parent := create_container_window(null, mode = .HORIZONTAL, flags = .TEMP_FLOATING, is_hidden = true);
 		win1 := create_buffer_window(parent, buf1, flags = .BUFFER_LINE_NO, select = false);
 		win2 := create_buffer_window(parent, buf2, select = false);
 		state := New(Ff_State); // @Leak
@@ -529,30 +552,47 @@ add_all_execs :: () {
 		}
 		win1.apply_mods = (win: *Window, lines: []Line) {
 			for * win.lines[win.cursor.y].mods {
-				it.bg_color = 4;
+				it.bg_color = 1;
+				it.fg_color = 4;
+				it.attributes |= A_STANDOUT;
 			}
 		};
+		enter_proc :: (in: Command_In, split: bool) -> Command_Result {
+			win := context.buffer_window;
+			state := win.user_data.(*Ff_State);
+			if state.win1.lines[0].count == 0 {
+				return .{ status = .ERROR };
+			}
+			edit_alert("count: %", win.lines[0].count);
+			fn := state.win1.lines[state.win1.cursor.y].as_string;
+			buf := get_file_buffer(fn);
+			destroy_window(win.parent, _force = true);
+			new_win: *Window = ---;
+			if !split {
+				new_win = get_window(.BUFFER, not_floating = true, not_special = true);
+				change_buffer(new_win, buf);
+			} else {
+				parent := get_window(.CONTAINER, not_floating = true);
+				new_win = create_buffer_window(parent, buf);
+			}
+			edit_alert("new_win: %\n", new_win.*);
+			change_edit_mode(.COMMAND);
+			return .{};
+		}
 		enter_command := Command.{
 			keybind = to_keybind("\n"),
-			proc = (in: Command_In) -> Command_Result {
-				win := context.buffer_window;
-				state := win.user_data.(*Ff_State);
-				if state.win1.lines[0].count == 0 {
-					return .{ status = .ERROR };
-				}
-				edit_alert("count: %", win.lines[0].count);
-				fn := state.win1.lines[state.win1.cursor.y].as_string;
-				buf := get_file_buffer(fn);
-				destroy_window(win.parent, _force = true);
-				new_win := get_window(.BUFFER, not_floating = true, not_special = true);
-				edit_alert("new_win: %\n", new_win.*);
-				change_buffer(new_win, buf);
-				change_edit_mode(.COMMAND);
-				return .{};
-			},
+			proc = #bake_arguments enter_proc(split = false),
 		};
+		split_enter_command := Command.{
+			keybind = to_keybind(.[ 20 ]), // ctrl + t
+			proc = #bake_arguments enter_proc(split = true),
+		};
+		//
 		array_add(*buf2.commands, enter_command);
+		array_add(*buf2.commands, split_enter_command);
 		array_add(*buf2.insert_commands, enter_command);
+		array_add(*buf2.insert_commands, split_enter_command);
+		//
 		array_add(*buf2.insert_commands, .{
 			keybind = to_keybind(.[ KEY_ESCAPE ]),
 			proc = (_: Command_In) -> Command_Result {

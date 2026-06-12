@@ -7,6 +7,7 @@ Syntax_Element :: struct {
 		// in order of priority ?
 		DEFAULT;
 		TAB;
+		STRING;
 		DIRECTIVE; 
 		KEYWORD1;
 		KEYWORD2;
@@ -16,7 +17,6 @@ Syntax_Element :: struct {
 		CONSTANT1;
 		CONSTANT2;
 		CONSTANT3;
-		STRING;
 		NUMBER;
 		COMMENT;
 		DECLARATION;
@@ -124,6 +124,7 @@ get_jai_syntax :: () -> Syntax {
 		"size_of",
 		"type_of",
 		"type_info",
+		"ifx",
 	], "|");
 	syntax.elements[TYPE1].match = #run join(.. .[
 		"int",
@@ -155,7 +156,7 @@ get_jai_syntax :: () -> Syntax {
 	elements[DECLARATION].match = "[a-zA-Z_]\\w*+";
 	decl_type :: "[\\[\\]\\w\\.\\*]+[^\\[\\]\\w\\.\\*]";
 	//elements[DECLARATION].match_suffix = "\\s*:\\s*(?:\\**[a-zA-Z_]\\w*+\\s*;|(?:\\**[a-zA-Z_]\\w*+)?=[^;]*;)";
-	elements[DECLARATION].match_suffix = #run sprint("\\s*:\\s*(?:%|\\=)", decl_type);
+	elements[DECLARATION].match_suffix = #run sprint("\\s*:\\s*(?:%|\\=|#type)", decl_type);
 	syntax.elements[TYPE2].match = "[A-Z]\\w*[a-z]\\w*+";
 	syntax.elements[DIRECTIVE].match = "#\\w*(?:\\,\\w*+)*+";
 	syntax.elements[STRING].match = "\"(?:[^\"])*\"";

@@ -56,7 +56,7 @@ make_command_alias :: ($chars: $T/.[ []s32, string ]) -> Command.Proc {
 }
 
 command_quit :: (_: Command_In) -> Command_Result {
-	context.edit.should_quit = true;
+	editool_quit();
 	return .{};
 }
 
@@ -534,11 +534,11 @@ add_all_commands :: () {
 	);
 	add_command(
 		keybind = "D",
-		proc = make_command_alias(.[ #char "d", KEY_END ]),
+		proc = make_command_alias(.[ #char "d", #char "$" ]),
 	);
 	add_command(
 		keybind = "C",
-		proc = make_command_alias(.[ #char "c", KEY_END ]),
+		proc = make_command_alias(.[ #char "c", #char "$" ]),
 	);
 	add_command(
 		keybind = "u",
@@ -691,11 +691,15 @@ _copy_range :: (using win: *Window, clipboard: *Clipboard, start: Position, end:
 		return false;
 	}
 	clipboard.lines = copied_lines; // @Leak leaks old lines
+	// TODO: jai linux clipboard is not working
+	// os_clipboard_set_text(join(.. clipboard.lines, separator = "\n"));
 	return true;
 }
 
 _paste :: (using win: *Window, on_next_char: bool) -> bool {
 	clipboard := context.edit.clipboard;
+	// TODO: jai linux clipboard is not working
+	// clipboard.lines = split(os_clipboard_get_text(), #char "\n"); // @Leak leaks old lines, os_clipboard_get_text_allocates
 	if clipboard.lines.count == 0
 		return false;
 	//preserve_cursor :: true;
@@ -705,13 +709,14 @@ _paste :: (using win: *Window, on_next_char: bool) -> bool {
 	//is_line_wise := false;
 	if peek(here_lines).count == 0 {
 		//is_line_wise = true;
-		here_lines.count -= 1;
 		if on_next_char {
-			split_line(win, .{ lines[cursor_pos.y].count, cursor_pos.y });
+			here_lines.count -= 1;
+			split_line(win, .{ lines[cursor_pos.y].count, cursor_pos.y }, indent=false);
 			move_cursor(win, .{0, cursor_pos.y+1});
 			end_cursor_pos.y += 1;
 		} else {
-			split_line(win, .{ 0, cursor_pos.y });
+			here_lines.count -= 1;
+			split_line(win, .{ 0, cursor_pos.y }, indent=false);
 			move_cursor(win, .{0, cursor_pos.y});
 		}
 	} else {
@@ -723,7 +728,7 @@ _paste :: (using win: *Window, on_next_char: bool) -> bool {
 	for here_lines {
 		_write_normal_string(win, it); // these should be normal chars
 		if it_index + 1 != here_lines.count
-			split_line(win);
+			split_line(win, indent=false);
 	}
 	move_cursor(win, end_cursor_pos);
 	return true;
@@ -742,3 +747,8 @@ add_command :: inline (name: string = "", keybind: $T/.[string, []s32],
 		char_proc = char_proc,
 	});
 }
+
+
+#scope_file
+#import "Clipboard";
+

@@ -293,6 +293,7 @@ motion_page_step :: (in: Motion_In, step: int) -> Motion_Result {
 	assert(step == 1 || step == -1);
 	win := in.window;
 	return .{
+		is_jump = true,
 		start = win.cursor.position,
 		end = .{ x = win.cursor.x, y = win.cursor.y + step * (win.size.y-1) * in.number },
 		flags = .Y_ONLY,
@@ -312,10 +313,12 @@ motion_step :: (in: Motion_In, step: Position) -> Motion_Result {
 
 // either start of line or end of line
 // Number unsupported here, don't know how to define that..
-motion_end_of_line  :: (in: Motion_In, step: int) -> Motion_Result {
+motion_end_of_line :: (in: Motion_In, step: int, really_end: bool = true) -> Motion_Result {
 	assert(step == 1 || step == -1);
 	win := in.window;
 	x := ifx step < 0 then 0 else win.lines[win.cursor.y].count;
+	if !really_end && step > 0
+		x = max(0, win.lines[win.cursor.y].count-1);
 	return .{
 		start = win.cursor.position,
 		end = .{ x, win.cursor.y },
@@ -541,12 +544,17 @@ add_all_motions :: () {
 	add_motion(
 		keybind = .[ KEY_HOME ],
 		flags = .X_ONLY,
-		proc = #bake_arguments(motion_end_of_line(step = -1)),
+		proc = #bake_arguments(motion_end_of_line(step = -1, really_end = true)),
 	);
 	add_motion(
 		keybind = .[ KEY_END ],
 		flags = .X_ONLY,
-		proc = #bake_arguments(motion_end_of_line(step = 1)),
+		proc = #bake_arguments(motion_end_of_line(step = 1, really_end = true)),
+	);
+	add_motion(
+		keybind = "$",
+		flags = .X_ONLY,
+		proc = #bake_arguments(motion_end_of_line(step = 1, really_end = false)),
 	);
 	add_motion(
 		keybind = "f",
@@ -625,3 +633,6 @@ add_motion :: inline ($keybind: $T/.[string, []s32], flags: Motion.Flags = .NONE
 		char_proc = char_proc,
 	});
 }
+
+
+

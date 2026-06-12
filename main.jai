@@ -1,4 +1,3 @@
-
 //
 // Thinking: some kind of enter-insert-mode command that doesn't reset running dot command
 // ^ makes dot function as a macro 
@@ -8,11 +7,26 @@
 // multiple clipboards + definition of a system clipboard
 // more options for search/replace 
 // file
-// - fix filename normalization
-// - directories
-// properly freeing/destroying buffers & windows without leaking
 // more-generalized indentation?
 // OTHER TODO: (i need a list for this) pwn library for jai?
+// priority:
+// 
+// - fix filename normalization + relative filenames
+// - directories 
+// - it's laggy ! + glitching sometimes
+// - keybinds to undo/redo ff & fr (just make it proper !)
+// 
+//
+// there are still some memory leaks (idc) with:
+// - buffer lines
+// - buffer operations
+// - window/buffer user_data 
+//
+// how do i manage tabs? alt + something?
+// 
+
+// undo is still off ? but how ?
+//
 
 // hmm..
 Keybind :: struct {
@@ -81,11 +95,12 @@ Editime :: #type,distinct int;
 
 Editool :: struct {
 	Flags :: enum_flags {
-		RELATIVE_LINES;
+		RELATIVE_LINES; // i don't know why this is here.. should be with window or buffer
 		GOOFY_COLORS;
 	}
 	// system
-	flags: Flags = .RELATIVE_LINES;
+	flags: Flags = .RELATIVE_LINES | .GOOFY_COLORS;
+	flags = .RELATIVE_LINES;
 	should_quit: bool;
 	should_reset_edit_mode: bool;
 	added_chars: [..]s32; // synthentic input
@@ -384,6 +399,26 @@ editool_assertion_failed :: (loc: Source_Code_Location, message: string) -> bool
 	return runtime_support_assertion_failed(loc, message);
 }
 
+editool_quit :: (force: bool = false) {
+	can_quit := true;
+	if !force {
+		for context.edit.buffers {
+			if it.kind != .FILE
+				continue;
+			if it.filename == ""
+				continue;
+			if !it.is_dirty
+				continue;
+			edit_alert("File '%' is still dirty!", it.filename);
+			win := get_window(.BUFFER, not_floating = true);
+			change_buffer(win, it);
+			can_quit = false;
+		}
+	}
+	if can_quit
+		context.edit.should_quit = true;
+}
+
 // doesn't init any buffers!!
 editool_init :: () {
 	// logger
@@ -467,6 +502,7 @@ main :: () {
 		//
 		win1 := create_buffer_window(parent, buf);
 		select_window(win1);
+		change_container_mode(win1.parent, .TABBED);
 		{
 			//p := FLOATING_PADDING;
 			//context.edit.floating_nwindow =
@@ -546,3 +582,5 @@ main :: () {
 #import "ncurses";
 #import "jaison";
 Uniform :: #import "uniform";
+
+

@@ -45,6 +45,20 @@ editool_search_init :: () {
 	buffer.caps |= .MODE_INSERT | .MODE_COMMAND;
 	buffer.caps |= .INSERT_CHARS | .DELETE_CHARS;
 	buffer.caps |= .MOVE;
+	buffer.modify_buffer_operation = (win: *Window, op: *Buffer_Op) -> bool {
+		if win.cursor.y != win.lines.count - 1 {
+			line: *Line = *win.lines[win.lines.count-1];
+			if line.count > 0 {
+				//line = array_add(*win.lines);
+				array_reset(*line.chars);
+			}
+			array_add(*line.chars, .. win.lines[win.cursor.y].chars);
+			move_cursor_y(win, win.lines.count - 1);
+			op.y = win.cursor.y;
+		}
+		edit_alert("op %", op.kind);
+		return true;
+	};
 	array_add(*buffer.commands, .{
 		keybind = to_keybind("\n"),
 		proc = wrap_command(execute_search),
@@ -64,13 +78,19 @@ editool_search_init :: () {
 	parent := context.edit.second_root;
 	window = create_buffer_window(parent, context.search.buffer,
 			select = false, is_hidden = false);
+	add_flags(window, .BUFFER_LINE_NO);
 	window.user_title = "SEARCH";
 }
 
 start_search :: () {
 	using context.search;
 	last_win_id = context.buffer_window.id;
-	_clear_search();
+	if window.lines[window.lines.count-1].count != 0 {
+		// hacky... this prevents undo !
+		array_add(*window.lines);
+	}
+	move_cursor_y(window, window.lines.count - 1);
+	//_clear_search();
 	select_window(window);
 	change_edit_mode(.INSERT);
 }
@@ -78,6 +98,15 @@ start_search :: () {
 // pressed enter
 execute_search :: () {
 	using context.search;
+	if window.cursor.y + 1 != window.lines.count {
+		// move last executed line to the front
+		line: *Line = *window.lines[window.lines.count-1];
+		if line.count > 0
+			line = array_add(*window.lines);
+		array_add(*line.chars, .. window.lines[window.cursor.y].chars);
+		array_ordered_remove_by_index(*window.lines, window.cursor.y); // @Leak
+		move_cursor_y(window, window.lines.count - 1);
+	}
 	win := find_window(last_win_id);
 	if win
 		select_window(win);
@@ -98,13 +127,29 @@ execute_search :: () {
 stop_search :: () {
 	using context.search;
 	win := find_window(last_win_id);
-	_clear_search();
+	if window.cursor.y + 1 == window.lines.count {
+		// remove last line!
+		y := window.cursor.y;
+		if y > 0 && window.lines[y].count > 0 {
+			array_reset(*window.lines[y].chars);
+			move_cursor_y(window, window.lines.count - 1);
+		}
+	}
+	//_clear_search();
 	if win
 		select_window(win);
 	else
 		select_normal_window();
 }
 
+/*
+_clear_search :: () {
+	using context.edit.search;
+	y := win.lines.count - 1;
+	delete_chars(window, .{0, y}, window.lines[y].count);
+	_maybe_recompile_search();
+}
+*/
 
 // - parse error:
 // Search 'abc': parse error
@@ -145,23 +190,18 @@ get_search_info_for_status_bar :: (win: *Window) -> string {
 	return builder_to_string(*b,, allocator=temp);
 }
 
-_clear_search :: () {
-	using context.edit.search;
-	delete_chars(window, .{0, 0}, window.lines[0].count);
-	_maybe_recompile_search();
-}
-
 _maybe_recompile_search :: () {
 	using context.edit.search_state;
 	change_time = context.edit.time;
-	if char_string == buffer.lines[0].as_string
+	y := window.cursor.y;
+	if char_string == buffer.lines[y].as_string
 		return;
 	if status != .ERROR {
 		Uniform.uninit(*search_regex);
 	}
 	{
 		array_reset(*chars);
-		array_add(*chars, .. buffer.lines[0].chars);
+		array_add(*chars, .. buffer.lines[y].chars);
 	}
 	status = .SEARCH;
 	search_string = cast(string)chars;
