@@ -1,6 +1,4 @@
 
-// todo: '@ asd' notes
-
 // has reasonable defaults
 Syntax_Element :: struct {
 	Kind :: enum {
@@ -21,6 +19,7 @@ Syntax_Element :: struct {
 		COMMENT;
 		DECLARATION;
 		EOL_SPACE;
+		NOTE;
 		COUNT;
 	}
 	Flags :: enum_flags {
@@ -51,7 +50,8 @@ Syntax :: struct {
 	elements[NUMBER].color = 12; // white
 	elements[TAB].color = 12; // white
 	elements[COMMENT].color = 4; // grey
-	elements[DECLARATION].color = 14; // dark gren (24 or 30 or 6?)
+	elements[DECLARATION].color = 14; // dark green (24 or 30 or 6?)
+	elements[NOTE].color = 6; // dark green (24 or 30 or 6?)
 	elements[EOL_SPACE].color = 4; // grey, same as comment
 	normal_color: s32 = 0;
 	is_compiled: bool = false;
@@ -97,14 +97,12 @@ compile_syntax :: (using syntax: *Syntax) {
 }
 
 get_jai_syntax :: () -> Syntax {
-	// TODO: multiple variable declarations like "a, b: int;" are not supported
-	// @ notes
 	using syntax: Syntax;
 	elements[KEYWORD1].match = #run join(.. .[
 		"for",
 		"while",
 		"cast",
-		"using",
+		"using(?:\\,\\w+)?",
 		"if",
 		"else",
 		"then",
@@ -156,15 +154,16 @@ get_jai_syntax :: () -> Syntax {
 	elements[DECLARATION].match = "[a-zA-Z_]\\w*+";
 	decl_type :: "[\\[\\]\\w\\.\\*]+[^\\[\\]\\w\\.\\*]";
 	//elements[DECLARATION].match_suffix = "\\s*:\\s*(?:\\**[a-zA-Z_]\\w*+\\s*;|(?:\\**[a-zA-Z_]\\w*+)?=[^;]*;)";
-	elements[DECLARATION].match_suffix = #run sprint("\\s*:\\s*(?:%|\\=|#type)", decl_type);
+	elements[DECLARATION].match_suffix = #run sprint("(?:\\s*\\,\\s*\\w+)*\\s*:\\s*(?:%|\\=|#type)", decl_type);
 	syntax.elements[TYPE2].match = "[A-Z]\\w*[a-z]\\w*+";
 	syntax.elements[DIRECTIVE].match = "#\\w*(?:\\,\\w*+)*+";
-	syntax.elements[STRING].match = "\"(?:[^\"])*\"";
+	syntax.elements[STRING].match = "\"(?:[^\"\\\\]|\\\\\"|\\\\)*\"";
 	syntax.elements[NUMBER].match = "\\d+(?:\\.\\d+)?";
 	syntax.elements[TAB].match = "\\t++";
 	syntax.elements[COMMENT].match = "//.*?$";
 	syntax.elements[CONSTANT2].match = "(?:\\$?[A-Z][A-Z_]*+|\\$\\w++)";
 	syntax.elements[CONSTANT3].match = elements[DECLARATION].match;
+	syntax.elements[NOTE].match = "@\\w+";
 	elements[CONSTANT3].match_suffix = #run sprint("\\s*:\\s*(?:%)?\\w*:", decl_type);
 	// I'd want EOL_SPACE to match line chars *before* the cursor
 	//syntax.elements[EOL_SPACE].match = " +$";

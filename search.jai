@@ -95,6 +95,7 @@ start_search :: () {
 	change_edit_mode(.INSERT);
 }
 
+// Can have a thing where execute_search gets passed a window?
 // pressed enter
 execute_search :: () {
 	using context.search;
@@ -130,7 +131,7 @@ stop_search :: () {
 	if window.cursor.y + 1 == window.lines.count {
 		// remove last line!
 		y := window.cursor.y;
-		if y > 0 && window.lines[y].count > 0 {
+		if window.lines[y].count > 0 {
 			array_reset(*window.lines[y].chars);
 			move_cursor_y(window, window.lines.count - 1);
 		}

@@ -270,6 +270,9 @@ _draw_window :: (using win: *Window) {
 			}
 			{
 				wattrset(nwindow, A_BOLD);
+				// I don't know which one to pick !
+				wattron(nwindow, COLOR_PAIR(color_fg_bg(3, -1)));
+				wattron(nwindow, COLOR_PAIR(color_fg_bg(6, -1)));
 				if win.flags & .BUFFER_MARKS {
 					// buffer makr position was already taken into account when resizing window !
 					ok, mark := get_mark_at_y(win.buffer, y);
@@ -385,6 +388,7 @@ _draw_window :: (using win: *Window) {
 			count += title.count;
 			wattrset(nwindow, 0);
 		}
+		wattrset(nwindow, 0);
 		wattron(nwindow, COLOR_PAIR(color_fg_bg(0, 7)));
 		wattron(nwindow, A_STANDOUT);
 		for count..size.x-1 {
@@ -636,7 +640,7 @@ refresh_window_size :: (using win: *Window, force := false) {
 	}
 	if win.is_floating
 		win.flags |= .BORDER;
-	if win.buffer == context.search.buffer || win.buffer == context.exec.buffer || win == context.edit.second_root
+	if win == context.search.window || win == context.exec.window || win == context.edit.second_root
 		win.flags &= ~.BORDER;
 	if win.kind == .CONTAINER {
 		win.flags |= .CONTAINER_TABS;
@@ -777,6 +781,15 @@ reset_floating :: (win: *Window) -> bool {
 
 set_floating :: (win: *Window, pos: Floating_Position) -> bool {
 	return _set_floating(win, true, pos);
+}
+
+set_floating :: (win: *Window) -> bool {
+	return set_floating(win, .{
+		lx = .{ .BEGIN, 20 },
+		rx = .{ .END, -20 },
+		ly = .{ .BEGIN, 10 },
+		ry = .{ .END, -10 },
+	});
 }
 
 _set_floating :: (win: *Window, flag: bool, pos: Floating_Position) -> bool {
@@ -935,6 +948,15 @@ get_window_title :: (using win: *Window) -> string {
 			if buffer.kind == {
 				case .FILE;
 					s := ifx buffer.filename else "<none>";
+					
+					if buffer.filename {
+						pwd := get_working_directory(,,allocator = temp);
+						if starts_with(s, pwd) {
+							s = advance(s, pwd.count);
+							if s.count && s[0] == #char "/"
+								s = advance(s, 1);
+						}
+					}
 					if buffer.filename && buffer.is_dirty
 						s = tprint("% [+]", s);
 					return s;

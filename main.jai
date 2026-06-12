@@ -4,17 +4,18 @@
 // Same for leaving command mode without reseting running dot command.
 // ...
 // ? fast matching
-// multiple clipboards + definition of a system clipboard
-// more options for search/replace 
+// more options for search/replace (make it case sensitive?)
+// generalized command history for search/exec
 // file
 // more-generalized indentation?
 // OTHER TODO: (i need a list for this) pwn library for jai?
-// priority:
 // 
 // - fix filename normalization + relative filenames
 // - directories 
-// - it's laggy ! + glitching sometimes
+// - it's laggy ! + glitching sometimes <- priority
 // - keybinds to undo/redo ff & fr (just make it proper !)
+// - undo is still off ? but how ?
+// - multiple clipboards + definition of a system clipboard <- jai clipboard is messed up
 // 
 //
 // there are still some memory leaks (idc) with:
@@ -22,10 +23,10 @@
 // - buffer operations
 // - window/buffer user_data 
 //
-// how do i manage tabs? alt + something?
-// 
+// thinking...:
+// - how do i manage tabs? alt + something?
+// - i need to have multiple previous-jump lists, for short and long jumps..
 
-// undo is still off ? but how ?
 //
 
 // hmm..
@@ -142,6 +143,7 @@ edit_error :: (fmt: string, args: .. Any) {
 } @PrintLike
 
 // assumed to be a warning
+// (it isn't actually.. )
 edit_alert :: (fmt: string, args: .. Any, is_internal := false) {
 	s := sprint(fmt, .. args);
 	log_error("ALERT: %", s);
@@ -380,7 +382,7 @@ handle_char :: (ch: s32) {
 // thats fine?
 
 //select_window :: (win
-COLOR_COUNT :: 16;
+COLOR_COUNT :: 31; // having 32 colors messes up some stuff! (tab A_STANDOUT thing)
 
 // returns pair index, still need to call COLOR_PAIR
 color_fg_bg :: (fg: int, bg: int) -> (pair: s32) {
@@ -462,14 +464,6 @@ editool_init :: () {
 			}
 		}
 	}
-	#if 0 {
-		for i: 0..COLOR_COUNT-1 {
-			for j: 0..COLOR_COUNT-1 {
-				init_pair(xx (i + j * COLOR_COUNT), xx (i-1), xx (j-1));
-				init_pair(xx (i + j * COLOR_COUNT), xx (i-1), -1);
-			}
-		}
-	}
 	// editool
 	add_all_motions();
 	add_all_commands();
@@ -517,6 +511,11 @@ main :: () {
 			if edit.should_reset_edit_mode {
 				_change_edit_mode(edit.mode, _force = true);
 				edit.should_reset_edit_mode = false;
+			}
+			for edit.floating_windows {
+				if it.flags & .TEMP_FLOATING && get_selected_window_of_kind(it.kind) != it {
+					destroy_window(it, _force = true);
+				}
 			}
 			windows_to_destroy := edit.windows_to_destroy;
 			windows_to_force_destroy := edit.windows_to_force_destroy;

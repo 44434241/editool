@@ -302,7 +302,7 @@ add_all_execs :: () {
 		destroy_window(context.buffer_window); // if it can't destroy, it will notify later?
 		return true;
 	});
-	add_exec("save", () -> bool {
+	_save_file :: () -> bool {
 		using win := context.buffer_window;
 		if buffer.kind != .FILE {
 			return false;
@@ -316,7 +316,9 @@ add_all_execs :: () {
 		if ok
 			buffer.is_dirty = false;
 		return ok;
-	});
+	}
+	add_exec("save", _save_file);
+	add_exec("s", _save_file);
 	add_exec("something", () -> bool {
 		buf := create_custom_buffer();
 		array_add(*buf.lines);
@@ -482,6 +484,14 @@ add_all_execs :: () {
 		change_edit_mode(.INSERT);
 		return true;
 	}, ""));
+	add_exec("search", () -> bool {
+		buf := context.search.buffer;
+		win := create_buffer_window(null, buf, flags = .TEMP_FLOATING | .BUFFER_LINE_NO | .BORDER, is_hidden = true, select = false);
+		ok := set_floating(win);
+		if ok 
+			select_window(win);
+		return ok;
+	});
 	add_exec("ff", #run make_exec_proc((something: string) -> bool {
 		Ff_State :: struct {
 			search: string;
