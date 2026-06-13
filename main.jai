@@ -3,30 +3,30 @@
 // ^ makes dot function as a macro 
 // Same for leaving command mode without reseting running dot command.
 // ...
-// ? fast matching
+// 
 // more options for search/replace (make it case sensitive?)
-// generalized command history for search/exec
-// file
-// more-generalized indentation?
+// 
 // OTHER TODO: (i need a list for this) pwn library for jai?
 // 
 // - fix filename normalization + relative filenames
-// - directories 
-// - it's laggy ! + glitching sometimes <- priority
-// - keybinds to undo/redo ff & fr (just make it proper !)
+// - directories (and a buffer thing for renaming directories)
+// - some stuff in the search logic still modifies lines directly .. <- make sure no empty/repeat commands in history (i think i fixed that one though)
+// - ^ generalized command history for search/exec <- need this to be able to edit floating files
+//
+// - keybinds to undo/redo ff & fr (as in, see history??) (just make it proper !)
 // - undo is still off ? but how ?
-// - multiple clipboards + definition of a system clipboard <- jai clipboard is messed up
-// - i need a proper cursor !!!
-//
-// there are still some memory leaks (idc) with:
-// - buffer lines
-// - buffer operations
-// - window/buffer user_data 
-//
+// - multiple clipboards ?
+// - delete_motion "ct." is being goofy (because dot?) <- need to fix up commands and their priorities !!
+// - multiline searching?
+// - move windows
+// - breaks clipboard image, when open ...
+// - change inner: '.', '_'
 // thinking...:
-// - how do i manage tabs? alt + something?
+// - how do i manage tabs? alt + something? <- fuckign do this after fzf or now idk
 // - i need to have multiple previous-jump lists, for short and long jumps..
-
+// { } matching in do_some_extra_stuff* with multiple windows is wrong !
+//
+// ff/fd previews files ! <- + highlighting
 //
 
 // hmm..
@@ -134,7 +134,16 @@ Editool :: struct {
 	current_dot_command: [..]s32;
 	next_dot_command: [..]s32;
 	clipboard: Clipboard;
-	//collecting_next_dot_command := false; // if mode == .INSERT
+	//
+	x11_window: X11.Window;
+}
+
+edit_get_os_clipboard :: () -> string {
+	return os_clipboard_get_text(context.edit.x11_window,, allocator=temp);
+}
+
+edit_set_os_clipboard :: (s: string) {
+	os_clipboard_set_text(context.edit.x11_window, s);
 }
 
 // internal ! and very bad
@@ -172,11 +181,11 @@ reset_edit_mode :: () {
 }
 
 change_edit_mode :: (mode: Edit_Mode) {
-	_change_edit_mode(mode, _force = false);
+	_change_edit_mode(mode, force = false);
 }
 
-_change_edit_mode :: (mode: Edit_Mode, _force: bool) {
-	if !_force && context.edit.mode == mode
+_change_edit_mode :: (mode: Edit_Mode, force: bool) {
+	if !force && context.edit.mode == mode
 		return;
 	// reset
 	if context.edit.mode == .COMMAND
@@ -199,6 +208,8 @@ _change_edit_mode :: (mode: Edit_Mode, _force: bool) {
 	// start
 	if context.edit.mode == .COMMAND
 		enter_command_mode();
+	if context.buffer_window
+		normalize_cursor(context.buffer_window, with_scroll = false);
 }
 
 keybind_matches :: (keybind: Keybind, chars: $T/.[[]s32, string]) -> bool {
@@ -238,6 +249,8 @@ do_some_extra_stuff_to_the_buffer_colors :: (win: *Window) {
 				continue;
 			}
 			for it.position.x..min(line.count, it.position.x + it.count)-1 {
+				if it >= Line.user_mods.count
+					break;
 				line.user_mods[it].bg_color = 2;
 			}
 		}
@@ -262,7 +275,7 @@ do_some_extra_stuff_to_the_buffer_colors :: (win: *Window) {
 			} else if ch == #char "]" {
 				pos = find_char_in_window(win, "[", "]", -1);
 			}
-			if pos.y >= 0 {
+			if pos.y >= 0 && pos.x < Line.user_mods.count {
 				line := *lines[pos.y];
 				mod := *lines[pos.y].user_mods[pos.x];
 				mod.fg_color = 7;
@@ -300,6 +313,7 @@ do_some_extra_stuff_to_the_buffer_colors :: (win: *Window) {
 handle_insert_char :: (ch: s32) {
 	win := context.buffer_window;
 	for * win.buffer.insert_commands {
+		//log("testing % (%)", s32.[ ch ], it.keybind);
 		if keybind_matches(it.keybind, .[ch]) {
 			// calling bad commands here might mess up !!
 			in: Command_In = .{
@@ -308,6 +322,7 @@ handle_insert_char :: (ch: s32) {
 			assert(it.proc != null);
 			res := it.proc(in);
 			_handle_command_result(it, in, res);
+			return;
 		}
 	}
 	if is_printable_char(ch) {
@@ -316,12 +331,9 @@ handle_insert_char :: (ch: s32) {
 		case #char "\t"; #through; 
 		case #char "\n";
 			write_char(win, xx ch);
+		case 5; #through; // ctrl + e
 		case KEY_ESCAPE; // escape
 			change_edit_mode(.COMMAND);
-		case KEY_SR;
-			offset_scroll(win, -1);
-		case KEY_SF;
-			offset_scroll(win, 1);
 		case;
 			motion: *Motion = get_motion(.[ ch ]);
 			if motion != null {
@@ -341,6 +353,7 @@ handle_char :: (ch: s32) {
 		if ch == {
 			case KEY_RESIZE;
 				refresh_window_size(context.edit.root, force = true);
+				wclear(stdscr);
 				return;
 		}
 		if context.edit.mode == .COMMAND || 
@@ -410,7 +423,7 @@ editool_quit :: (force: bool = false) {
 				continue;
 			if it.filename == ""
 				continue;
-			if !it.is_dirty
+			if !is_dirty(it)
 				continue;
 			edit_alert("File '%' is still dirty!", it.filename);
 			win := get_window(.BUFFER, not_floating = true);
@@ -430,6 +443,7 @@ editool_init :: () {
 	// ncurses
 	initscr();
 	noecho(); 
+	nodelay(stdscr, true);
 	keypad(stdscr, true); // use all keys
 	set_escdelay(10); // ms
 	if !has_colors() || !can_change_color() {
@@ -475,9 +489,20 @@ editool_init :: () {
 	change_edit_mode(.COMMAND);
 	context.edit.time = 1;
 	context.assertion_failed = editool_assertion_failed;
+	// x11
+	{
+		X11.init_global_display();
+		// invisible window for clipboard ..
+		context.edit.x11_window = X11.XCreateSimpleWindow(
+				X11.x_global_display, X11.DefaultRootWindow(X11.x_global_display),
+				0, 0, 1, 1, 0, 0, 0);
+		array_add(*X11.x_global_windows, context.edit.x11_window);
+	}
+	context.print_style.default_format_struct.use_newlines_if_long_form = true;
 }
 
 editool_deinit :: () {
+	print("\x1b[2 q"); 
 	endwin();
 }
 
@@ -510,12 +535,12 @@ main :: () {
 		{
 			// housekeeping here + before drawing
 			if edit.should_reset_edit_mode {
-				_change_edit_mode(edit.mode, _force = true);
+				_change_edit_mode(edit.mode, force = true);
 				edit.should_reset_edit_mode = false;
 			}
 			for edit.floating_windows {
-				if it.flags & .TEMP_FLOATING && get_selected_window_of_kind(it.kind) != it {
-					destroy_window(it, _force = true);
+				if it.flags & .TEMP_FLOATING && _root_of(get_selected_window_of_kind(it.kind)) != it {
+					destroy_window(it, force = true);
 				}
 			}
 			windows_to_destroy := edit.windows_to_destroy;
@@ -526,7 +551,7 @@ main :: () {
 				_destroy_window(it);
 			}
 			for windows_to_force_destroy {
-				_destroy_window(it, _force = true);
+				_destroy_window(it, force = true);
 			}
 			array_reset(*windows_to_destroy);
 			array_reset(*windows_to_force_destroy);
@@ -546,7 +571,18 @@ main :: () {
 				free(it);
 			array_reset(*context.edit.alerts);
 			//refresh();
-			ch = getch();
+			if edit.mode == .INSERT
+				print("\x1b[6 q"); // thin
+			else
+				print("\x1b[2 q"); // normal
+			while true {
+				update_window_events();
+				ch = getch();
+				if ch != ERR {
+					break;
+				}
+				sleep_milliseconds(3);
+			}
 			context.edit.time += 1;
 		} else {
 			ch = context.edit.added_chars[0];
@@ -581,6 +617,8 @@ main :: () {
 #import "String";
 #import "ncurses";
 #import "fson";
+X11 :: #import "X11";
+#import "Input";
 Uniform :: #import "uniform";
 
-
+#import "Clipboard";

@@ -1,27 +1,18 @@
 
-// There are certain windows you can query
-// 1. .BUFFER:
-// 1.1 '.buffer_window': all commands go towards it. Should rename to buffer_window?.
-// 1.2 'get_normal_window()': also a buffer window, but not floating and not special.
-// 1.3 '<not implemented>': kinda like get_normal_window(), but includes floating windows?
-//
-// 2. .CONTAINER:
-// 2.1 root
-// 2.2 second root <not fully implemented>: container for non-normal windows
-// 2.3 get_selected_window_of_type(.CONTAINER): returns whatever container holds the current window
-// 2.4 '<not implemented>': 
-//
-// 3. floating_window: whatever is floating
 // 
 // Maybe should implement second root as a floating container window?
 // A floating window is something that doesn't directly belong to the root.
 // Right now it's position/size are constant, relative to screen size.
 // Having more information with floating windows could make them more flexible.
+// ^ I think second root will be just a sibling of root, and i'll add a true root
+// 
 //
 // Also, windows wanting to change size (e.g. if i wanna see entire search history),
 // and propogating that to parent window would be nice.
 // That would require the root window to be a single fixed window.
 // ^ Seems like the play. 
+
+//I_WANT_THE_BORDERS :: true; // not implemented
 
 Container_Item :: struct {
 	fixed_size: int = -1;
@@ -97,6 +88,7 @@ Window :: struct {
 		NONE :: 0;
 	}
 	id: WinId;
+	pool: Pool; // released on destroy
 	flags: Flags;
 	kind: Kind;
 	nwindow: *WINDOW;
@@ -155,10 +147,12 @@ Window :: struct {
 	before_draw: #type (*Window) -> ();
 	apply_mods: #type (*Window, []Line) -> ();
 	motion_proc: #type (*Window, Motion_Result) -> bool; // unused
+	on_destroy: #type (*Window) -> (); // must not do anything funny !
 	//
 	map_window_for_motion: #type (*Window, *Motion) -> *Window;
 	//map_window_for_command: #type (*Command) -> *Window;
 	user_data: *void;
+	ref_count: int; // hold/release
 }
 
 /// DRAWING
@@ -171,7 +165,8 @@ draw_windows_recursive :: (win: *Window) {
 			//return;
 	}
 	time_this("Draw all windows", really_time = win.is_root);
-	wclear(win.nwindow); // clear before children update?
+	//wclear(win.nwindow); // clear before children update?
+	// ^ only clearing buffer windows !!
 	if win.kind == .CONTAINER {
 		if win.container_mode == .TABBED {
 			if win.children.count != 0 {
@@ -220,14 +215,17 @@ _draw_window :: (using win: *Window) {
 		getcury(nwindow),
 	};
 	defer {
-		wsyncup(nwindow); // give window content to parents
-		if win.is_root {
+		if !win.is_root
+			wsyncup(nwindow); // give window content to parents
+		if win != context.buffer_window {
 			// looks like the order of these 2 don't matter
-			wrefresh(nwindow);
 			wmove(nwindow, xx begin_cursor.y, xx begin_cursor.x);
 		}
+		if win.is_root {
+			wrefresh(nwindow);
+		}
 		//syncok(nwindow, true);
-		if context.buffer_window == win
+		if context.buffer_window == win && context.buffer_window.nwindow != stdscr
 			wcursyncup(nwindow);
 	}
 	// akward to draw border like this...
@@ -259,7 +257,7 @@ _draw_window :: (using win: *Window) {
 			win.apply_mods(win, lines_to_draw);
 		//
 		time_this("Draw buffer");
-		wclear(nwindow);
+		wclear(nwindow); // ONLY CLEARING BUFFER WINDOWS !
 		for lines_to_draw {
 			y := it_index + scroll;
 			ny := it_index + begin.y; // ncurses y
@@ -369,6 +367,9 @@ _draw_window :: (using win: *Window) {
 		p := root_status_line_position;
 		mvwaddnstr(nwindow, xx p.y, xx p.x, mode_s.data, xx mode_s.count);
 		wattrset(nwindow, 0);
+		for mode_s.count..size.x-1 {
+			waddch(nwindow, #char " ");
+		}
 		// DRAW SEARCH LINE
 	} // .is_root
 	if win.container_mode == .TABBED && win.flags & .CONTAINER_TABS {
@@ -408,6 +409,7 @@ create_container_window :: (parent: *Window, nwindow: *WINDOW = null, flags: Win
 		assert(parent == null);
 	}
 	win := New(Window);
+	set_allocators(*win.pool);
 	win.id = next_window_id();
 	win.is_hidden = is_hidden;
 	win.flags = flags;
@@ -466,6 +468,7 @@ create_buffer_window :: (parent: *Window, buf: *Buffer, flags: Window.Flags = .N
 		assert(parent == null);
 	}
 	win := New(Window);
+	set_allocators(*win.pool);
 	win.id = next_window_id();
 	array_add(*context.edit.windows, win);
 	win.is_hidden = is_hidden;
@@ -524,42 +527,71 @@ find_window :: (id: WinId) -> *Window {
 
 // buffers get leaked-ish
 // Doesn't bother to check if it can destroy !!
-destroy_window :: (win: *Window, _force := false) {
+destroy_window :: (win: *Window, force := false) {
 	if win._is_being_destroyed
 		return;
+	ok, msg := can_destroy_window(win, force = force);
+	if !ok {
+		edit_alert("%", msg);
+		return;
+	}
 	win._is_being_destroyed = true;
-	if !_force
+	if !force
 		array_add(*context.edit.windows_to_destroy, win);
 	else
 		array_add(*context.edit.windows_to_force_destroy, win);
 }
 
-// this gets called at the right time!
-// Pass `_force = true` flag, if destroying a hidden window. 
-_destroy_window :: (win: *Window, _force: bool = false, _even_only_child := false) -> bool {
-	if win.is_root {
-		edit_error("NOT DESTROYING ROOT");
-		return false;
-	}
-	// if it doesn't have a
-	if win.parent {
-		if !_even_only_child && win.parent.children.count == 1 {
-			edit_error("NOT SUPPORTED REMOVING THE ONLY CHILD WINDOW");
-			return false;
+hold :: (win: *Window) {
+	win.ref_count += 1;
+}
+
+// not sure if i like the name "release", since it usually means memory..
+release :: (win: *Window) {
+	assert(win.ref_count > 0);
+	win.ref_count -= 1;
+}
+
+can_destroy_window :: (win: *Window, force: bool = false, even_if_only_child := false) -> bool, string {
+	if win.is_root
+		return false, "Can't destroy root";
+	if win.ref_count > 0
+		return false, "Window is referenced";
+	if win.parent  {
+		if win.parent.children.count == 1 && !even_if_only_child {
+			return false, "Can't destroy child";
 		}
 	} else {
-		assert(win.is_hidden);
-		if !_force {
-			edit_error("Must force to destroy a hidden window");
-			return false;
+		assert(win.is_hidden); // sanity check?
+		if !force {
+			return false, "Must force to destroy a hidden window";
 		}
 	}
-	// `return true` from here on out
+	if win.kind == .CONTAINER {
+		for win.children {
+			ok, msg := can_destroy_window(it);
+			if !ok
+				return ok, msg;
+		}
+	}
+	return true, "";
+}
+
+// this gets called at the right time!
+// Pass `force = true` flag, if destroying a hidden window. 
+_destroy_window :: (win: *Window, force: bool = false, even_only_child := false) -> bool, string {
+	ok, msg := can_destroy_window(win, force = force, even_if_only_child = even_only_child);
+	if !ok {
+		edit_alert("%", msg);
+		return false, msg;
+	}
+	if win.on_destroy
+		win.on_destroy(win);
 	if win.kind == .CONTAINER {
 		for array_copy(win.children,, allocator=temp) {
 			// TODO: this might mess up if windows get destroyed in a certain order.
 			// should use window ids when saving what to destroy
-			_destroy_window(it, _even_only_child = true);
+			_destroy_window(it, even_only_child = true);
 		}
 		array_reset(*win.children);
 	}
@@ -602,10 +634,11 @@ _destroy_window :: (win: *Window, _force: bool = false, _even_only_child := fals
 			select_window(context.edit.root);
 		}
 	}
+	release(*win.pool);
 	free(win);
 	if parent != null
 		refresh_window_size(parent);
-	return true;
+	return true, "";
 }
 
 update_container_item :: (win: *Window, item: Container_Item) {
@@ -638,9 +671,7 @@ refresh_window_size :: (using win: *Window, force := false) {
 		if win.kind != .BUFFER 
 			win.flags |= .BORDER;
 	}
-	if win.is_floating
-		win.flags |= .BORDER;
-	if win == context.search.window || win == context.exec.window || win == context.edit.second_root
+	if win == context.search.window || win == context.exec.window || win == context.edit.second_root || win.container_item.fixed_size > 0
 		win.flags &= ~.BORDER;
 	if win.kind == .CONTAINER {
 		win.flags |= .CONTAINER_TABS;
@@ -779,8 +810,8 @@ reset_floating :: (win: *Window) -> bool {
 	return _set_floating(win, false, .{});
 }
 
-set_floating :: (win: *Window, pos: Floating_Position) -> bool {
-	return _set_floating(win, true, pos);
+set_floating :: (win: *Window, pos: Floating_Position, border := true) -> bool {
+	return _set_floating(win, true, pos, border);
 }
 
 set_floating :: (win: *Window) -> bool {
@@ -792,7 +823,7 @@ set_floating :: (win: *Window) -> bool {
 	});
 }
 
-_set_floating :: (win: *Window, flag: bool, pos: Floating_Position) -> bool {
+_set_floating :: (win: *Window, flag: bool, pos: Floating_Position, border := true) -> bool {
 	if !win.is_hidden {
 		edit_alert("Tried to set a non-hidden as floating");
 		return false;
@@ -803,8 +834,11 @@ _set_floating :: (win: *Window, flag: bool, pos: Floating_Position) -> bool {
 			return false;
 		}
 		if !win.is_floating {
+			// this doesn't refresh window size?
 			array_add(*context.edit.floating_windows, win);
 			win.is_floating = true;
+			if border
+				win.flags |= .BORDER; 
 		}
 		win.floating_position = pos;
 	} else { // !flag
@@ -853,6 +887,9 @@ change_buffer :: (win: *Window, new_buf: *Buffer) {
 		assert(ok);
 		// doesn't have to be ordered remove, i think
 		array_ordered_remove_by_index(*win.buffer.windows, idx);
+		if (win.buffer.flags & .TEMP != 0) && win.buffer.windows.count == 0 {
+			destroy_buffer(win.buffer);
+		}
 	}
 	win.buffer = new_buf;
 	array_add(*new_buf.windows, win);
@@ -860,16 +897,18 @@ change_buffer :: (win: *Window, new_buf: *Buffer) {
 	refresh_window_size(win); // the buffer might be of different kind..
 }
 
-nest_window :: (parent: *Window, child: *Window, select := true) -> bool {
+nest_window :: (parent: *Window, child: *Window, mode: Window.Container_Mode = .NONE, select := true) -> (created: *Window) {
 	if parent == null {
-		return false;
+		return null;
 	}
 	if child.parent != parent {
-		return false;
+		return null;
 	}
 	idx := _child_index_of_window(child);
 	// Create new container
-	new_container := create_container_window(parent, mode = ifx parent.container_mode != .VERTICAL then .VERTICAL else .HORIZONTAL);
+	if mode == .NONE
+		mode = ifx parent.container_mode != .VERTICAL then .VERTICAL else .HORIZONTAL;
+	new_container := create_container_window(parent, mode = mode);
 	// Move child to new container
 	array_add(*new_container.children, child);
 	new_container.active_child = 0;
@@ -884,7 +923,7 @@ nest_window :: (parent: *Window, child: *Window, select := true) -> bool {
 	if select {
 		select_window(new_container);
 	}
-	return true;
+	return new_container;
 }
 
 change_container_mode :: (win: *Window, mode: Window.Container_Mode) {
@@ -947,7 +986,7 @@ get_window_title :: (using win: *Window) -> string {
 		case .BUFFER;
 			if buffer.kind == {
 				case .FILE;
-					s := ifx buffer.filename else "<none>";
+					s := ifx buffer.filename else "[EMPTY]";
 					
 					if buffer.filename {
 						pwd := get_working_directory(,,allocator = temp);
@@ -957,16 +996,20 @@ get_window_title :: (using win: *Window) -> string {
 								s = advance(s, 1);
 						}
 					}
-					if buffer.filename && buffer.is_dirty
+					if buffer.filename && is_dirty(buffer)
 						s = tprint("% [+]", s);
 					return s;
 				case .CUSTOM;
-					return "<custom>";
+					return "[custom]";
 				case;
 					return "<UNKNOWN BUFFER>";
 			}
 		case .CONTAINER;
-			return "<container>";
+			if win.children.count == 0
+				return "<empty container>";
+			if win.children.count == 1
+				return get_window_title(win.children[win.active_child]);
+			return tprint("[%] %", win.children.count, get_window_title(win.children[win.active_child]));
 		case;
 			return "<UNKNOWN WINDOW>";
 	}
@@ -988,8 +1031,11 @@ select_normal_window :: () {
 	select_window(get_window(.NONE, not_floating = true, not_special = true));
 }
 
-select_relative_window :: (rel: int) -> bool {
+select_relative_window :: (rel: int, wanted_mode := Window.Container_Mode.NONE) -> bool {
 	parent := context.container_window;
+	while parent && (wanted_mode != .NONE && parent.container_mode != wanted_mode) {
+		parent = parent.parent;
+	}
 	if !parent
 		return false;
 	sibling_count := parent.children.count;
@@ -999,6 +1045,16 @@ select_relative_window :: (rel: int) -> bool {
 	select_window(parent.children[idx]);
 	return true;
 }
+
+// there might be cases where this is null
+_root_of :: (win: *Window) -> *Window {
+	if !win
+		return null;
+	while win.parent != null
+		win = win.parent;
+	return win;
+}
+
 
 #scope_file
 
@@ -1010,15 +1066,6 @@ _child_index_of_window :: (win: *Window) -> int {
 	}
 	assert(false);
 	return -1;
-}
-
-// there might be cases where this is null
-_root_of :: (win: *Window) -> *Window {
-	if !win
-		return null;
-	while win.parent != null
-		win = win.parent;
-	return win;
 }
 
 _active_buffer_of :: (win: *Window) -> *Window {
@@ -1035,7 +1082,7 @@ _ncurses_full_resize :: (w: *WINDOW, begin: Vec2i, size: Vec2i) {
 	wresize(w, 1, 1);
 	resize_res := wresize(w, xx size.y, xx size.x);
 	move_res := mvderwin(w, xx begin.y, xx begin.x);
-	#if 1 {
+	#if 0 {
 		if move_res == ERR {
 			edit_error("move res is err");
 			log_stack_trace(context.stack_trace);
@@ -1052,6 +1099,3 @@ _ncurses_remake :: (using win: *Window) {
 	delwin(nwindow);
 	nwindow = derwin(parent.nwindow, 1, 1, 0, 0);
 }
-
-
-

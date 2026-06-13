@@ -3,6 +3,55 @@
 // still slow, need to use table
 #add_context fstr: string;
 
+DO_TABLE :: false; // table is not threadsafe
+
+fson_parse_many_strings :: (strings: []string, $T: Type) -> []T {
+	#if 0 {
+		ret: []T = NewArray(strings.count, T);
+		for strings {
+			ok, val := fson_parse_string(it, T);
+			ret[it_index] = val;
+		}
+		return ret;
+	} else {
+		group: Thread_Group;
+		group.logging = false;
+		NUM_THREADS :: 10;
+		init(*group, NUM_THREADS, #bake_arguments fson_parse_string_threaded(T = T));
+		for strings {
+			#if 0 {
+				v := New(Thread_Input,, allocator=temp);
+			} else {
+				v := New(Thread_Input);
+			}
+			v.* = Thread_Input.{
+				str = it,
+			};
+			add_work(*group, v);
+		}
+		start(*group);
+		work_remaining := strings.count;
+		while work_remaining > 0 {
+			sleep_milliseconds(10);
+			results := get_completed_work(*group);
+			work_remaining -= results.count;
+			log("work remaining: %\n", work_remaining);
+		}
+		shutdown(*group);
+		return .[];
+	}
+}
+
+Thread_Input :: struct {
+	str: string;
+}
+
+fson_parse_string_threaded :: (group: *Thread_Group, thread: *Thread, work: *void, $T: Type) -> Thread_Continue_Status {
+	in := work.(*Thread_Input);
+	ok, s := fson_parse_string(in.str, T);
+	return .CONTINUE;
+}
+
 fson_parse_string :: (s: string, $T: Type) -> bool, T {
 	// @CompilerBug only,only(fstr) doesn't work here?? ?? cuz it's only ??
 	using,only(fstr) context;
@@ -12,8 +61,26 @@ fson_parse_string :: (s: string, $T: Type) -> bool, T {
 	return ok, ret;
 }
 
-
 #scope_file 
+
+#if DO_TABLE {
+	map_table_thing: Table(s64, Table(string, *Type_Info_Struct_Member));
+	
+	get_table_for :: (t: *Type_Info_Struct) -> *Table(string, *Type_Info_Struct_Member) {
+		log("doing table for %\n", t.name);
+		key := cast(s64)t;
+		val := table_find_pointer(*map_table_thing, key);
+		if val != null
+			return val;
+		val = table_add(*map_table_thing, key, .{});
+		for * t.members {
+			if it.offset_in_bytes < 0
+				continue;
+			table_set(val, it.name, it);
+		}
+		return val;
+	}
+}
 
 parse_value :: (out: Any, $is_whatever: bool) -> bool {
 	using,only(fstr) context;
@@ -64,19 +131,16 @@ parse_value :: (out: Any, $is_whatever: bool) -> bool {
 				fstr = advance(fstr, 1);
 				return true;
 			} else {
-				DO_TABLE :: false; // it's like 3 times slower
 				#if !is_whatever && DO_TABLE {
-					table: Table(string, Type_Info_Struct_Member);
-					table.allocator = temp;
-					for out.type.(*Type_Info_Struct).members {
-						if it.offset_in_bytes < 0
-							continue;
-						table_set(*table, it.name, it);
-					}
+					table: *Table(string, *Type_Info_Struct_Member) = get_table_for(xx out.type);
 				}
 				while true {
 					skip_whitespace();
-					ok, key := parse_string(,, allocator=temp);
+					#if 0 {
+						ok, key := parse_string(,, allocator=temp);
+					} else {
+						ok, key := parse_string();
+					}
 					if !ok
 						return false;
 					skip_whitespace();
@@ -102,7 +166,7 @@ parse_value :: (out: Any, $is_whatever: bool) -> bool {
 								}
 							}
 						} else {
-							found, member := table_find(*table, key);
+							found, member := table_find(table, key);
 							if found {
 								found_member = true;
 								v: Any = Any.{ type = member.type, value_pointer = out.value_pointer + member.offset_in_bytes };
@@ -276,3 +340,4 @@ skip_whitespace :: () {
 
 #import "Basic";
 #import "Hash_Table";
+#import "Thread";

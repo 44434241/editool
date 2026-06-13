@@ -140,7 +140,7 @@ motion_inner :: (in: Motion_In, $ch: u8, $inclusive: bool) -> Motion_Result {
 		left_x = find_char_in_line(win, "[", "]", -1, in.number);
 		right_x = find_char_in_line(win, "]", "[", 1, in.number);
 		//
-	} else #if ch == "\"" || ch == " " || ch == "'" {
+	} else #if ch == "\"" || ch == " " || ch == "'" || ch == "." || ch == "_" {
 		left_x = find_char_in_line(win, ch, 0, -1, in.number);
 		right_x = find_char_in_line(win, ch, 0, 1, in.number);
 		//
@@ -189,21 +189,23 @@ motion_word :: (in: Motion_In, $step: int = 1, $flags: Motion_Word_Flags = 0) ->
 	if step > 0 && cursor.x >= line.count {
 		return .{
 			start = cursor.position,
-			end = ifx cursor.position.y + 1 < lines.count then Position.{ 0, cursor.position.y + 1 } else cursor.position,
+			//end = ifx cursor.position.y + 1 < lines.count then Position.{ 0, cursor.position.y + 1 } else cursor.position,
+			end = cursor.position,
 		};
 	}
 	if step < 0 && cursor.x <= 0 {
 		return .{
 			start = cursor.position,
-			end = ifx cursor.y > 0 then Position.{ lines[cursor.y-1].count, cursor.y - 1 } else cursor.position,
+			//end = ifx cursor.y > 0 then Position.{ lines[cursor.y-1].count, cursor.y - 1 } else cursor.position,
+			end = cursor.position,
 		};
 	}
 	next_x := min(cursor.x, line.count-1);
 	//x_ok :: () -> bool #expand {
 		//return clamp(next_x + step, 0, line.count) == next_x + step;
 	//}
-	is_alunder :: (ch: u8) -> bool {
- 		return is_alpha(ch) || ch == #char "_";
+	is_alunder :: (ch: u8) -> bool { // digit works too lol oops
+		return is_alpha(ch) || ch == #char "_" || is_digit(ch);
 	}
 	x_ok :: () -> bool #expand {
 		return clamp(next_x, 0, line.count-1) == next_x;
@@ -300,7 +302,7 @@ motion_page_step :: (in: Motion_In, step: int) -> Motion_Result {
 	};
 }
 
-motion_step :: (in: Motion_In, step: Position) -> Motion_Result {
+motion_step :: (in: Motion_In, step: Position, is_jump: bool) -> Motion_Result {
 	assert(step.x == 0 || step.y == 0);
 	assert(step.x != 0 || step.y != 0);
 	win := in.window;
@@ -308,6 +310,7 @@ motion_step :: (in: Motion_In, step: Position) -> Motion_Result {
 		start = win.cursor.position,
 		end = win.cursor.position + step * in.number,
 		flags = ifx step.y == 0 then .X_ONLY else .Y_ONLY,
+		is_jump = is_jump,
 	};
 }
 
@@ -463,6 +466,16 @@ add_all_motions :: () {
 		proc = #bake_arguments(motion_word(step = -1, flags = .FULL)),
 	);
 	add_motion(
+		keybind = "i.",
+		flags = .X_ONLY,
+		proc = #bake_arguments(motion_inner(ch = #char ".", inclusive = false)),
+	);
+	add_motion(
+		keybind = "i_",
+		flags = .X_ONLY,
+		proc = #bake_arguments(motion_inner(ch = #char "_", inclusive = false)),
+	);
+	add_motion(
 		keybind = "i]",
 		flags = .X_ONLY,
 		proc = #bake_arguments(motion_inner(ch = #char "]", inclusive = false)),
@@ -515,32 +528,32 @@ add_all_motions :: () {
 	add_motion(
 		keybind = "j",
 		flags = .Y_ONLY,
-		proc = #bake_arguments(motion_step(step = .{ y = 1 })),
+		proc = #bake_arguments(motion_step(step = .{ y = 1 }, is_jump = true)),
 	);
 	add_motion(
 		keybind = "k",
 		flags = .Y_ONLY,
-		proc = #bake_arguments(motion_step(step = .{ y = -1 })),
+		proc = #bake_arguments(motion_step(step = .{ y = -1 }, is_jump = true)),
 	);
 	add_motion(
 		keybind = .[ KEY_LEFT ],
 		flags = .X_ONLY,
-		proc = #bake_arguments(motion_step(step = .{ x = -1 })),
+		proc = #bake_arguments(motion_step(step = .{ x = -1 }, is_jump = false)),
 	);
 	add_motion(
 		keybind = .[ KEY_RIGHT ],
 		flags = .X_ONLY,
-		proc = #bake_arguments(motion_step(step = .{ x = 1 })),
+		proc = #bake_arguments(motion_step(step = .{ x = 1 }, is_jump = false)),
 	);
 	add_motion(
 		keybind = .[ KEY_UP ],
 		flags = .Y_ONLY,
-		proc = #bake_arguments(motion_step(step = .{ y = -1 })),
+		proc = #bake_arguments(motion_step(step = .{ y = -1 }, is_jump = false)),
 	);
 	add_motion(
 		keybind = .[ KEY_DOWN ],
 		flags = .Y_ONLY,
-		proc = #bake_arguments(motion_step(step = .{ y = 1 })),
+		proc = #bake_arguments(motion_step(step = .{ y = 1 }, is_jump = false)),
 	);
 	add_motion(
 		keybind = .[ KEY_HOME ],
@@ -634,6 +647,3 @@ add_motion :: inline ($keybind: $T/.[string, []s32], flags: Motion.Flags = .NONE
 		char_proc = char_proc,
 	});
 }
-
-
-

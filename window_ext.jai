@@ -133,7 +133,6 @@ offset_scroll :: (using win: *Window, val: int) {
 }
 
 set_scroll :: (using win: *Window, val: int) {
-	edit_alert("set scroll: %", val);
 	scroll = val;
 	normalize_scroll(win);
 }
@@ -192,15 +191,17 @@ _update_cursor_mark :: (using win: *Window, create: bool) {
 	}
 }
 
-normalize_position :: (using win: *Window, pos: Position) -> Position {
+normalize_position :: (using win: *Window, pos: Position, mode: Edit_Mode) -> Position {
 	ret: Position = ---;
 	ret.y = clamp(pos.y, 0, lines.count-1);
 	ret.x = clamp(pos.x, 0, lines[ret.y].count);
+	if mode == .COMMAND && lines[ret.y].count > 0
+		ret.x = min(ret.x, lines[ret.y].count - 1);
 	return ret;
 }
 
 normalize_cursor :: (using win: *Window, with_scroll: bool, force_jump := false) {
-	cursor.position = normalize_position(win, cursor.position);
+	cursor.position = normalize_position(win, cursor.position, context.edit.mode);
 	if with_scroll
 		normalize_scroll(win);
 	should_create_mark := force_jump || cursor_mark_index < 0;
@@ -402,11 +403,25 @@ delete_line_range :: (using win: *Window, l: int, r: int) {
 delete_lines :: (using win: *Window, y: int, count: int = 1) {
 	y = clamp(y, 0, lines.count-1);
 	count = min(count, lines.count - y + 1);
-	execute_buffer_operation(win, .{
-		kind = .DELETE_LINES,
-		y = y,
-		count = count,
-	});
+	if y == 0 && count == lines.count {
+		execute_buffer_operation(win, .{
+			kind = .DELETE_LINES,
+			y = y,
+			count = count - 1,
+		});
+		execute_buffer_operation(win, .{
+			kind = .DELETE_CHARS,
+			y = 0,
+			x = 0,
+			count = lines[0].count,
+		});
+	} else {
+		execute_buffer_operation(win, .{
+			kind = .DELETE_LINES,
+			y = y,
+			count = count,
+		});
+	}
 }
 
 _indentation_of_next_line :: (buf: *Buffer, y: int) -> int {
@@ -448,64 +463,6 @@ split_line :: (using win: *Window, pos: Position, indent: bool = true) {
 	}
 }
 
-// Still not sure if i wanna put anything else in buffer operations...
-// I dont like these operations being shared between buffer and window files..
-// ^ I'll be able to after everything gets cleaned up.
-
-buffer_undo :: (win: *Window) -> bool, Buffer_Op {
-	reverse_operation :: inline (op: *Buffer_Op) -> bool {
-		if op.kind == {
-			case .DELETE_LINES;
-				op.kind = .INSERT_LINES;
-			case .INSERT_LINES;
-				op.kind = .DELETE_LINES;
-			//
-			case .DELETE_CHARS;
-				op.kind = .INSERT_CHARS;
-			case .INSERT_CHARS;
-				op.kind = .DELETE_CHARS;
-			//
-			case .SPLIT_LINE;
-				op.kind = .MERGE_LINES;
-				op.count = 1;
-			case .MERGE_LINES;
-				assert(op.count == 1);
-				op.kind = .SPLIT_LINE;
-			case;
-				return false;
-		}
-		return true;
-	}
-	using buf: *Buffer = win.buffer;
-	if buf.operation_index < 0
-		return false, .{};
-	op := buf.operations[buf.operation_index];
-	if op.flags & .NO_UNDO {
-		return false, op;
-	}
-	if !reverse_operation(*op) {
-		edit_alert("Can't undo? %\n", op.kind, is_internal = true);
-		return false, op; // this is a panic
-	}
-	ok := _execute_buffer_operation(win, buf, *op, .MOVE_CURSOR);
-	if ok {
-		buf.operation_index -= 1;
-	}
-	return ok, op;
-}
-
-buffer_redo :: (win: *Window) -> bool, Buffer_Op {
-	using buf: *Buffer = win.buffer;
-	if operation_index + 1 >= operations.count
-		return false, .{};
-	op := buf.operations[buf.operation_index+1];
-	ok := _execute_buffer_operation(win, buf, *op, .MOVE_CURSOR);
-	if ok {
-		operation_index += 1;
-	}
-	return ok, op;
-}
-
 // EDITING BUFFER COMMANDS END
 
 _get_real_x_in_line :: (line: *Line, x: int) -> int {
@@ -529,4 +486,3 @@ _from_real_x_in_line :: (line: *Line, real_x: int) -> int {
 	}
 	return line.chars.count;
 }
-

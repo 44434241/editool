@@ -1,4 +1,8 @@
 
+// not working stuff:
+// - a: #Context = context;
+// - a, b := 3; (breaks proc declarations with pointers?)
+
 // has reasonable defaults
 Syntax_Element :: struct {
 	Kind :: enum {
@@ -17,9 +21,9 @@ Syntax_Element :: struct {
 		CONSTANT3;
 		NUMBER;
 		COMMENT;
-		DECLARATION;
 		EOL_SPACE;
 		NOTE;
+		DECLARATION;
 		COUNT;
 	}
 	Flags :: enum_flags {
@@ -34,12 +38,13 @@ Syntax_Element :: struct {
 	replace: string; // ** this isn't a direct replace, but it keeps length ** 
 }
 
+
 Syntax :: struct {
 	elements: [Syntax_Element.COUNT]Syntax_Element;
 	using Syntax_Element.Kind;
 	elements[KEYWORD1].color = 13; // orange
 	elements[KEYWORD2].color = 0;
-	elements[KEYWORD3].color = 14; // (it/it_index) dark green
+	elements[KEYWORD3].color = 13; // 13 - orange, 14 - (it/it_index) dark green
 	elements[TYPE1].color = 3; // cyan
 	elements[TYPE2].color = 3; // cyan
 	elements[CONSTANT1].color = 12; // white
@@ -123,6 +128,7 @@ get_jai_syntax :: () -> Syntax {
 		"size_of",
 		"type_of",
 		"type_info",
+		"push_context(?:\\,\\w+)?",
 		"ifx",
 	], "|");
 	syntax.elements[TYPE1].match = #run join(.. .[
@@ -152,14 +158,14 @@ get_jai_syntax :: () -> Syntax {
 		"it",
 		"it_index"
 	], "|");
+	//elements[DECLARATION].match_suffix = "\\s*:\\s*(?:\\**[a-zA-Z_]\\w*+\\s*;|(?:\\**[a-zA-Z_]\\w*+)?=[^;]*;)";
+	//elements[DECLARATION].match_suffix = #run sprint("(?:\\s*\\,\\s*\\w+){0}\\s*:\\s*(?:%|\\=|#type)", decl_type);
 	elements[DECLARATION].match = "[a-zA-Z_]\\w*+";
 	decl_type :: "[\\[\\]\\w\\.\\*]+[^\\[\\]\\w\\.\\*]";
-	//elements[DECLARATION].match_suffix = "\\s*:\\s*(?:\\**[a-zA-Z_]\\w*+\\s*;|(?:\\**[a-zA-Z_]\\w*+)?=[^;]*;)";
-	// TODO: `a, b := ...` still wrong...
-	elements[DECLARATION].match_suffix = #run sprint("(?:\\s*\\,\\s*\\w+){0}\\s*:\\s*(?:%|\\=|#type)", decl_type);
+	elements[DECLARATION].match_suffix = "(?:\\s*\\,\\s*\\w+)*\\s*:";
 	syntax.elements[TYPE2].match = "[A-Z]\\w*[a-z]\\w*+";
 	syntax.elements[DIRECTIVE].match = "#\\w*(?:\\,\\w*+)*+";
-	syntax.elements[STRING].match = "\"(?:[^\"\\\\]|\\\\\"|\\\\)*\"";
+	syntax.elements[STRING].match = "\"(?:[^\"\\\\]|\\\\\"|\\\\)*(?:\"|$)";
 	syntax.elements[NUMBER].match = "\\d+(?:\\.\\d+)?";
 	syntax.elements[TAB].match = "\\t++";
 	syntax.elements[COMMENT].match = "//.*?$";
@@ -172,6 +178,7 @@ get_jai_syntax :: () -> Syntax {
 	//syntax.elements[EOL_SPACE].replace = "-";
 	//
 	elements[STRING].flags |= .IS_NOT_WORD;
+	elements[DECLARATION].flags |= .IS_NOT_WORD; // fixes a, b := 3;
 	//elements[NUMBER].flags |= .IS_NOT_WORD;
 	elements[TAB].flags |= .IS_NOT_WORD;
 	elements[COMMENT].flags |= .IS_NOT_WORD;

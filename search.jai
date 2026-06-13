@@ -21,7 +21,7 @@ Search_State :: struct {
 		SEARCH_REPLACE;
 		ERROR;
 	}
-	last_win_id: WinId;
+	last_window: *Window;
 	status: Status = .ERROR;
 	chars: [..]u8; // input chars
 	#overlay(chars) char_string: string;
@@ -40,8 +40,6 @@ editool_search_init :: () {
 	using context.search;
 	buffer = create_custom_buffer();
 	buffer.flags |= .NO_SEARCH;
-	line: *Line = array_add(*buffer.lines);
-	//array_adds(*line.chars, "keybind ");
 	buffer.caps |= .MODE_INSERT | .MODE_COMMAND;
 	buffer.caps |= .INSERT_CHARS | .DELETE_CHARS;
 	buffer.caps |= .MOVE;
@@ -57,7 +55,6 @@ editool_search_init :: () {
 					count = line.count,
 				}, even_if_no_caps = true, no_callback = true);
 			}
-			//array_add(*line.chars, .. win.lines[win.cursor.y].chars);
 			execute_buffer_operation(win, .{
 				kind = .INSERT_CHARS,
 				y = win.lines.count - 1,
@@ -84,6 +81,26 @@ editool_search_init :: () {
 		proc = wrap_command(execute_search),
 	});
 	array_add(*buffer.insert_commands, .{
+		keybind = to_keybind(.[ 6 ]), // ctrl + f
+		proc = (in: Command_In) -> Command_Result {
+			_maybe_recompile_search();
+			{
+				select_window(context.search.last_window);
+			}
+			if context.buffer_window.buffer.kind != .FILE {
+				return command_error();
+			}
+			fzf_win := make_fzf_window((res: *Fzf_Result, s: string, data: *void) {
+				buf := data.(*Buffer);
+				do_rg(res, s, ".", "/home/user/jai/latest");
+			}, context.buffer_window.buffer, start_search = context.search.search_string);
+			if fzf_win == null
+				return command_error();
+			//_clear_search();
+			return .{};
+		},
+	});
+	array_add(*buffer.insert_commands, .{
 		keybind = to_keybind(.[ KEY_ESCAPE ]),
 		proc = wrap_command(stop_search),
 	});
@@ -94,12 +111,13 @@ editool_search_init :: () {
 	window.user_title = "SEARCH";
 }
 
-start_search :: () {
+start_search :: (start: string = "") {
 	using context.search;
-	last_win_id = context.buffer_window.id;
+	if last_window
+		release(last_window);
+	last_window = context.buffer_window;
+	hold(last_window);
 	if window.lines[window.lines.count-1].count != 0 {
-		// hacky... this prevents undo !
-		//array_add(*window.lines);
 		execute_buffer_operation(window, .{
 			kind = .INSERT_LINES,
 			y = window.lines.count,
@@ -108,6 +126,13 @@ start_search :: () {
 		}, even_if_no_caps = true, no_callback = true);
 	}
 	move_cursor_y(window, window.lines.count - 1);
+	execute_buffer_operation(window, .{
+		kind = .INSERT_CHARS,
+		y = window.lines.count-1,
+		x = 0,
+		count = start.count,
+		chars = cast([]u8)start,
+	}, even_if_no_caps = true, no_callback = true);
 	//_clear_search();
 	select_window(window);
 	change_edit_mode(.INSERT);
@@ -121,7 +146,6 @@ execute_search :: () {
 		// move last executed line to the front
 		line: *Line = *window.lines[window.lines.count-1];
 		if line.count > 0 {
-			//line = array_add(*window.lines);
 			execute_buffer_operation(window, .{
 				kind = .INSERT_LINES,
 				y = window.lines.count,
@@ -129,12 +153,11 @@ execute_search :: () {
 				lines = .[ "" ],
 			}, even_if_no_caps = true, no_callback = true);
 		}
-		//array_add(*line.chars, .. window.lines[window.cursor.y].chars);
 		execute_buffer_operation(window, .{
 			kind = .INSERT_CHARS,
 			y = window.lines.count-1,
 			x = 0,
-			count = 1,
+			count = window.lines[window.cursor.y].count,
 			chars = window.lines[window.cursor.y].chars, // should be fine to pass this reference
 		}, even_if_no_caps = true, no_callback = true);
 		//array_ordered_remove_by_index(*window.lines, window.cursor.y); // @Leak
@@ -145,11 +168,7 @@ execute_search :: () {
 		}, even_if_no_caps = true, no_callback = true);
 		move_cursor_y(window, window.lines.count - 1);
 	}
-	win := find_window(last_win_id);
-	if win
-		select_window(win);
-	else
-		select_normal_window();
+	select_window(last_window);
 	change_edit_mode(.COMMAND);
 	if status == .SEARCH_REPLACE {
 		_do_search_replace(context.buffer_window);
@@ -164,20 +183,18 @@ execute_search :: () {
 // i think ?? either way, it's wrong
 stop_search :: () {
 	using context.search;
-	win := find_window(last_win_id);
 	if window.cursor.y + 1 == window.lines.count {
 		// remove last line!
 		y := window.cursor.y;
 		if window.lines[y].count > 0 {
+			// ahh @@
 			array_reset(*window.lines[y].chars);
 			move_cursor_y(window, window.lines.count - 1);
 		}
 	}
 	//_clear_search();
-	if win
-		select_window(win);
-	else
-		select_normal_window();
+	select_window(last_window);
+	change_edit_mode(.COMMAND);
 }
 
 /*
@@ -230,10 +247,10 @@ get_search_info_for_status_bar :: (win: *Window) -> string {
 
 _maybe_recompile_search :: () {
 	using context.edit.search_state;
-	change_time = context.edit.time;
 	y := window.cursor.y;
 	if char_string == buffer.lines[y].as_string
 		return;
+	change_time = context.edit.time;
 	if status != .ERROR {
 		Uniform.uninit(*search_regex);
 	}
@@ -481,4 +498,3 @@ _replace_to_parts :: (replace: string) -> []Replace_Part {
 	}
 	return ret;
 }
-

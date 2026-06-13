@@ -110,6 +110,8 @@ command_delete :: (_: Command_In) -> Command_Result {
 }
 
 command_delete_motion :: (in: Command_In, motion: Motion_Result, enter_insert_mode: bool) -> Command_Result {
+	if enter_insert_mode
+		change_edit_mode(.INSERT);
 	win := in.window;
 	copy_motion(win, motion);
 	if motion.start.y != motion.end.y {
@@ -117,8 +119,6 @@ command_delete_motion :: (in: Command_In, motion: Motion_Result, enter_insert_mo
 	} else {
 		delete_range_in_line(win, motion.start.y, motion.start.x, motion.start.x + (motion.end.x - motion.start.x) * in.number);
 	}
-	if enter_insert_mode
-		change_edit_mode(.INSERT);
 	return .{
 		modifies_dot = true,
 	};
@@ -176,34 +176,46 @@ command_paste :: (in: Command_In, on_next_char: bool) -> Command_Result {
 	return .{};
 }
 
+// this one is only used by commands
+_buffer_operations_can_be_merged :: (prev: Buffer_Op, next: Buffer_Op) -> bool {
+	if prev.kind == next.kind {
+		if (prev.kind == .INSERT_CHARS || prev.kind == .DELETE_CHARS) {
+			if prev.y == next.y && abs(prev.x - next.x) <= 1
+				return true;
+		}
+	}
+	if prev.begin_time == next.begin_time
+		return true;
+	if prev.kind == .NOP
+		return true;
+	return false;
+}
+
 command_undo :: (in: Command_In) -> Command_Result {
 	win := in.window;
 	iter_count := 0;
 	for iter: 1..in.number {
-		last_op := peek_last_operation(win.buffer);
-		if last_op == null
+		prev_ok, prev_op := peek_last_operation(win.buffer);
+		if !prev_ok
 			break;
-		ok, op := buffer_undo(win);
-		if !ok
+		ok1, _ := buffer_undo(win);
+		if !ok1
 			break;
 		while true {
-			op := peek_last_operation(win.buffer);
-			if op == null
+			next_ok, next_op := peek_last_operation(win.buffer);
+			if !next_ok
+				break iter;
+			if !_buffer_operations_can_be_merged(prev_op, next_op)
 				break;
-			if !_buffer_operations_can_be_merged(last_op, op)
-				break;
-			ok := buffer_undo(win);
-			if !ok
-				break;
-			// last_op = op; // ?
+			ok2, _ := buffer_undo(win);
+			if !ok2
+				break iter;
+			prev_op = next_op;
 		}
 		iter_count += 1;
 	}
 	if iter_count == 0 {
-		return .{
-			status = .ERROR,
-			error_message = "Can't undo",
-		};
+		return command_error("Can't undo");
 	}
 	return .{};
 }
@@ -212,47 +224,53 @@ command_redo :: (in: Command_In) -> Command_Result {
 	win := in.window;
 	iter_count := 0;
 	for iter: 1..in.number {
-		next_op := peek_next_operation(win.buffer);
-		if next_op == null
+		prev_ok, prev_op := peek_next_operation(win.buffer);
+		if !prev_ok
 			break;
-		ok, op := buffer_redo(win);
-		if !ok
+		ok1, _ := buffer_redo(win);
+		if !ok1
 			break;
 		while true {
-			op := peek_next_operation(win.buffer);
-			if op == null
+			next_ok, next_op := peek_next_operation(win.buffer);
+			if !next_ok
+				break iter;
+			if !_buffer_operations_can_be_merged(prev_op, next_op)
 				break;
-			if !_buffer_operations_can_be_merged(next_op, op)
-				break;
-			ok := buffer_redo(win);
-			if !ok
-				break;
-			// next_op = op; // ?
+			ok2, _ := buffer_redo(win);
+			if !ok2
+				break iter;
+			prev_op = next_op;
 		}
 		iter_count += 1;
 	}
 	if iter_count == 0 {
-		return .{
-			status = .ERROR,
-			error_message = "Can't redo",
-		};
+		return command_error("Can't redo");
 	}
 	return .{};
 }
 
-_buffer_operations_can_be_merged :: (l: Buffer_Op, r: Buffer_Op) -> bool {
-	if l.kind == r.kind {
-		if (l.kind == .INSERT_CHARS || l.kind == .DELETE_CHARS) {
-			ok := true;
-			ok &&= l.y == r.y;
-			//ok &&= l.begin_cursor_position.y == r.begin_cursor_position.y;
-			if ok
-				return true;
-		}
+command_search :: (in: Command_In) -> Command_Result {
+	//return .{ status = .CONTINUE_MOTION };
+	return command_search_motion(in, execute_motion(get_motion("iw")));
+}
+
+command_search_motion :: (in: Command_In, motion: Motion_Res) -> Command_Result {
+	if motion.status != .OK
+		return command_error();
+	if !(motion.flags & .X_ONLY) {
+		return command_error("Expected x motion");
 	}
-	if l.begin_time == r.begin_time
-		return true;
-	return false;
+	start := normalize_position(in.window, motion.start, .COMMAND);
+	end := normalize_position(in.window, motion.end, .COMMAND);
+	line := *in.window.lines[start.y];
+	// need some normalize_motion_result() ?
+	if !line.count
+		return command_error();
+	if end.x < start.x
+		return command_error();
+	s := string.{ data = line.chars.data + start.x, count = (end.x - start.x) + 1};
+	start_search(s);
+	return .{};
 }
 
 command_jump_search :: (in: Command_In, step: int) -> Command_Result {
@@ -314,10 +332,10 @@ command_go_to_indent_start :: (in: Command_In, enter_insert_mode: bool) -> Comma
 	for 0..line.count {
 		if it < line.count && line.chars[it] == #char "\t"
 			continue;
-		move_cursor_x(win, it);
 		if enter_insert_mode {
 			change_edit_mode(.INSERT);
 		}
+		move_cursor_x(win, it);
 		return .{
 			modifies_dot = enter_insert_mode,
 		};
@@ -362,7 +380,20 @@ _do_indent :: (using win: *Window, ly: int, ry: int, count: int) {
 	ry = clamp(ry, 0, win.lines.count-1);
 	for y: ly..ry {
 		if count > 0 {
-			_write_normal_string(win, .{0, y}, string.{ data = TABS.data, count = count });
+			extra_spaces := 0;
+			for win.lines[y].chars {
+				if it != #char " "
+					break;
+				extra_spaces += 1;
+			}
+			here_count := count;
+			if extra_spaces > 0 {
+				// i don't care about this but it should probably work for << too..
+				here_count += (extra_spaces) / 4;
+				delete_range_in_line(win, y, 0, extra_spaces);
+			}
+			here_count = min(TABS.count, here_count);
+			_write_normal_string(win, .{0, y}, string.{ data = TABS.data, count = here_count });
 		} else {
 			// THINK: might wanna have some logic, where if it can't currently un-indent all, it doesn't indent?
 			// Though that's kinda annoying since there'd be no proper visual feedback on what went wrong.
@@ -469,6 +500,14 @@ command_dot :: (in: Command_In) -> Command_Result {
 	};
 }
 
+command_relative_window :: (in: Command_In, step: int, mode: Window.Container_Mode) -> Command_Result {
+	ok := select_relative_window(step * in.number, mode);
+	if !ok {
+		return .{ status = .ERROR };
+	}
+	return .{};
+}
+
 add_all_commands :: () {
 	// COMMANDS
 	add_command(
@@ -486,7 +525,7 @@ add_all_commands :: () {
 	);
 	add_command(
 		keybind = "/",
-		proc = #run wrap_command(start_search),
+		proc = #run wrap_command(#bake_arguments start_search(start = "")),
 	);
 	add_command(
 		keybind = ":",
@@ -494,7 +533,7 @@ add_all_commands :: () {
 	);
 	add_command(
 		keybind = "A",
-		proc = make_command_alias(.[ KEY_END, #char "i" ]),
+		proc = make_command_alias(.[ #char "i", KEY_END ]),
 	);
 	add_command(
 		keybind = "I",
@@ -541,15 +580,19 @@ add_all_commands :: () {
 		proc = make_command_alias(.[ #char "c", #char "$" ]),
 	);
 	add_command(
+		keybind = "Y",
+		proc = make_command_alias(.[ #char "y", #char "$" ]),
+	);
+	add_command(
 		keybind = "u",
 		proc = command_undo,
 	);
 	add_command(
-		keybind = "r",
+		keybind = .[ 18 ], // ctrl + r
 		proc = command_redo,
 	);
 	add_command(
-		keybind = "R",
+		keybind = "r",
 		proc = command_replace,
 		char_proc = command_replace_char,
 	);
@@ -626,16 +669,43 @@ add_all_commands :: () {
 			log("Windows: root: %, container: %, buffer: % ('%'), from in: %", root, container_window, buffer_window, buffer_window.user_title, in.window);
 			log("window id: %, buffer id: %", context.buffer_window.id, context.buffer_window.buffer.id);
 			log("Current dot: %\n", keybind_to_string(context.edit.current_dot_command));
+			log("DUMPING BUFFERS:");
+			for buffers {
+				log("%: flags: % windows: %", it_index, it.flags, it.windows);
+			}
 			log("=================== INFO END ===============================================");
 			return .{};
 		}
 	);
 	add_command(
-		keybind = "!",
-		proc = (_: Command_In) -> Command_Result {
-			ok := select_relative_window(1);
-			return .{ status = ifx ok then .OK else .ERROR };
+		keybind = .[ KEY_ARIGHT ],
+		proc = #bake_arguments command_relative_window(step = 1, mode = .VERTICAL),
+	);
+	add_command(
+		keybind = .[ KEY_ALEFT ],
+		proc = #bake_arguments command_relative_window(step = -1, mode = .VERTICAL),
+	);
+	add_command(
+		keybind = .[ KEY_ESCAPE ],
+		proc = (in: Command_In) -> Command_Res {
+			win := get_window(.NONE, not_floating = true, not_special = true);
+			if win
+				select_window(win);
+			return .{};
 		}
+	);
+	add_command(
+		keybind = .[ KEY_ADOWN ],
+		proc = #bake_arguments command_relative_window(step = 1, mode = .TABBED),
+	);
+	add_command(
+		keybind = .[ KEY_AUP ],
+		proc = #bake_arguments command_relative_window(step = -1, mode = .TABBED),
+	);
+	add_command(
+		keybind = .[ 6 ], // ctrl + f
+		proc = command_search,
+		motion_proc = command_search_motion,
 	);
 }
 
@@ -643,8 +713,8 @@ copy_motion :: (using win: *Window, motion: Motion_Result) -> bool {
 	if motion.status != .OK
 		return false;
 	clipboard: *Clipboard = *context.edit.clipboard;
-	start := normalize_position(win, motion.start);
-	end := normalize_position(win, motion.end);
+	start := normalize_position(win, motion.start, .INSERT);
+	end := normalize_position(win, motion.end, .INSERT);
 	if start >= end
 		start, end = end, start;
 	if motion.flags & .Y_ONLY {
@@ -693,43 +763,50 @@ _copy_range :: (using win: *Window, clipboard: *Clipboard, start: Position, end:
 	}
 	clipboard.lines = copied_lines; // @Leak leaks old lines
 	// TODO: jai linux clipboard is not working
-	// os_clipboard_set_text(join(.. clipboard.lines, separator = "\n"));
+	edit_set_os_clipboard(join(.. clipboard.lines, separator = "\n"));
 	return true;
 }
 
 _paste :: (using win: *Window, on_next_char: bool) -> bool {
 	clipboard := context.edit.clipboard;
 	// TODO: jai linux clipboard is not working
-	// clipboard.lines = split(os_clipboard_get_text(), #char "\n"); // @Leak leaks old lines, os_clipboard_get_text_allocates
+	clipboard.lines = split(edit_get_os_clipboard(), #char "\n"); // @Leak leaks old lines, os_clipboard_get_text_allocates
 	if clipboard.lines.count == 0
 		return false;
 	//preserve_cursor :: true;
 	cursor_pos := cursor.position;
 	end_cursor_pos := cursor_pos;
 	here_lines := clipboard.lines;
+	pos := cursor.position;
+	//log("%", here_lines);
 	//is_line_wise := false;
 	if peek(here_lines).count == 0 {
 		//is_line_wise = true;
 		if on_next_char {
 			here_lines.count -= 1;
 			split_line(win, .{ lines[cursor_pos.y].count, cursor_pos.y }, indent=false);
-			move_cursor(win, .{0, cursor_pos.y+1});
+			pos = .{0, cursor_pos.y + 1};
 			end_cursor_pos.y += 1;
 		} else {
 			here_lines.count -= 1;
 			split_line(win, .{ 0, cursor_pos.y }, indent=false);
-			move_cursor(win, .{0, cursor_pos.y});
+			pos = .{0, cursor_pos.y};
 		}
 	} else {
 		if on_next_char {
 			offset_cursor(win, 1, 0);
+			pos.x += 1;
 			end_cursor_pos.x += 1;
 		}
 	}
+	pos = normalize_position(win, pos, .INSERT);
 	for here_lines {
-		_write_normal_string(win, it); // these should be normal chars
-		if it_index + 1 != here_lines.count
-			split_line(win, indent=false);
+		_write_normal_string(win, pos, it); // these should be normal chars
+		pos.x += it.count;
+		if it_index + 1 != here_lines.count {
+			split_line(win, pos, indent=false);
+			pos = .{0, pos.y+1};
+		}
 	}
 	move_cursor(win, end_cursor_pos);
 	return true;
@@ -749,7 +826,11 @@ add_command :: inline (name: string = "", keybind: $T/.[string, []s32],
 	});
 }
 
+command_error :: (s: string = "") -> Command_Res {
+	return .{
+		status = .ERROR,
+		error_message = s,
+	};
+}
 
 #scope_file
-#import "Clipboard";
-

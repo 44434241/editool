@@ -46,6 +46,7 @@ next_buffer_id :: () -> BufId {
 	return ret;
 }
 
+// creating/destroying buffers still leaks some shit !
 
 // For now, buffer operations must be executed within a window..
 // Not sure if i'll want to change that, but might be difficult!
@@ -57,7 +58,7 @@ Buffer :: struct {
 	}
 	File_Flags :: enum_flags {
 		NO_FILE; // failed to read
-		READ_ONLY; // not implemented
+		READ_ONLY; // Just can't save, no matter what
 		NONE :: 0;
 	}
 	// capabilities
@@ -75,6 +76,7 @@ Buffer :: struct {
 		// Aliases:
 		ERASE_CHARS :: DELETE_CHARS;
 		ERASE_LINES :: DELETE_LINES;
+		//
 		INSERT :: INSERT_CHARS | INSERT_LINES;
 		DELETE :: DELETE_CHARS | DELETE_LINES;
 		MOVE :: MOVE_X | MOVE_Y;
@@ -87,18 +89,27 @@ Buffer :: struct {
 		TEMP; // destroy when windows stop referencing it !
 		NONE :: 0;
 	}
+	pool: Pool;
 	flags: Flags;
 	id: BufId = BUF_ID_NULL;
 	kind: Kind = .NONE;
 	caps: Caps = .NONE;
+	is_clrf: bool = false; // only valid for .FILE. might be set to "\r\n". only set on opening file
+	// ^ could be a file flag tbh
 	lines: [..]Line;
-	is_dirty: bool = false; // i dont know what this means..
-	operations: [..]Buffer_Op; // this array shouldn't get touched outside execute_buffer_operation
-	operation_index: int = -1; // index of last operation that was done, or -1
+	//is_dirty: bool = false; // i dont know what this means..
+	ops: [..]Buffer_Op; // this array shouldn't get touched outside execute_buffer_operation (and loading file rn)
+	// Index for next operation to be done
+	// 0 <= x <= ops.count
+	op_index: int = 0; 
+	// Operation index when buffer was saved
+	// -1 <= x <= ops.count (-1 when messing with undo/redo)
+	// (save could mean something generic, not specifically file)
+	save_op_index: int = 0; 
 	modify_time: Editime; // when the last modifying operation happened?
 	windows: [..]*Window; // doing it like this for now..
 	commands: [..]Command; // can only be added to after buffer creation
-	insert_commands: [..]Command; // these are all assumed to be of length 1!!!
+	insert_commands: [..]Command; // these keybinds are all assumed to be of length 1!!!
 	search_matches: Search_Matches; // touched by search..
 	marks: [..]Mark;
 	// file
@@ -110,7 +121,9 @@ Buffer :: struct {
 	modify_buffer_operation: #type (*Window, *Buffer_Op) -> bool;
 }
 
-find_or_create_file_buffer :: (_filename: string) -> *Buffer {
+find_or_create_file_buffer :: (_filename: string, flags: Buffer.Flags = .NONE, file_flags: Buffer.File_Flags = .NONE, must_respect_flags := false) -> *Buffer {
+	assert(!must_respect_flags); // some flags might be whatever ! but not always ! in the future there will be some case
+	assert((file_flags & .READ_ONLY) == file_flags); // has no other flags
 	filename := _filename;
 	if filename {
 		filename = _normalize_path(filename,, allocator=temp);
@@ -119,12 +132,18 @@ find_or_create_file_buffer :: (_filename: string) -> *Buffer {
 			assert(false, "Trying to open directory (% -> %)...", _filename, filename);
 		}
 		for context.edit.buffers {
-			if it.filename == filename
+			if it.filename == filename {
+				if it.file_flags != file_flags
+					continue;
+				// for the buffer to be temp, both the previous and this "new created" buffer must be temp
+				if !((it.flags & .TEMP) && (flags &.TEMP))
+					it.flags &= ~(.TEMP);
 				return it;
+			}
 		}
 	}
 	filename = copy_string(filename);
-	buf := _create_buffer_from_filename(copy_string(filename));
+	buf := _create_buffer_from_filename(filename, flags, file_flags);
 	return buf;
 }
 
@@ -143,12 +162,33 @@ destroy_buffer :: (buffer: *Buffer) {
 	assert(buffer.windows.count == 0);
 	ok := array_ordered_remove_by_value(*context.edit.buffers, buffer);
 	assert(ok);
-	array_reset(*buffer.commands);
-	array_reset(*buffer.insert_commands);
-	array_reset(*buffer.marks);
-	array_reset(*buffer.operations); // @Leak
-	array_reset(*buffer.lines); // @Leak
+	//array_reset(*buffer.commands);
+	//array_reset(*buffer.insert_commands);
+	//array_reset(*buffer.marks);
+	//array_reset(*buffer.operations); // @Leak
+	//array_reset(*buffer.lines); // @Leak
+	release(*buffer.pool);
 	free(buffer);
+}
+
+_new_buffer :: (kind: Buffer.Kind) -> *Buffer {
+	buf := New(Buffer);
+	set_allocators(*buf.pool);
+	buf.id = next_buffer_id();
+	buf.kind = kind;
+	array_add(*context.edit.buffers, buf);
+	allocator := Allocator.{pool_allocator_proc, *buf.pool};
+	buf.lines.allocator = allocator;
+	buf.commands.allocator = allocator;
+	buf.insert_commands.allocator = allocator;
+	buf.marks.allocator = allocator;
+	buf.ops.allocator = allocator;
+	buf.windows.allocator = allocator;
+	buf.search_matches.matches.allocator = allocator;
+	array_add(*buf.lines, .{
+		chars.allocator = allocator,
+	});
+	return buf;
 }
 
 // this should never fail, i think, even in the future?
@@ -160,26 +200,20 @@ get_current_buffer :: () -> *Buffer {
 
 // this doesn't have lines, so it'll crash if u dont add any
 create_custom_buffer :: () -> *Buffer {
-	buf := New(Buffer);
-	buf.id = next_buffer_id();
-	array_add(*context.edit.buffers, buf);
-	buf.kind = .CUSTOM;
-	array_add(*buf.lines);
+	buf := _new_buffer(.CUSTOM);
 	//buf.syntax = get_jai_syntax(); // TODO: don't duplicate this!!
 	return buf;
 }
 
-_create_buffer_from_filename :: (filename: string) -> *Buffer {
+_create_buffer_from_filename :: (filename: string, flags: Buffer.Flags, file_flags: Buffer.File_Flags) -> *Buffer {
 	time_this("Create buffer");
-	buf := New(Buffer);
-	buf.id = next_buffer_id();
-	array_add(*context.edit.buffers, buf);
+	buf := _new_buffer(.FILE);
 	buf.caps = .ALL;
-	buf.kind = .FILE;
+	buf.flags = flags;
+	buf.file_flags = file_flags;
 	buf.filename = filename;
 	//refresh_buffer_size(*buf); // from LINES, COLS
-	array_add(*buf.lines, .{});
-	buf.syntax = get_jai_syntax(); // TODO: don't duplicate this!!
+	buf.syntax = get_jai_syntax(); // @Leak
 	file_str: string;
 	file_ok: bool = false;
 	if filename {
@@ -187,9 +221,17 @@ _create_buffer_from_filename :: (filename: string) -> *Buffer {
 	}
 	if file_ok {
 		string_lines: []string = split(file_str, #char "\n",, allocator=temp);
+		for * string_lines {
+			// maybe should have some flag for clrf endings ?
+			if it.count && peek(it.*) == #char "\r" {
+				it.count -= 1;
+				buf.is_clrf = true;
+			}
+		}
 		if string_lines.count > 0 && peek(string_lines) == ""
 			string_lines.count -= 1;
 		for string_lines {
+			// @Leak (only place left where lines are directly added)
 			array_adds(*peek_pointer(buf.lines).chars, it);
 			if it_index + 1 != string_lines.count
 				array_add(*buf.lines, .{});
@@ -198,6 +240,18 @@ _create_buffer_from_filename :: (filename: string) -> *Buffer {
 		buf.file_flags |= .NO_FILE;
 	}
 	return buf;
+}
+
+buffer_as_string_for_saving :: (using buf: *Buffer) -> string {
+	chars: [..]u8;
+	for buf.lines {
+		array_add(*chars, .. it.chars);
+		if buf.is_clrf
+			array_add(*chars, "\r");
+		if it_index + 1 != buf.lines.count
+			array_add(*chars, "\n");
+	}
+	return cast(string)chars;
 }
 
 buffer_as_string :: (using buf: *Buffer) -> string {
@@ -228,6 +282,8 @@ for_expansion :: (using buffer: *Buffer, body: Code, for_flags: For_Flags) #expa
 	}
 }
 
+// Maybe have a separate file for operations??
+
 Buffer_Op :: struct {
 	Flags :: enum_flags {
 		NO_UNDO; // cannot be undone (opening a file)
@@ -243,6 +299,7 @@ Buffer_Op :: struct {
 		INSERT_LINES;
 		INSERT_CHARS;
 		SPLIT_LINE;
+		NOP;
 		ERASE_CHARS :: DELETE_CHARS;
 		ERASE_LINES :: DELETE_LINES;
 	}
@@ -265,26 +322,106 @@ Execute_Buffer_Op_Flags :: enum_flags {
 	NONE :: 0;
 }
 
+buffer_undo :: (win: *Window) -> bool, Buffer_Op {
+	reverse_operation :: inline (op: *Buffer_Op) -> bool {
+		if op.kind == {
+			case .NOP; //
+			case .DELETE_LINES;
+				op.kind = .INSERT_LINES;
+			case .INSERT_LINES;
+				op.kind = .DELETE_LINES;
+			//
+			case .DELETE_CHARS;
+				op.kind = .INSERT_CHARS;
+			case .INSERT_CHARS;
+				op.kind = .DELETE_CHARS;
+			//
+			case .SPLIT_LINE;
+				op.kind = .MERGE_LINES;
+				op.count = 1;
+			case .MERGE_LINES;
+				assert(op.count == 1);
+				op.kind = .SPLIT_LINE;
+			case;
+				return false;
+		}
+		return true;
+	}
+	using buf: *Buffer = win.buffer;
+	if buf.op_index <= 0
+		return false, .{};
+	op := buf.ops[buf.op_index-1];
+	if op.flags & .NO_UNDO {
+		return false, op;
+	}
+	if !reverse_operation(*op) {
+		edit_alert("Can't undo? %\n", op.kind, is_internal = true);
+		return false, op; // this is a panic
+	}
+	ok := _execute_buffer_operation(win, buf, *op, .MOVE_CURSOR);
+	if ok {
+		buf.op_index -= 1;
+	}
+	return ok, op;
+}
+
+buffer_redo :: (win: *Window) -> bool, Buffer_Op {
+	using buf: *Buffer = win.buffer;
+	if op_index >= ops.count
+		return false, .{};
+	op := buf.ops[buf.op_index];
+	ok := _execute_buffer_operation(win, buf, *op, .MOVE_CURSOR);
+	if ok {
+		op_index += 1;
+	}
+	return ok, op;
+}
+
+set_dirty :: (buf: *Buffer) {
+	buf.save_op_index = -1;
+}
+
+clear_dirty :: (buf: *Buffer) {
+	buf.save_op_index = buf.op_index;
+}
+
+is_dirty :: (buf: *Buffer) -> bool {
+	return buf.save_op_index != buf.op_index;
+}
+
 // buffer operation THROUGH window
 // This is the only one that respects the callback?
 execute_buffer_operation :: (win: *Window, _op: Buffer_Op, even_if_no_caps := false, no_callback := false) -> bool {
+	allocator := Allocator.{pool_allocator_proc, *win.buffer.pool};
 	op := _op;
-	if op.kind == .INSERT_CHARS {
-		op.chars = array_copy(op.chars);
-	}
 	using buf: *Buffer = win.buffer;
 	ok: bool = true;
 	if ok && buf.modify_buffer_operation && !no_callback {
+		// this doesn't have to return a bool, instead it could modify it to a nop !
 		ok = buf.modify_buffer_operation(win, *op);
 	}
 	if ok {
-		ok = _execute_buffer_operation(win, buf, *op, .FILL_FOR_REVERSE, even_if_no_caps = even_if_no_caps);
+		if op.kind == .INSERT_CHARS {
+			op.chars = array_copy(op.chars,, allocator);
+		} else if op.kind == .INSERT_LINES {
+			lines: [..]string;
+			array_reserve(*lines, op.lines.count);
+			for op.lines {
+				array_add(*lines, copy_string(it));
+			}
+			op.lines = lines;
+		}
 	}
 	if ok {
-		assert(buf.operation_index < operations.count);
-		operation_index += 1;
-		operations.count = buf.operation_index; // @Leak
-		array_add(*operations, op);
+		ok = _execute_buffer_operation(win, buf, *op, .FILL_FOR_REVERSE, even_if_no_caps = even_if_no_caps,, allocator);
+	}
+	if ok {
+		assert(buf.op_index <= ops.count);
+		ops.count = buf.op_index; // @Leak
+		array_add(*ops, op);
+		op_index += 1;
+		if save_op_index > ops.count
+			set_dirty(buf);
 	}
 	return ok;
 }
@@ -294,6 +431,7 @@ execute_buffer_operation :: (win: *Window, _op: Buffer_Op, even_if_no_caps := fa
 _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op: *Buffer_Op, flags: Execute_Buffer_Op_Flags, even_if_no_caps := false) -> bool {
 	if !even_if_no_caps {
 		if op.kind == {
+			case .NOP; //
 			case .INSERT_CHARS;
 				if caps & .INSERT_CHARS == 0
 					return false;
@@ -313,6 +451,9 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 		}
 	}
 	using,only(cursor) win;
+	allocator := Allocator.{pool_allocator_proc, *win.buffer.pool};
+	//if even_if_no_caps
+		//flags &= ~.FILL_FOR_REVERSE;
 	if flags & .FILL_FOR_REVERSE {
 		op.begin_cursor_position = cursor.position;
 		op.begin_mode = context.edit.mode;
@@ -323,7 +464,6 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 			move_cursor(win, op.begin_cursor_position);
 		}
 		buf.modify_time = context.edit.time;
-		buf.is_dirty = true;
 		for buf.windows {
 			// Mark x might get out of bounds..
 			// But if it gets normalized, then undo will be overly complicated.
@@ -419,7 +559,7 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 		case .INSERT_CHARS;
 			assert(op.count == op.chars.count);
 			line: *Line = *lines[op.y];
-			assert(op.x <= line.count);
+			assert(op.x <= line.count, "%", op.x, line.count);
 			for op.chars {
 				x := op.x + it_index;
 				array_insert_at(*line.chars, it, x);
@@ -447,6 +587,7 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 			curr_line: *Line = *lines[op.y];
 			array_add(*new_line.chars, .. advance(curr_line.chars, op.x));
 			curr_line.chars.count = op.x;
+			// this messes up but whatever rn
 			shift_y(.{op.x, op.y}, 1);
 			shift_x(.{0, op.y+1}, -curr_line.count);
 			new_line.dirty_flags |= .ALL;
@@ -469,6 +610,7 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 			assert(op.lines.count == op.count);
 			for op.lines {
 				line: Line; // dirty flags already all !
+				line.chars.allocator = context.allocator;
 				array_add(*line.chars, .. cast([]u8)it); // alloc here? though its fine
 				y := op.y + it_index;
 				array_insert_at(*lines, line, y);
@@ -491,8 +633,10 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 				shift_y_val -= 1;
 			shift_y(shift_y_val, -shift_count);
 			// TODO: this should be handled differently !!
-			if lines.count == 0
+			if lines.count == 0 {
+				assert(false, "you shouldve handled this !!!");
 				array_add(*lines);
+			}
 		case;
 			log("unsupported op: %\n", op.kind);
 	}
@@ -518,21 +662,22 @@ replace_buffer_lines_without_caps :: (using win: *Window, new_lines: []string) {
 	execute_buffer_operation(win, .{
 		kind = .ERASE_LINES,
 		y = 0,
-		count = lines.count - new_lines.count,
+		count = lines.count - max(new_lines.count, 1),
 	}, even_if_no_caps = true);
 	move_cursor(win, cursor_pos); // this normalizes it too
 }
 
-peek_last_operation :: (using buf: *Buffer) -> *Buffer_Op {
-	if operation_index >= 0
-		return *operations[operation_index];
-	return null;
+
+peek_last_operation :: (using buf: *Buffer) -> bool, Buffer_Op {
+	if op_index > 0
+		return true, ops[op_index-1];
+	return false, .{};
 }
 
-peek_next_operation :: (using buf: *Buffer) -> *Buffer_Op {
-	if operation_index + 1 < operations.count
-		return *operations[operation_index+1];
-	return null;
+peek_next_operation :: (using buf: *Buffer) -> bool, Buffer_Op {
+	if op_index < ops.count
+		return true, ops[op_index];
+	return false, .{};
 }
 
 //
