@@ -3,6 +3,10 @@ Command :: struct {
 	Proc :: #type (Command_In) -> Command_Result;
 	Motion_Proc :: #type (Command_In, Motion_Result) -> Command_Result;
 	Char_Proc :: #type (Command_In, s32) -> Command_Result;
+	Flags :: enum_flags {
+		EXPECT_NORMALIZED_MOTION,
+		NONE :: 0;
+	}
 	name: string;
 	keybind: Keybind;
 	proc: Proc;
@@ -118,7 +122,7 @@ command_delete_motion :: (in: Command_In, motion: Motion_Result, enter_insert_mo
 	win := in.window;
 	copy_motion(win, motion);
 	if motion.start.y != motion.end.y {
-		delete_line_range(win, motion.start.y, motion.start.y + (motion.end.y - motion.start.y) * in.number);
+		erase_line_range(win, motion.start.y, motion.start.y + (motion.end.y - motion.start.y) * in.number);
 	} else {
 		delete_range_in_line(win, motion.start.y, motion.start.x, motion.start.x + (motion.end.x - motion.start.x) * in.number);
 	}
@@ -130,7 +134,7 @@ command_delete_motion :: (in: Command_In, motion: Motion_Result, enter_insert_mo
 command_delete_line :: (in: Command_In) -> Command_Result {
 	using win := in.window;
 	copy_line_range(win, cursor.y, cursor.y + in.number - 1); // assumed to not fail?
-	delete_lines(win, cursor.y, in.number);
+	erase_lines(win, cursor.y, in.number);
 	return .{
 		modifies_dot = true,
 	};
@@ -184,7 +188,7 @@ command_paste :: (in: Command_In, on_next_char: bool) -> Command_Result {
 // this one is only used by commands
 _buffer_operations_can_be_merged :: (prev: Buffer_Op, next: Buffer_Op) -> bool {
 	if prev.kind == next.kind {
-		if (prev.kind == .INSERT_CHARS || prev.kind == .DELETE_CHARS) {
+		if (prev.kind == .INSERT_CHARS || prev.kind == .ERASE_CHARS) {
 			if prev.y == next.y && abs(prev.x - next.x) <= 1
 				return true;
 		}
@@ -304,7 +308,7 @@ command_replace_char :: (in: Command_In, char: s32) -> Command_Result {
 	}
 	win := in.window;
 	pos := win.cursor.position;
-	delete_chars(win, pos, 1);
+	erase_chars(win, pos, 1);
 	write_char(win, pos, xx char);
 	move_cursor(win, pos);
 	return .{
@@ -472,9 +476,9 @@ command_change_edit_mode :: (in: Command_In, mode: Edit_Mode) -> Command_Res {
 	};
 }
 
-command_delete_chars :: (in: Command_In) -> Command_Result {
+command_erase_chars :: (in: Command_In) -> Command_Result {
 	win := in.window;
-	if !delete_chars(win, in.number) {
+	if !erase_chars(win, in.number) {
 		return .{
 			status = .ERROR,
 		};
@@ -659,7 +663,7 @@ add_all_commands :: () {
 	);
 	add_global_command(
 		keybind = "x",
-		proc = command_delete_chars,
+		proc = command_erase_chars,
 	);
 	add_global_command(
 		keybind = "?",

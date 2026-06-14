@@ -7,6 +7,9 @@ Fzf_Item :: struct {
 	line: string; // line as text
 	start: int;
 	end: int;
+	// modified by window thing
+	line_prefix: string;
+	filename_start: int = 0; // where in line prefix filename starts
 }
 
 Fzf_Result :: struct {
@@ -18,6 +21,14 @@ Fzf_Result :: struct {
 	poll: #type(*Fzf_Result) -> (); 
 	release: #type(*Fzf_Result) -> (); 
 	thread_group: Thread_Group;
+}
+
+allocator_of :: (res: *Fzf_Result) -> Allocator {
+	return allocator_of(*res.pool);
+}
+
+allocator_of :: (pool: *Pool) -> Allocator {
+	return .{pool_allocator_proc, pool};
 }
 
 
@@ -68,8 +79,15 @@ do_fd :: (ret: *Fzf_Result, search: string, dir: string = ".") {
 	}
 }
 
-do_rg :: (ret: *Fzf_Result, search: string, paths: .. string) {
+do_rg :: (ret: *Fzf_Result, _search: string, paths: .. string) {
 	time_this("Do ripgrep");
+	search := _search;
+	extra_paths: [..]string;
+	extra_paths.allocator = temp;
+	if search && search[0] == #char "!" {
+		search = advance(search, 1);
+		array_add(*extra_paths, "/home/user/jai/latest");
+	}
 	//
 	set_allocators(*ret.pool);
 	ctx: #Context = context;
@@ -93,6 +111,7 @@ do_rg :: (ret: *Fzf_Result, search: string, paths: .. string) {
 	args.allocator = temp;
 	array_add(*args, "rg", "--json", "-m", max_per_file, "-S", "--", search);
 	array_add(*args, .. paths);
+	array_add(*args, .. extra_paths);
 	if !paths
 		array_add(*args, ".");
 	res, output := run_command(.. args, capture_and_return_output = true);
@@ -130,6 +149,7 @@ do_rg :: (ret: *Fzf_Result, search: string, paths: .. string) {
 			return .CONTINUE;
 		});
 		ret.poll = (res: *Fzf_Result) {
+			time_this("Poll");
 			results := get_completed_work(*res.thread_group);
 			for results {
 				work := it.(*Work);

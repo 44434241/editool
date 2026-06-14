@@ -1,9 +1,4 @@
 
-// not working stuff:
-// - a: #Context = context;
-// - a, b := 3; (breaks proc declarations with pointers?)
-
-// has reasonable defaults
 Syntax_Element :: struct {
 	Kind :: enum {
 		// in order of priority ?
@@ -38,7 +33,27 @@ Syntax_Element :: struct {
 	replace: string; // ** this isn't a direct replace, but it keeps length ** 
 }
 
+get_syntax_for_filename :: (filename: string) -> *Syntax {
+	if context.edit.syntaxes.count == 0 {
+		{
+			// Empty
+			syntax := New(Syntax);
+			array_add(*context.edit.syntaxes, syntax);
+		}
+		{
+			// Jai
+			syntax := New(Syntax);
+			syntax.* = create_jai_syntax();
+			array_add(*context.edit.syntaxes, syntax);
+		}
+	}
+	if filename == ""
+		return context.edit.syntaxes[0];
+	else
+		return context.edit.syntaxes[1];
+}
 
+// has reasonable defaults  ?
 Syntax :: struct {
 	elements: [Syntax_Element.COUNT]Syntax_Element;
 	using Syntax_Element.Kind;
@@ -63,46 +78,7 @@ Syntax :: struct {
 	regex: Uniform.Regexp;
 }
 
-compile_syntax :: (using syntax: *Syntax) {
-	regex_str: string = ---;
-	{
-		builder: String_Builder;
-		builder.allocator = temp;
-		// match anything (lazy) + 1 or more non word character or start of line
-		//print(*builder, "(.*?(?:^|\\W))"); // CAN'T DO THIS
-		print(*builder, "(.*?)"); 
-		print(*builder, "(");
-		for * syntax.elements {
-			defer {
-				if it_index + 1 != syntax.elements.count
-					print(*builder, "|");
-			}
-			if it.match == "" {
-				// never matches
-				print(*builder, "(%)", "asdhujsgfuyrsdghuieqw3h");
-				continue;
-			}
-			extra_end := "";
-			extra_start := "";
-			//log("% % %", it_index, it.flags, extra);
-			if it.flags & .IS_NOT_WORD == 0 {
-				// is word
-				extra_end = "(?:\\W|$)"; 
-				extra_start = "(?:^|\\W)"; // CAN'T DO WITH THIS
-			}
-			s := tprint("%(%)%0%", extra_start, it.match, it.match_suffix, extra_end);
-			print(*builder, "%", s);
-		}
-		print(*builder, ")");
-		regex_str = builder_to_string(*builder,, allocator=temp);
-		#if 1 {
-			log("regex str: %\n", regex_str);
-		}
-	}
-	regex, is_compiled = Uniform.compile(regex_str);
-}
-
-get_jai_syntax :: () -> Syntax {
+create_jai_syntax :: () -> Syntax {
 	using syntax: Syntax;
 	elements[KEYWORD1].match = #run join(.. .[
 		"for",
@@ -169,10 +145,10 @@ get_jai_syntax :: () -> Syntax {
 	syntax.elements[NUMBER].match = "\\d+(?:\\.\\d+)?";
 	syntax.elements[TAB].match = "\\t++";
 	syntax.elements[COMMENT].match = "//.*?$";
-	syntax.elements[CONSTANT2].match = "(?:\\$?[A-Z][A-Z_]*+|\\$\\w++)";
+	syntax.elements[CONSTANT2].match = "(?:\\$?[A-Z_][A-Z_\\d]*+|\\$\\w++)";
+	elements[CONSTANT3].match_suffix = #run sprint("\\s*:\\s*(?:%)?\\w*:", decl_type);
 	syntax.elements[CONSTANT3].match = elements[DECLARATION].match;
 	syntax.elements[NOTE].match = "@\\w+";
-	elements[CONSTANT3].match_suffix = #run sprint("\\s*:\\s*(?:%)?\\w*:", decl_type);
 	// I'd want EOL_SPACE to match line chars *before* the cursor
 	//syntax.elements[EOL_SPACE].match = " +$";
 	//syntax.elements[EOL_SPACE].replace = "-";
@@ -182,10 +158,49 @@ get_jai_syntax :: () -> Syntax {
 	//elements[NUMBER].flags |= .IS_NOT_WORD;
 	elements[TAB].flags |= .IS_NOT_WORD;
 	elements[COMMENT].flags |= .IS_NOT_WORD;
-	elements[TYPE2].flags |= .IS_NOT_WORD;
-	elements[CONSTANT2].flags |= .IS_NOT_WORD;
-	elements[CONSTANT3].flags |= .IS_NOT_WORD;
+	//elements[TYPE2].flags |= .IS_NOT_WORD;
+	//elements[CONSTANT2].flags |= .IS_NOT_WORD;
+	//elements[CONSTANT3].flags |= .IS_NOT_WORD;
 	elements[EOL_SPACE].flags |= .IS_NOT_WORD;
 	compile_syntax(*syntax);
 	return syntax;
+}
+
+compile_syntax :: (using syntax: *Syntax) {
+	regex_str: string = ---;
+	{
+		builder: String_Builder;
+		builder.allocator = temp;
+		// match anything (lazy) + 1 or more non word character or start of line
+		//print(*builder, "(.*?(?:^|\\W))"); // CAN'T DO THIS
+		print(*builder, "(.*?)"); 
+		print(*builder, "(");
+		for * syntax.elements {
+			defer {
+				if it_index + 1 != syntax.elements.count
+					print(*builder, "|");
+			}
+			if it.match == "" {
+				// never matches
+				print(*builder, "(%)", "asdhujsgfuyrsdghuieqw3h");
+				continue;
+			}
+			extra_end := "";
+			extra_start := "";
+			//log("% % %", it_index, it.flags, extra);
+			if it.flags & .IS_NOT_WORD == 0 {
+				// is word
+				extra_end = "(?:\\W|$)"; 
+				extra_start = "(?:^|\\W)"; // CAN'T DO WITH THIS
+			}
+			s := tprint("%(%)%0%", extra_start, it.match, it.match_suffix, extra_end);
+			print(*builder, "%", s);
+		}
+		print(*builder, ")");
+		regex_str = builder_to_string(*builder,, allocator=temp);
+		#if 1 {
+			log("regex str: %\n", regex_str);
+		}
+	}
+	regex, is_compiled = Uniform.compile(regex_str);
 }

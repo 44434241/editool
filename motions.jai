@@ -58,6 +58,11 @@ find_motion :: (keybind: $T/.[[]s32, string]) -> *Motion {
 	return null;
 }
 
+normalize_motion_result :: (win: *Window, res: *Motion_Res, mode := Edit_Mode.NONE) {
+	res.start = normalize_position(win, res.start, mode);
+	res.end = normalize_position(win, res.end, mode);
+}
+
 // this could recurse, actually..
 // works a bit differently than commands.. won't handle motions that get called again!
 make_motion_alias :: ($chars: $T/.[ []s32, string ]) -> Motion.Proc {
@@ -353,8 +358,11 @@ motion_empty_line  :: (in: Motion_In, step: int) -> Motion_Result {
 	to_find := in.number;
 	y := win.cursor.y;
 	start: Position = cursor.position;
-	if lines[start.y].count == 0
+	is_jump := true;
+	if lines[start.y].count == 0 {
 		start.y += step;
+		is_jump = false;
+	}
 	seen_normal_line := false;
 	while true {
 		is_eof := clamp(y, 0, win.lines.count - 1) != y;
@@ -374,6 +382,7 @@ motion_empty_line  :: (in: Motion_In, step: int) -> Motion_Result {
 	return .{
 		start = start,
 		end = .{ 0, y },
+		is_jump = is_jump,
 		//flags = .Y_ONLY,
 	};
 }
@@ -401,13 +410,13 @@ motion_mark_char :: (in: Motion_In, char: s32) -> Motion_Result {
 }
 
 motion_scroll_offset :: (in: Motion_In, $step: int) -> Motion_Result {
-	assert(step == -1 || step == 1);
+	// i might feel like changing the step for this one
 	win := in.window;
 	return .{
 		start = win.cursor.position,
 		end = win.cursor.position,
 		flags = .SCROLL_ONLY,
-		scroll = win.scroll + step * in.number,
+		scroll = max(win.scroll + step * in.number, 0),
 	};
 }
 
@@ -427,14 +436,114 @@ add_all_motions :: () {
 	// MOTIONS
 	add_motion(
 		keybind = .[ KEY_SR ],
-		proc = #bake_arguments motion_scroll_offset(step = -1),
+		proc = #bake_arguments motion_scroll_offset(step = -5),
 		flags = .SCROLL_ONLY,
 	);
 	add_motion(
 		keybind = .[ KEY_SF ],
-		proc = #bake_arguments motion_scroll_offset(step = 1),
+		proc = #bake_arguments motion_scroll_offset(step = 5),
 		flags = .SCROLL_ONLY,
 	);
+	add_motion(
+		keybind = .[ KEY_SNEXT ],
+		proc = #bake_arguments motion_scroll_offset(step = 999),
+		flags = .SCROLL_ONLY,
+	);
+	add_motion(
+		keybind = .[ KEY_SPREVIOUS ],
+		proc = #bake_arguments motion_scroll_offset(step = -999),
+		flags = .SCROLL_ONLY,
+	);
+	add_motion(
+		keybind = "Z",
+		proc = motion_scroll_center,
+		flags = .SCROLL_ONLY,
+	);
+	add_motion(
+		keybind = "zz",
+		proc = motion_scroll_center,
+		flags = .SCROLL_ONLY,
+	);
+	add_motion(
+		keybind = "w",
+		flags = .X_ONLY,
+		proc = #bake_arguments(motion_word(step = 1, flags = .NONE)),
+	);
+	add_motion(
+		keybind = "W",
+		flags = .X_ONLY,
+		proc = #bake_arguments(motion_word(step = 1, flags = .FULL)),
+	);
+	add_motion(
+		keybind = "b",
+		flags = .X_ONLY,
+		proc = #bake_arguments(motion_word(step = -1, flags = .NONE)),
+	);
+	add_motion(
+		keybind = "B",
+		flags = .X_ONLY,
+		proc = #bake_arguments(motion_word(step = -1, flags = .FULL)),
+	);
+	add_motion(
+		keybind = "i.",
+		flags = .X_ONLY,
+		proc = #bake_arguments(motion_inner(ch = #char ".", inclusive = false)),
+	);
+	add_motion(
+		keybind = "i_",
+		flags = .X_ONLY,
+		proc = #bake_arguments(motion_inner(ch = #char "_", inclusive = false)),
+	);
+	add_motion(
+		keybind = "i]",
+		flags = .X_ONLY,
+		proc = #bake_arguments(motion_inner(ch = #char "]", inclusive = false)),
+	);
+	add_motion(
+		keybind = "i)",
+		flags = .X_ONLY,
+		proc = #bake_arguments(motion_inner(ch = #char ")", inclusive = false)),
+	);
+	add_motion(
+		keybind = "i\"",
+		flags = .X_ONLY,
+		proc = #bake_arguments(motion_inner(ch = #char "\"", inclusive = false)),
+	);
+	add_motion(
+		keybind = "iw",
+		flags = .X_ONLY,
+		proc = #bake_arguments(motion_inner(ch = #char "w", inclusive = false)),
+	);
+	add_motion(
+		keybind = "iW",
+		flags = .X_ONLY,
+		proc = #bake_arguments(motion_inner(ch = #char "W", inclusive = false)),
+	);
+	add_motion(
+		keybind = "a]",
+		flags = .X_ONLY,
+		proc = #bake_arguments(motion_inner(ch = #char "]", inclusive = true)),
+	);
+	add_motion(
+		keybind = "a)",
+		flags = .X_ONLY,
+		proc = #bake_arguments(motion_inner(ch = #char ")", inclusive = true)),
+	);
+	add_motion(
+		keybind = "a\"",
+		flags = .X_ONLY,
+		proc = #bake_arguments(motion_inner(ch = #char "\"", inclusive = true)),
+	);
+	/*
+	add_motion(
+		keybind = "aw",
+		proc = #bake_arguments(motion_inner(ch = #char "w", inclusive = true)),
+	});
+	add_motion(
+		keybind = "aW",
+		proc = #bake_arguments(motion_inner(ch = #char "W", inclusive = true)),
+	);
+	*/
 	add_motion(
 		keybind = "Z",
 		proc = motion_scroll_center,

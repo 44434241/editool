@@ -34,7 +34,18 @@ Search_State :: struct {
 	#overlay(replace_chars) replace_string: string;
 	// this is a view
 	motion_string: string;
-	is_special_case_search_replace: bool; // u flag
+	Flags :: enum_flags {
+		SPECIAL_CASE_SEARCH_REPLACE; // u
+		CASE_SENSITIVE; // C
+		// Even if wrote the full search/replace syntax, don't search replace
+		SEARCH_ONLY; // s
+		// even if replace string is empty, replace (less common than the above option)
+		REPLACE; // r
+		// confirm search/replace
+		REPLACE_CONFIRM; // c
+		NONE :: 0;
+	}
+	flags: Flags;
 	//
 	search_regex: Uniform.Regexp;
 }
@@ -48,13 +59,6 @@ editool_search_init :: () {
 		proc = (in: Command_In) -> Command_Result {
 			// Update search
 			string_commands_ensure_up_to_date(*context.search);
-			//{
-				//select_window(context.search.last_window);
-			//}
-			//if context.buffer_window.buffer.kind != .FILE {
-				//return command_error();
-			//}
-			//
 			if context.search.status != .SEARCH {
 				return command_error("Bad search");
 			}
@@ -64,7 +68,7 @@ editool_search_init :: () {
 			// Would be cool if through this fzf window i could search replace !!
 			fzf_win := make_fzf_window((res: *Fzf_Result, s: string, data: *void) {
 				buf := data.(*Buffer);
-				do_rg(res, s, ".", "/home/user/jai/latest");
+				do_rg(res, s, ".");
 			}, start_search = str);
 			if fzf_win == null
 				return command_error();
@@ -166,7 +170,7 @@ _recompile_search :: () {
 	array_reset(*search_chars);
 	array_reset(*replace_chars);
 	motion_string = "";
-	is_special_case_search_replace = false;
+	flags = .NONE;
 	idx := 0;
 	while idx < chars.count {
 		if chars[idx] == #char "\\" {
@@ -217,11 +221,18 @@ _recompile_search :: () {
 				}
 				flag_string := cast(string)advance(chars, idx+1);
 				for flag_string {
-					if it == "u" {
-						is_special_case_search_replace = true;
-					} else {
-						status = .ERROR;
-						return;
+					if it == {
+						case "u";
+							flags |= .SPECIAL_CASE_SEARCH_REPLACE;
+						case "C";
+							flags |= .CASE_SENSITIVE;
+						case "s";
+							flags |= .SEARCH_ONLY;
+						case "r";
+							flags |= .REPLACE;
+						case;
+							status = .ERROR;
+							return;
 					}
 				}
 				break;
@@ -230,9 +241,16 @@ _recompile_search :: () {
 		}
 		//if chars[idx] == #char "\\" {
 	}
+	if flags & .SEARCH_ONLY
+		status = .SEARCH;
+	if !(flags & .REPLACE) && replace_string.count == 0
+		status = .SEARCH;
 	full_regex_string := tprint(".*+(%)", search_string); // non-greedy whatever
 	// @UniformBug with how .NonGreedy works, i think? (inverts instead of choosing a default)
 	compile_flags: Uniform.ParseFlags = (.LikePerl | .NonGreedy | .FoldCase);
+	if flags & .CASE_SENSITIVE {
+		compile_flags &= ~.FoldCase;
+	}
 	re, ok := Uniform.compile(full_regex_string, compile_flags);
 	if !ok {
 		status = .ERROR;
@@ -283,7 +301,7 @@ go_to_search_match_offset :: (offset: int, jump := true) -> bool {
 	return true;
 }
 
-_do_search_replace :: (using win: *Window) {
+_do_search_replace :: (using,except(flags, Flags) win: *Window) {
 	is_lower :: (ch: u8) -> bool {
 		return #char "a" <= ch && ch <= "z";
 	}
@@ -304,7 +322,7 @@ _do_search_replace :: (using win: *Window) {
 		ok, searched, replaced := _match_search_replace(win, it, replace_string);
 		if !ok
 			return;
-		if is_special_case_search_replace && searched.count > 0 && replaced.count > 0 {
+		if flags & .SPECIAL_CASE_SEARCH_REPLACE && searched.count > 0 && replaced.count > 0 {
 			if is_lower(searched[0]) {
 				to_lower_in_place(replaced);
 			} else if searched.count >= 2 && is_upper(searched[0]) && is_upper(searched[1]) {
@@ -315,7 +333,7 @@ _do_search_replace :: (using win: *Window) {
 			}
 		}
 		log("REPLACE % -> %", searched, replaced);
-		delete_chars(win, it.position, it.count);
+		erase_chars(win, it.position, it.count);
 		// assumes ok string
 		_write_normal_string(win, it.position, replaced);
 	}
@@ -337,7 +355,7 @@ maybe_update_search_matches :: (win: *Window, force_update := false) -> bool {
 
 // temp allocated
 // doesn't handle search/replace flags ..?
-_match_search_replace :: (using win: *Window, m: Search_Match, replace: string) -> bool, string, string {
+_match_search_replace :: (using,except(flags, Flags) win: *Window, m: Search_Match, replace: string) -> bool, string, string {
 	if !is_position_in_buffer(buffer, .{m.position.x + m.count, m.position.y}) {
 		edit_error("Failed search replace");
 		return false, "", "";

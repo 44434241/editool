@@ -172,10 +172,12 @@ make_exec_proc :: ($proc: () -> bool) -> Exec_Command.Proc {
 
 make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_data: *void = null, start_search := "") -> *Window {
 	Fzf_State :: struct {
-		buf1: *Buffer;
-		buf2: *Buffer;
-		win1: *Window;
-		win2: *Window;
+		// 1 is list of matches
+		// 2 is search being typed
+		match_buf: *Buffer;
+		input_buf: *Buffer;
+		match_win: *Window;
+		input_win: *Window; 
 		description_buf: *Buffer;
 		description_win: *Window;
 		preview_buf: *Buffer;
@@ -183,20 +185,19 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 		parent: *Window;
 		using,only(items, search) res: Fzf_Result;
 		user_data: *void;
+		search_query: string;
 	}
 	maybe_update_state :: (state: *Fzf_State, force := false) {
-		search := state.buf2.lines[0].as_string;
+		search := state.input_buf.lines[0].as_string;
 		should_remake_lines := false;
-		if search != state.search || force {
-			edit_alert("remake allocator is %", context.allocator);
+		if search != state.search_query || force {
 			should_remake_lines = true;
 			if state.res.release // this is only true when force == true
 				state.res.release(*state.res);
 			Initialize(*state.res);
 			get_result(*state.res, search, state.user_data);
-			edit_alert("remake allocator is %", context.allocator);
-			assert(state.res.search == search);
-			edit_alert("Fr '%': %", state.search, state.res.ok);
+			state.search_query = copy_string(search,, allocator = allocator_of(*state.res));
+			edit_alert("Fr '%': %", state.search_query, state.res.ok);
 		} else {
 			count := state.res.items.count;
 			if state.res.poll {
@@ -205,24 +206,42 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 			should_remake_lines = state.res.items.count != count; 
 		}
 		if should_remake_lines {
-			delete_lines(state.description_win, 0, 1);
+			time_this("Remake lines");
+			erase_lines(state.description_win, 0, 1);
 			_write_normal_string(state.description_win, .{0, 0}, tprint(" Total: %", state.items.count));
 			{
+				MAX_ALIGN_X :: 40;
+				STEP_ALIGN_X :: 10;
+				WHITESPACE :: #run -> string {
+					arr: [..]u8;
+					for 1..MAX_ALIGN_X {
+						array_add(*arr, " ");
+					}
+					return cast(string)arr;
+				}
 				new_lines: [..]string;
 				new_lines.allocator = temp;
 				for * state.items {
 					if it.line.count && peek(it.line) == #char "\n"
 						it.line.count -= 1;
-					array_add(*new_lines, tprint("%:% %", it.filename, it.line_number, it.line));
+					it.line_prefix = sprint("%:% ", it.filename, it.line_number,, allocator=allocator_of(*state.res));
+					#if 0 {
+						if it.line_prefix.count < MAX_ALIGN_X {
+							prefix_count := (STEP_ALIGN_X - it.line_prefix.count % STEP_ALIGN_X) % STEP_ALIGN_X;
+							it.filename_start = prefix_count;
+							it.line_prefix = sprint("%0%0", string.{ data = WHITESPACE.data, count = prefix_count }, it.line_prefix);
+						}
+					}
+					array_add(*new_lines, tprint("%0%0", it.line_prefix, it.line));
 				}
 				if !state.items.count
 					array_add(*new_lines, "");
-				replace_buffer_lines_without_caps(state.win1, new_lines);
+				replace_buffer_lines_without_caps(state.match_win, new_lines);
 			}
 		}
-		if state.win1.cursor.y < state.res.items.count {
-			item := state.res.items[state.win1.cursor.y];
-			if item.filename && context.buffer_window != state.preview_win {
+		if state.match_win.cursor.y < state.res.items.count {
+			item := state.res.items[state.match_win.cursor.y];
+			if item.filename && context.buffer_window == state.match_win || context.buffer_window == state.input_win {
 				buf := get_file_buffer(item.filename, .TEMP);//, .READ_ONLY);
 				change_buffer(state.preview_win, buf);
 				move_cursor(state.preview_win, .{0, item.line_number});
@@ -235,21 +254,21 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 	using,except(user_data) state;
 	{
 		// assume none of this fails?
-		buf1 = create_custom_buffer();
-		buf1.caps |= .MODE_COMMAND;
-		buf1.caps |= .MOVE_Y;
-		buf1.flags |= .NO_SEARCH;
-		buf2 = create_custom_buffer();
-		buf2.flags |= .NO_SEARCH;
-		buf2.caps |= .MODE_ALL | .INSERT_CHARS | .ERASE_CHARS | .MOVE_X;
+		match_buf = create_custom_buffer();
+		match_buf.caps |= .MODE_COMMAND;
+		match_buf.caps |= .MOVE_Y;
+		match_buf.flags |= .NO_SEARCH;
+		input_buf = create_custom_buffer();
+		input_buf.flags |= .NO_SEARCH;
+		input_buf.caps |= .MODE_ALL | .INSERT_CHARS | .ERASE_CHARS | .MOVE_X;
 		description_buf = create_custom_buffer();
 		description_buf.caps |= .ALL; // whatever lol
 		preview_buf = create_custom_buffer();
 		preview_buf.caps |= .ALL; // whatever lol
 		// They won't get checked for destruction until any window they belong to gets destroyed.
 		// That should be the intended behaviour.
-		buf1.flags |= .TEMP;
-		buf2.flags |= .TEMP;
+		match_buf.flags |= .TEMP;
+		input_buf.flags |= .TEMP;
 		description_buf.flags |= .TEMP;
 		preview_buf.flags |= .TEMP;
 		parent = create_container_window(null, mode = .VERTICAL, flags = .TEMP_FLOATING, is_hidden = true);
@@ -257,17 +276,17 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 		add_flags(search_parent, .BORDER);
 		preview_win = create_buffer_window(parent, preview_buf, flags = .BUFFER_LINE_NO, select = false);
 		add_flags(preview_win, .BORDER);
-		win1 = create_buffer_window(search_parent, buf1, flags = .BUFFER_LINE_NO, select = false);
+		match_win = create_buffer_window(search_parent, match_buf, flags = .BUFFER_LINE_NO, select = false);
 		description_win = create_buffer_window(search_parent, description_buf);
-		win2 = create_buffer_window(search_parent, buf2, select = false);
-		update_container_item(win2, .{ fixed_size = 1 });
+		input_win = create_buffer_window(search_parent, input_buf, select = false);
+		update_container_item(input_win, .{ fixed_size = 1 });
 		update_container_item(description_win, .{ fixed_size = 1 });
 		// Not sure if i need all of these
 		parent.user_data = state;
-		win1.user_data = state;
-		win2.user_data = state;
-		buf1.user_data = state;
-		buf2.user_data = state;
+		match_win.user_data = state;
+		input_win.user_data = state;
+		match_buf.user_data = state;
+		input_buf.user_data = state;
 	}
 	parent.on_destroy = (win: *Window) {
 		state := win.user_data.(*Fzf_State);
@@ -275,45 +294,70 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 		edit_alert("release...");
 		free(state);
 	};
-	win2.map_window_for_motion = (win: *Window, motion: *Motion) -> *Window {
+	input_win.map_window_for_motion = (win: *Window, motion: *Motion) -> *Window {
 		log("map motion?");
 		if motion.flags & (.Y_ONLY | .SCROLL_ONLY) {
 			state := win.user_data.(*Fzf_State);
-			return state.win1;
+			return state.match_win;
 		}
 		return win;
 	};
-	win1.before_draw = (win: *Window) {
+	match_win.before_draw = (win: *Window) {
 		state := win.user_data.(*Fzf_State);
 		maybe_update_state(state);
 	}
 	// modifiers directly affect the window, not the buffer. is that what i want?
-	win1.apply_mods = (win: *Window, lines: []Line) {
+	match_win.apply_mods = (win: *Window, lines: []Line) {
 		state := win.user_data.(*Fzf_State);
-		for * win.lines[win.cursor.y].user_mods {
-			it.bg_color = 1;
-			it.fg_color = 4;
-			it.attributes |= A_STANDOUT;
-		}
 		for * lines {
 			y := it_index + (lines.data - win.lines.data);
 		//for y: win.scroll..min(win.lines.count, win.scroll+win.size.y)-1 {
 			if y >= state.res.items.count
 				break;
 			item := state.res.items[y];
-			if item.end <= 0
-				continue;
-			dummy := tprint("%:% ", item.filename, item.line_number);
-			for x: item.start+dummy.count..item.end+dummy.count {
+			prefix_count := item.line_prefix.count;
+			if it.dirty_flags & .USER1 && ends_with(item.filename, ".jai") {
+				syntax := get_syntax_for_filename(item.filename);
+				apply_syntax_mods(it, syntax, first_x = prefix_count);
+				it.user_mods = it.mods;
+				it.dirty_flags &= ~.USER1;
+			}
+			if win.cursor.y == y {
+				for * it.user_mods {
+					//it.fg_color = 1;
+					it.bg_color = 4;
+					if it.fg_color == it.bg_color {
+						it.fg_color = 7;
+					}
+					//it.attributes |= A_STANDOUT;
+				}
+			}
+			for x: item.filename_start..item.filename_start+item.filename.count-1 {
+				if win.cursor.y != y {
+					it.user_mods[x].fg_color = 5;
+				} else {
+					it.user_mods[x].fg_color = 2;
+				}
+			}
+			for x: item.filename_start+item.filename.count..item.filename_start+item.filename.count+tprint("%", item.line_number).count {
+				if win.cursor.y != y {
+					it.user_mods[x].fg_color = 1;
+				} else {
+					it.user_mods[x].fg_color = 1;
+				}
+			}
+			for x: item.start+prefix_count..item.end+prefix_count {
 				if x >= it.count
 					continue;
 				if x >= Line.user_mods.count
 					continue;
-				if y != win.cursor.y {
-					it.user_mods[x].fg_color = 3;
+				it.user_mods[x].attributes |= A_BOLD;
+				if y == win.cursor.y || true {
+					//it.user_mods[x].bg_color = 7;
+					//it.user_mods[x].fg_color = 1;
 				} else {
-					it.user_mods[x].bg_color = 3;
-					//it.user_mods[x].attributes |= A_BOLD;
+					//it.user_mods[x].fg_color = 6;
+					//it.user_mods[x].bg_color = 1; // same as initial
 				}
 			}
 		}
@@ -329,7 +373,7 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 		if state.items.count == 0 {
 			return .{ status = .ERROR };
 		}
-		item := state.items[state.win1.cursor.y];
+		item := state.items[state.match_win.cursor.y];
 		buf := get_file_buffer(item.filename);
 		//
 		new_win: *Window = ---;
@@ -367,22 +411,22 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 		select_window(new_win);
 		return .{};
 	}
-	add_command(*buf2.commands, 
+	add_command(*input_buf.commands, 
 		keybind = "\n",
 		mode = .COMMAND | .INSERT,
 		proc = #bake_arguments select_proc(select_mode = .OPEN),
 	);
-	add_command(*buf2.commands, 
+	add_command(*input_buf.commands, 
 		keybind = .[ 20 ], // ctrl + t
 		mode = .COMMAND | .INSERT,
 		proc = #bake_arguments select_proc(select_mode = .TAB),
 	);
-	add_command(*buf2.commands,
+	add_command(*input_buf.commands,
 		keybind = .[ 22 ], // ctrl + v
 		mode = .COMMAND | .INSERT,
 		proc = #bake_arguments select_proc(select_mode = .VERTICAL),
 	);
-	add_command(*buf2.commands, 
+	add_command(*input_buf.commands, 
 		keybind = .[ KEY_ESCAPE ],
 		mode = .COMMAND | .INSERT,
 		proc = (_: Command_In) -> Command_Result {
@@ -399,10 +443,10 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 		ry = .{ .END, -5 },
 	}, border = false);
 	maybe_update_state(state, force = true);
-	select_window(win2);
+	select_window(input_win);
 	change_edit_mode(.INSERT);
 	// start search
-	_write_normal_string(state.win2, {0, 0}, start_search);
+	_write_normal_string(state.input_win, {0, 0}, start_search);
 	return parent;
 }
 
@@ -507,27 +551,27 @@ add_all_execs :: () {
 		update_container_item(win, item);
 		return true;
 	});
-	add_exec("fr", #run make_exec_proc(() -> bool {
+	add_exec("fr", #run make_exec_proc((start: string) -> bool {
 		win := make_fzf_window((res: *Fzf_Result, s: string, data: *void) {
-			do_rg(res, s, ".", "/home/user/jai/latest");
-		});
+			do_rg(res, s, ".");
+		}, start_search = start);
 		return win != null;
-	}));
+	}, ""));
 	add_exec("fs", #run make_exec_proc(() -> bool {
 		if context.buffer_window.buffer.kind != .FILE
 			return false;
 		win := make_fzf_window((res: *Fzf_Result, s: string, data: *void) {
 			buf := data.(*Buffer);
 			do_rg(res, s, buf.filename);
-		}, context.buffer_window.buffer);
+		}, context.buffer_window.buffer, start_search = context.search.search_string);
 		return win != null;
 	}));
-	add_exec("ff", #run make_exec_proc(() -> bool {
+	add_exec("ff", #run make_exec_proc((start: string) -> bool {
 		win := make_fzf_window((res: *Fzf_Result, s: string, data: *void) {
 			do_fd(res, s);
-		});
+		}, start_search = start);
 		return win != null;
-	}));
+	}, ""));
 	add_exec("search", () -> bool {
 		buf := context.search.buffer;
 		win := create_buffer_window(null, buf, flags = .TEMP_FLOATING | .BUFFER_LINE_NO | .BORDER, is_hidden = true, select = false);
@@ -539,6 +583,47 @@ add_all_execs :: () {
 	add_exec("norm", (path: string) -> bool {
 		arr := normalize_path(path,, allocator=temp);
 		edit_alert("normalized: %", arr);
+		return true;
+	});
+	add_exec("colors", () -> bool {
+		alphabet :: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+		#assert alphabet.count == 64;
+		#assert COLOR_COUNT == 31;
+		buf := create_custom_buffer(.TEMP);
+		buf.caps = .ALL;
+		win := create_buffer_window(null, buf, flags = .TEMP_FLOATING, is_hidden = true);
+		add_flags(win, .BUFFER_LINE_NO | .BUFFER_STATUS_LINE);
+		for y: 0..63 {
+			_write_normal_string(win, .{0, y}, alphabet);
+			split_line(win, .{64, y});
+		}
+		move_cursor(win, .{0, 0});
+		set_floating(win);
+		win.floating_position.ly.value -= 10;
+		win.floating_position.ry.value += 10;
+		win.apply_mods = (win: *Window, lines: []Line) {
+			for * lines {
+				y := it - win.lines.data;
+				for x: 0..it.count-1 {
+					mod := *it.user_mods[x];
+					mod.fg = xx (x-1);
+					mod.bg = xx (y-1);
+					if mod.bg >= COLOR_COUNT {
+						mod.bg -= (COLOR_COUNT+1);
+						swap(*mod.bg, *mod.fg);
+						mod.attributes |= A_STANDOUT;
+					}
+				}
+			}
+		}
+		return true;
+	});
+	add_exec("win_flags", (flags: Window.Flags, add: bool) -> bool {
+		if add {
+			add_flags(context.buffer_window, flags);
+		} else {
+			remove_flags(context.buffer_window, flags);
+		}
 		return true;
 	});
 }

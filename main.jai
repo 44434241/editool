@@ -1,22 +1,34 @@
 //
 // Thinking: some kind of enter-insert-mode command that doesn't reset running dot command
 // ^ makes dot function as a macro 
-// Same for leaving command mode without reseting running dot command.
+// ^ didn't find myself think about it too much
 // ...
 // 
 // OTHER TODO: (i need a list for this) pwn library for jai?
-// 
-// - directories (and a buffer thing for renaming directories)
-//
-// - keybinds to undo/redo ff & fr (as in, see history??) (just make it proper !)
+// Should i?
 // - multiple clipboards ? idk
+//
 // - multiline searching?
+// - directories (and a buffer thing for renaming directories)
+// - keybinds to undo/redo ff & fr (as in, see history??) (just make it proper !)
 // - breaks clipboard image, when open ...
+// - here string syntax (need multiline shit)
+// - hook for moving cursor in window (or could have a last time for cursor change, could be cleaner)
+// - MAKE LONG LINES WORK <- real_y thing is not correct ... 
+//
+// Things for ff (mostly for debugging idk)
+// - buffers/windows
+// - jump/undo history 
 //
 // thinking...:
 // - i need to have multiple previous-jump lists, for short and long jumps..
+// - should i rename command_delete* -> command_erase* ?
 //
-// ff/fd previews files ! <- + highlighting (for fd)
+// Thinking: user confirmations? <- for search/replace && directory files
+// - don't use confirmations use virtual text next to what will change (for directory renames)
+// - callbacks? (confirm mode? that would mean that no nonsense must happen during draw)
+// - freezee and just wait...
+//
 //
 //
 
@@ -133,6 +145,7 @@ Editool :: struct {
 	clipboard: Clipboard;
 	//
 	x11_window: X11.Window;
+	syntaxes: [..]*Syntax;
 }
 
 edit_get_os_clipboard :: () -> string {
@@ -248,7 +261,8 @@ do_some_extra_stuff_to_the_buffer_colors :: (win: *Window) {
 			for it.position.x..min(line.count, it.position.x + it.count)-1 {
 				if it >= Line.user_mods.count
 					break;
-				line.user_mods[it].bg_color = 2;
+				line.user_mods[it].bg_color = 6;
+				line.user_mods[it].fg_color = 1;
 			}
 		}
 	}
@@ -276,34 +290,8 @@ do_some_extra_stuff_to_the_buffer_colors :: (win: *Window) {
 			if pos.y >= 0 && pos.x < Line.user_mods.count {
 				line := *lines[pos.y];
 				mod := *lines[pos.y].user_mods[pos.x];
-				mod.fg_color = 7;
-				mod.bg_color = 0;
-				//fg, bg := uncolor_fg_bg(lines[pos.y].colors[pos.x]);
-				//fg = 7; // this seems to be black?
-				//bg = 0;
-				//lines[pos.y].colors[pos.x] = color_fg_bg(fg, bg);
+				mod.attributes ^= A_STANDOUT;
 			}
-		}
-	}
-	#if 0 { // unused mark modifier thing
-		using buf;
-		for buf.marks {
-			if it.position.y >= lines.count {
-				log_error("fucky wucky mark (y)");
-				continue;
-			}
-			line := *lines[it.position.y];
-			if it.position.x > line.count {
-				log_error("fucky wucky mark (x)");
-				continue;
-			}
-			mod := *line.mods[it.position.x];
-			mod.fg_color = 7;
-			mod.bg_color = 0;
-			//fg, bg := uncolor_fg_bg(line.colors[it.position.x]);
-			//fg = 7; // this seems to be black?
-			//bg = 0;
-			//line.colors[it.position.x] = color_fg_bg(fg, bg);
 		}
 	}
 }
@@ -346,7 +334,7 @@ handle_insert_char :: (ch: s32) {
 		}
 	}
 	if is_printable_char(ch) {
-		write_char(win, xx ch);
+		write_char(win, xx ch); // crashed here somewhere ???
 	} else if ch == {
 		case #char "\t"; #through; 
 		case #char "\n";
@@ -415,8 +403,9 @@ handle_char :: (ch: s32) {
 // these 3 add_* are in main instead of their files...
 // thats fine?
 
-//select_window :: (win
+// actually, counting -1 color, there is one more color
 COLOR_COUNT :: 31; // having 32 colors messes up some stuff! (tab A_STANDOUT thing)
+
 
 // returns pair index, still need to call COLOR_PAIR
 color_fg_bg :: (fg: int, bg: int) -> (pair: s32) {
@@ -473,19 +462,6 @@ editool_init :: () {
 	}
 	start_color();
 	use_default_colors(); // use terminals colors..
-	#if 0 {
-		for i: 0..7 {
-			if i < 2 {
-				init_color(xx i, 0, 0, 0);
-			} else if i < 4 {
-				init_color(xx i, 500, 500, 500);
-			} else if i < 6 {
-				init_color(xx i, 1000, 1000, 1000);
-			} else {
-				init_color(xx i, 2000, 2000, 2000);
-			}
-		}
-	}
 	#if 1 {
 		for i: -1..COLOR_COUNT-1 {
 			for j: -1..COLOR_COUNT-1 {

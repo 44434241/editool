@@ -28,6 +28,7 @@ string_commands_start :: (state: *String_Command_State, start_text: string) {
 	}
 	saved_window = context.buffer_window;
 	hold(saved_window);
+	// IT CRASHES SOMEWHERE HERE??? is start_text referencing something that gets changed?
 	// Create new line if needed
 	if window.lines[window.lines.count-1].count != 0 {
 		execute_buffer_operation(window, .{
@@ -37,7 +38,6 @@ string_commands_start :: (state: *String_Command_State, start_text: string) {
 			lines = .[ "" ],
 		}, even_if_no_caps = true, no_callback = true);
 	}
-	// TODO: what if start_text is the same as the previous command?
 	// Insert start text in new line
 	execute_buffer_operation(window, .{
 		kind = .INSERT_CHARS,
@@ -149,7 +149,7 @@ string_commands_init :: (state: *String_Command_State, title: string) {
 	buffer = create_custom_buffer();
 	buffer.flags |= .NO_SEARCH; // might want this later?
 	buffer.caps |= .MODE_INSERT | .MODE_COMMAND;
-	buffer.caps |= .INSERT_CHARS | .DELETE_CHARS;
+	buffer.caps |= .INSERT_CHARS | .ERASE_CHARS;
 	buffer.caps |= .MOVE;
 	buffer.modify_buffer_operation = (win: *Window, op: *Buffer_Op) -> bool {
 		// this if should be only if insert/delete chars, i think...

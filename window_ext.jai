@@ -120,9 +120,27 @@ get_mark_at_y :: (using buf: *Buffer, y: int) -> bool, Mark {
 
 /// SCROLL
 
+// Assume cursor.y is ok?
 normalize_scroll :: (using win: *Window) {
-	scroll = clamp(scroll, 0, max(0, lines.count - size.y));
-	scroll = clamp(scroll, cursor.y - size.y + 1, cursor.y);
+	#if 0 {
+		scroll = clamp(scroll, 0, max(0, lines.count - size.y));
+		scroll = clamp(scroll, cursor.y - size.y + 1, cursor.y);
+		return;
+	}
+	scroll = clamp(scroll, 0, win.lines.count-1);
+	if scroll < cursor.y {
+		count_left := size.y; // -1 because we only care about the first real_line of last line !
+		for < scroll..cursor.y {
+			size_y := get_line_real_size_as_y(win, *lines[it]);
+			count_left -= size_y;
+			if count_left < 0 {
+				scroll = min(it+1, cursor.y);
+				break;
+			}
+		}
+	} else { // scroll > cursor.y
+		scroll = cursor.y;
+	}
 	// TODO: doesn't work properly
 	// _update_cursor_mark(win, false);
 }
@@ -337,18 +355,18 @@ merge_lines_after :: (using win: *Window, line_y: int) {
 	});
 }
 
-delete_chars :: (using win: *Window, count: int) -> bool {
-	return delete_chars(win, cursor.position, count);
+erase_chars :: (using win: *Window, count: int) -> bool {
+	return erase_chars(win, cursor.position, count);
 }
 
 // this is different to delete_at_x_offset, because it doesn't mess with lines
-delete_chars :: (using win: *Window, pos: Position, count: int) -> bool {
+erase_chars :: (using win: *Window, pos: Position, count: int) -> bool {
 	line := *lines[pos.y];
 	count = min(line.count - pos.x, count);
 	if count <= 0
 		return false;
 	execute_buffer_operation(win, .{
-		kind = .DELETE_CHARS,
+		kind = .ERASE_CHARS,
 		y = pos.y,
 		x = pos.x,
 		count = count,
@@ -368,7 +386,7 @@ delete_at_x_offset :: (using win: *Window, x_offset: int) {
 		merge_lines_after(win, cursor.y);
 	} else {
 		execute_buffer_operation(win, .{
-			kind = .DELETE_CHARS,
+			kind = .ERASE_CHARS,
 			y = cursor.y,
 			x = x,
 			count = 1,
@@ -387,37 +405,37 @@ delete_range_in_line :: (using win: *Window, y: int, lx: int, rx: int) {
 	if lx < 0
 		return;
 	execute_buffer_operation(win, .{
-		kind = .DELETE_CHARS,
+		kind = .ERASE_CHARS,
 		y = y,
 		x = lx,
 		count = rx - lx + 1,
 	});
 }
 
-delete_line_range :: (using win: *Window, l: int, r: int) {
+erase_line_range :: (using win: *Window, l: int, r: int) {
 	if l > r
 		l, r = r, l;
-	delete_lines(win, l, r - l + 1);
+	erase_lines(win, l, r - l + 1);
 }
 
-delete_lines :: (using win: *Window, y: int, count: int = 1) {
+erase_lines :: (using win: *Window, y: int, count: int = 1) {
 	y = clamp(y, 0, lines.count-1);
-	count = min(count, lines.count - y + 1);
+	count = min(count, lines.count - y);
 	if y == 0 && count == lines.count {
 		execute_buffer_operation(win, .{
-			kind = .DELETE_LINES,
+			kind = .ERASE_LINES,
 			y = y,
 			count = count - 1,
 		});
 		execute_buffer_operation(win, .{
-			kind = .DELETE_CHARS,
+			kind = .ERASE_CHARS,
 			y = 0,
 			x = 0,
 			count = lines[0].count,
 		});
 	} else {
 		execute_buffer_operation(win, .{
-			kind = .DELETE_LINES,
+			kind = .ERASE_LINES,
 			y = y,
 			count = count,
 		});

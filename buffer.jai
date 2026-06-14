@@ -4,15 +4,43 @@ Line :: struct {
 	#overlay(chars.count) count: int;
 	#overlay(chars) as_string: string;
 	//
-	mods: [1024]Char_Mod = ---; // A LOT !
-	user_mods: [1024]Char_Mod = ---;
+	mods: [256]Char_Mod = ---; // A LOT !
+	user_mods: [256]Char_Mod = ---;
 	Dirty_Flags :: enum_flags {
 		MODS; 
+		USER1; // something the user sets
+		REAL_SIZE;
 		NONE :: 0;
-		ALL :: MODS;
+		ALL :: MODS | USER1;
 	}
 	dirty_flags: Dirty_Flags = .ALL;
-	//
+	// size in x, considering tab characters and all that
+	real_size: int = - 1; 
+}
+
+// this should be fast since line size is cached..
+get_line_real_size_as_y :: (win: *Window, line: *Line) -> int {
+	if win.size.x <= 0
+		return 1;
+	sz := get_real_size(line);
+	if win.flags & .BUFFER_LINE_NO {
+		sz += BUFFER_LINE_NO_SIZE_X;
+	}
+	if sz <= 1 
+		return 1;
+	ret := (sz + win.size.x - 1) / win.size.x;
+	// floor dif
+	return ret;
+}
+
+get_real_size :: (line: *Line) -> int {
+	// TODO (but i don't care that much): setting .dirty_flags for each line whenever the window gets resize would be too much...
+	if (line.dirty_flags & .REAL_SIZE) || true {
+		// this is the position *after* the last character
+		line.real_size = _get_real_x_in_line(line, line.chars.count);
+		line.dirty_flags |= .REAL_SIZE;
+	}
+	return line.real_size;
 }
 
 // hm...
@@ -54,19 +82,21 @@ Buffer :: struct {
 	Kind :: enum {
 		NONE :: 0;
 		FILE;
+		DIRECTORY; // i'll have a builtin directory file, then maybe make it custom later
 		CUSTOM;
 	}
 	File_Flags :: enum_flags {
 		NO_FILE; // failed to read
 		READ_ONLY; // Just can't save, no matter what
+		CLRF;
 		NONE :: 0;
 	}
 	// capabilities
 	Caps :: enum_flags {
 		INSERT_CHARS;
 		INSERT_LINES;
-		DELETE_CHARS; // should rename this to erase...
-		DELETE_LINES; // should rename this to erase...
+		ERASE_CHARS; // should rename this to erase...
+		ERASE_LINES; // should rename this to erase...
 		// Move is (mostly) not implemented, not sure if i even wanna do it like this..
 		MOVE_X;
 		MOVE_Y;
@@ -74,14 +104,11 @@ Buffer :: struct {
 		MODE_INSERT;
 		MODE_COMMAND;
 		// Aliases:
-		ERASE_CHARS :: DELETE_CHARS;
-		ERASE_LINES :: DELETE_LINES;
-		//
 		INSERT :: INSERT_CHARS | INSERT_LINES;
-		DELETE :: DELETE_CHARS | DELETE_LINES;
+		ERASE :: ERASE_CHARS | ERASE_LINES;
 		MOVE :: MOVE_X | MOVE_Y;
 		MODE_ALL :: MODE_INSERT | MODE_COMMAND;
-		ALL :: INSERT | DELETE | MOVE | MODE_INSERT | MODE_COMMAND;
+		ALL :: INSERT | ERASE | MOVE | MODE_INSERT | MODE_COMMAND;
 		NONE :: 0;
 	}
 	Flags :: enum_flags {
@@ -94,7 +121,6 @@ Buffer :: struct {
 	id: BufId = BUF_ID_NULL;
 	kind: Kind = .NONE;
 	caps: Caps = .NONE;
-	is_clrf: bool = false; // only valid for .FILE. might be set to "\r\n". only set on opening file
 	// ^ could be a file flag tbh
 	lines: [..]Line;
 	//is_dirty: bool = false; // i dont know what this means..
@@ -114,10 +140,21 @@ Buffer :: struct {
 	// file
 	filename: string;
 	file_flags: File_Flags;
-	syntax: Syntax;
+	syntax: *Syntax;
 	// extra stuff
-	user_data: *void; // @Leak
+	user_data: *void; // has to be explicitly
 	modify_buffer_operation: #type (*Window, *Buffer_Op) -> bool;
+}
+
+Directory_Buffer :: struct {
+	buffer: *Buffer;
+}
+
+find_or_create_directory_buffer :: (_path: string) -> *Buffer {
+	path := normalize_path(_path);
+	assert(is_directory(path), "'%' is not directory", path);
+	assert(false);
+	return null;
 }
 
 find_or_create_file_buffer :: (_filename: string, flags: Buffer.Flags = .NONE, file_flags: Buffer.File_Flags = .NONE, must_respect_flags := false) -> *Buffer {
@@ -161,11 +198,6 @@ destroy_buffer :: (buffer: *Buffer) {
 	assert(buffer.windows.count == 0);
 	ok := array_ordered_remove_by_value(*context.edit.buffers, buffer);
 	assert(ok);
-	//array_reset(*buffer.commands);
-	//array_reset(*buffer.insert_commands);
-	//array_reset(*buffer.marks);
-	//array_reset(*buffer.operations); // @Leak
-	//array_reset(*buffer.lines); // @Leak
 	release(*buffer.pool);
 	free(buffer);
 }
@@ -177,12 +209,13 @@ _new_buffer :: (kind: Buffer.Kind) -> *Buffer {
 	buf.kind = kind;
 	array_add(*context.edit.buffers, buf);
 	allocator := Allocator.{pool_allocator_proc, *buf.pool};
+	// in order of declaration
 	buf.lines.allocator = allocator;
-	buf.commands.allocator = allocator;
-	buf.marks.allocator = allocator;
 	buf.ops.allocator = allocator;
 	buf.windows.allocator = allocator;
+	buf.commands.allocator = allocator;
 	buf.search_matches.matches.allocator = allocator;
+	buf.marks.allocator = allocator;
 	array_add(*buf.lines, .{
 		chars.allocator = allocator,
 	});
@@ -197,9 +230,10 @@ get_current_buffer :: () -> *Buffer {
 }
 
 // this doesn't have lines, so it'll crash if u dont add any
-create_custom_buffer :: () -> *Buffer {
+create_custom_buffer :: (flags: Buffer.Flags = .NONE) -> *Buffer {
 	buf := _new_buffer(.CUSTOM);
-	//buf.syntax = get_jai_syntax(); // TODO: don't duplicate this!!
+	buf.syntax = get_syntax_for_filename("");
+	buf.flags |= flags;
 	return buf;
 }
 
@@ -211,11 +245,11 @@ _create_buffer_from_filename :: (filename: string, flags: Buffer.Flags, file_fla
 	buf.file_flags = file_flags;
 	buf.filename = filename;
 	//refresh_buffer_size(*buf); // from LINES, COLS
-	buf.syntax = get_jai_syntax(); // @Leak
+	buf.syntax = get_syntax_for_filename(filename);
 	file_str: string;
 	file_ok: bool = false;
 	if filename {
-		file_str, file_ok = read_entire_file(filename);
+		file_str, file_ok = read_entire_file(filename,, allocator=temp);
 	}
 	if file_ok {
 		string_lines: []string = split(file_str, #char "\n",, allocator=temp);
@@ -223,16 +257,19 @@ _create_buffer_from_filename :: (filename: string, flags: Buffer.Flags, file_fla
 			// maybe should have some flag for clrf endings ?
 			if it.count && peek(it.*) == #char "\r" {
 				it.count -= 1;
-				buf.is_clrf = true;
+				buf.file_flags |= .CLRF;
 			}
 		}
 		if string_lines.count > 0 && peek(string_lines) == ""
 			string_lines.count -= 1;
 		for string_lines {
-			// @Leak (only place left where lines are directly added)
+			// Only place left where lines/chars are directly added/removed.
 			array_adds(*peek_pointer(buf.lines).chars, it);
-			if it_index + 1 != string_lines.count
-				array_add(*buf.lines, .{});
+			if it_index + 1 != string_lines.count {
+				array_add(*buf.lines, .{
+					chars.allocator = .{pool_allocator_proc, *buf.pool},
+				});
+			}
 		}
 	} else {
 		buf.file_flags |= .NO_FILE;
@@ -244,10 +281,11 @@ buffer_as_string_for_saving :: (using buf: *Buffer) -> string {
 	chars: [..]u8;
 	for buf.lines {
 		array_add(*chars, .. it.chars);
-		if buf.is_clrf
-			array_add(*chars, "\r");
-		if it_index + 1 != buf.lines.count
+		if it_index + 1 != buf.lines.count {
+			if buf.file_flags & .CLRF
+				array_add(*chars, "\r");
 			array_add(*chars, "\n");
+		}
 	}
 	return cast(string)chars;
 }
@@ -290,16 +328,14 @@ Buffer_Op :: struct {
 	Kind :: enum {
 		NONE :: 0;
 		// delete operations:
-		DELETE_LINES;
-		DELETE_CHARS;
+		ERASE_LINES;
+		ERASE_CHARS;
 		MERGE_LINES; // 2 lines
 		// insert operations:
 		INSERT_LINES;
 		INSERT_CHARS;
 		SPLIT_LINE;
 		NOP;
-		ERASE_CHARS :: DELETE_CHARS;
-		ERASE_LINES :: DELETE_LINES;
 	}
 	kind: Kind;
 	flags: Flags;
@@ -324,15 +360,15 @@ buffer_undo :: (win: *Window) -> bool, Buffer_Op {
 	reverse_operation :: inline (op: *Buffer_Op) -> bool {
 		if op.kind == {
 			case .NOP; //
-			case .DELETE_LINES;
+			case .ERASE_LINES;
 				op.kind = .INSERT_LINES;
 			case .INSERT_LINES;
-				op.kind = .DELETE_LINES;
+				op.kind = .ERASE_LINES;
 			//
-			case .DELETE_CHARS;
+			case .ERASE_CHARS;
 				op.kind = .INSERT_CHARS;
 			case .INSERT_CHARS;
-				op.kind = .DELETE_CHARS;
+				op.kind = .ERASE_CHARS;
 			//
 			case .SPLIT_LINE;
 				op.kind = .MERGE_LINES;
@@ -405,6 +441,7 @@ execute_buffer_operation :: (win: *Window, _op: Buffer_Op, even_if_no_caps := fa
 			lines: [..]string;
 			array_reserve(*lines, op.lines.count);
 			for op.lines {
+				log("looking for error in op lines (%/%)", it_index, op.lines.count);
 				array_add(*lines, copy_string(it));
 			}
 			op.lines = lines;
@@ -416,12 +453,17 @@ execute_buffer_operation :: (win: *Window, _op: Buffer_Op, even_if_no_caps := fa
 	if ok {
 		assert(buf.op_index <= ops.count);
 		ops.count = buf.op_index; // @Leak
+		log("looking for error in ops");
 		array_add(*ops, op);
 		op_index += 1;
 		if save_op_index > ops.count
 			set_dirty(buf);
 	}
 	return ok;
+}
+
+allocator_of :: (buf: *Buffer) -> Allocator {
+	return .{pool_allocator_proc, *buf.pool};
 }
 
 // leak? (?)
@@ -437,12 +479,12 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 			case .SPLIT_LINE;
 				if caps & .INSERT_LINES == 0
 					return false;
-			case .DELETE_CHARS;
-				if caps & .DELETE_CHARS == 0
+			case .ERASE_CHARS;
+				if caps & .ERASE_CHARS == 0
 					return false;
-			case .DELETE_LINES; #through;
+			case .ERASE_LINES; #through;
 			case .MERGE_LINES;
-				if caps & .DELETE_LINES == 0
+				if caps & .ERASE_LINES == 0
 					return false;
 			case;
 				log_error("whoops, forgor %\n", op.kind);
@@ -471,6 +513,7 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 			//
 			//normalize_marks(it);
 			normalize_cursor(it, with_scroll = true); 
+			recalculate_window_real_size_y(win);
 		}
 	}
 	//normalize_buffer_operation(buf, op);
@@ -554,6 +597,7 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 		}
 	}
 	if op.kind == {
+		case .NOP; //
 		case .INSERT_CHARS;
 			assert(op.count == op.chars.count);
 			line: *Line = *lines[op.y];
@@ -564,14 +608,14 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 			}
 			shift_x(.{op.x, op.y}, op.chars.count);
 			line.dirty_flags |= .ALL;
-		case .DELETE_CHARS;
+		case .ERASE_CHARS;
 			// slow
 			line := *lines[op.y];
 			assert(op.x + op.count <= line.count);
 			if flags & .FILL_FOR_REVERSE {
 				assert(op.chars.count == 0);
 				// alloc here aswell
-				op.chars = array_copy([]u8.{ data = line.chars.data + op.x, count = op.count });
+				op.chars = array_copy([]u8.{ data = line.chars.data + op.x, count = op.count },, allocator=allocator_of(buf));
 			}
 			for < op.x..op.x+op.count-1 {
 				array_ordered_remove_by_index(*line.chars, it);
@@ -582,6 +626,7 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 			assert(op.y < lines.count);
 			assert(op.x <= lines[op.y].count);
 			new_line: *Line = array_insert_at(*lines, op.y+1);
+			new_line.chars.allocator = allocator_of(buf);
 			curr_line: *Line = *lines[op.y];
 			array_add(*new_line.chars, .. advance(curr_line.chars, op.x));
 			curr_line.chars.count = op.x;
@@ -600,7 +645,7 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 			line_len := line.count;
 			next_line: *Line = *lines[op.y+1];
 			array_add(*line.chars, .. next_line.chars);
-			array_ordered_remove_by_index(*lines, op.y+1); // @Leak
+			array_ordered_remove_by_index(*lines, op.y+1); 
 			shift_x(.{0, op.y+1 }, line_len);
 			shift_y(op.y, -1);
 			line.dirty_flags |= .ALL;
@@ -608,19 +653,20 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 			assert(op.lines.count == op.count);
 			for op.lines {
 				line: Line; // dirty flags already all !
-				line.chars.allocator = context.allocator;
-				array_add(*line.chars, .. cast([]u8)it); // alloc here? though its fine
+				line.chars.allocator = allocator_of(buf);
+				array_add(*line.chars, .. cast([]u8)it); 
 				y := op.y + it_index;
 				array_insert_at(*lines, line, y);
 			}
 			shift_y(op.y, op.lines.count); // this isn't tested for non undos
-		case .DELETE_LINES;
+		case .ERASE_LINES;
 			assert(op.y + op.count <= lines.count);
 			if flags & .FILL_FOR_REVERSE {
 				assert(op.lines.count == 0);
 				lines: [..]string; // alloc here too
+				lines.allocator = allocator_of(buf);
 				for op.y..op.y+op.count-1 {
-					array_add(*lines, copy_string(cast(string)buf.lines[it].chars)); // alloc here
+					array_add(*lines, copy_string(cast(string)buf.lines[it].chars),, allocator=allocator_of(buf));
 				}
 				op.lines = lines;
 			}
@@ -690,6 +736,53 @@ is_position_in_buffer :: (using buf: *Buffer, pos: Position) -> bool {
 	return true;
 }
 
+apply_syntax_mods :: (line: *Line, syntax: *Syntax, line_no_hint := -1, first_x := 0) {
+	using,only(mods) line;
+	idx := first_x;
+	for 1..20 {
+		string_to_match := advance(line.as_string, idx);
+		matched, captures := Uniform.match(string_to_match, syntax.regex, .ANCHOR_START,, allocator=temp);
+		//matched, captures := Uniform.match(string_to_match, syntax.regex, .AN,, allocator=temp);
+		if !matched
+			break;
+		// captures[0] = full
+		// captures[1] = suffix + value + prefix
+		// captures[2] = value
+		// whichever captures[3..3+COUNT] = value
+		// ^ this is wrong..
+		start_capture := captures[1];
+		something_capture := captures[2];
+		//color := ifx captures[3].count then syntax.kw_color1 else syntax.kw_color2;
+		syntax_element: Syntax_Element = syntax.elements[xx Syntax_Element.Kind.DEFAULT];
+		for advance(captures, 3) {
+			if it != "" {
+				something_capture = it;
+				syntax_element = syntax.elements[it_index];
+				if it_index == xx Syntax_Element.Kind.EOL_SPACE
+					log("Found syntax % %\n", line_no_hint, cast(Syntax_Element.Kind)it_index);
+				break;
+			}
+		}
+		//color := syntax.elements[0].color;
+		capture_offset := something_capture.data - string_to_match.data;
+		idx += capture_offset;
+		for 0..something_capture.count-1 {
+			using syntax_element;
+			if idx + it < mods.count {
+				mod := *mods[idx+it];
+				mod.fg = color;
+				if replace.count > 0 {
+					mod.replaced = string.{ data = *replace[it%replace.count], count = 1 };
+				}
+			}
+		}
+		idx += something_capture.count;
+		if it > 15 { //
+			log_error("kept matching at line % (%)\n", line_no_hint, idx);
+		}
+	}
+}
+
 // It takes a window on which the buffer will be drawn to.
 // Maybe should organize this better.
 _refresh_buffer_modifiers :: (win: *Window, using buf: *Buffer, ly: int, ry: int) {
@@ -697,66 +790,19 @@ _refresh_buffer_modifiers :: (win: *Window, using buf: *Buffer, ly: int, ry: int
 	lines_to_refresh := []Line.{ data = lines.data + ly, count = ry - ly };
 	for * lines_to_refresh {
 		true_line_no := it_index + ly;
-		using,only(mods) it;
 		//assert (it.count <= mods.count, "%", it.count);
-		if it.dirty_flags & .MODS {
-			for * mods {
+		if (it.dirty_flags & .MODS) {
+			for * it.mods {
 				it.* = .{};
 				it.fg_color = syntax.normal_color;
 			}
+			if syntax.is_compiled
+				apply_syntax_mods(it, syntax, line_no_hint = true_line_no, first_x = 0);
+			it.dirty_flags &= ~.MODS;
 		}
-		defer it.user_mods = mods;
-		if !syntax.is_compiled
-			continue;
+		it.user_mods = it.mods;
 		// should have a limit here i think?
-		chars := it.chars;
 		idx := 0;
-		defer it.dirty_flags &= ~.MODS;
-		line: *Line = it;
-		for 1..20 {
-			if line.dirty_flags & .MODS == 0
-				break;
-			string_to_match := advance(cast(string)chars, idx);
-			matched, captures := Uniform.match(string_to_match, syntax.regex, .ANCHOR_START,, allocator=temp);
-			//matched, captures := Uniform.match(string_to_match, syntax.regex, .AN,, allocator=temp);
-			if !matched
-				break;
-			// captures[0] = full
-			// captures[1] = suffix + value + prefix
-			// captures[2] = value
-			// whichever captures[3..3+COUNT] = value
-			// ^ this is wrong..
-			start_capture := captures[1];
-			something_capture := captures[2];
-			//color := ifx captures[3].count then syntax.kw_color1 else syntax.kw_color2;
-			syntax_element: Syntax_Element = syntax.elements[xx Syntax_Element.Kind.DEFAULT];
-			for advance(captures, 3) {
-				if it != "" {
-					something_capture = it;
-					syntax_element = syntax.elements[it_index];
-					if it_index == xx Syntax_Element.Kind.EOL_SPACE
-						log("Found syntax % %\n", true_line_no, cast(Syntax_Element.Kind)it_index);
-					break;
-				}
-			}
-			//color := syntax.elements[0].color;
-			capture_offset := something_capture.data - string_to_match.data;
-			idx += capture_offset;
-			for 0..something_capture.count-1 {
-				using syntax_element;
-				if idx + it < mods.count {
-					mod := *mods[idx+it];
-					mod.fg = color;
-					if replace.count > 0 {
-						mod.replaced = string.{ data = *replace[it%replace.count], count = 1 };
-					}
-				}
-			}
-			idx += something_capture.count;
-			if it > 15 { //
-				log_error("kept matching at line % (%)\n", true_line_no, idx);
-			}
-		}
 	}
 	do_some_extra_stuff_to_the_buffer_colors(win);
 }

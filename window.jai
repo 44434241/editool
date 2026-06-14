@@ -153,8 +153,32 @@ Window :: struct {
 	//map_window_for_command: #type (*Command) -> *Window;
 	user_data: *void;
 	ref_count: int; // hold/release
+	//real_size_y: int = -1; // only valid for buffer windows
 }
 
+// not used as a constant everywhere
+BUFFER_LINE_NO_SIZE_X :: 5;
+
+recalculate_window_real_size_y :: (using win: *Window) {
+	/*
+	if size.x <= 0 {
+		real_size_y = 0;
+		return;
+	}
+	real_size_y = 0;
+	y_count := 0;
+	for y: scroll..min(lines.count, scroll+size.y)-1 {
+		if y_count >= size.y
+			break;
+		real_size_y += 1;
+		sz := _get_real_x_in_line(*lines[y], lines[y].count);
+		if win.flags & .BUFFER_LINE_NO
+			sz += BUFFER_LINE_NO_SIZE_X;
+		sz = max(sz, 1);
+		cnt := (sz + size.x - 1) / size.x;
+		y_count += cnt;
+	}*/
+}
 /// DRAWING
 
 // this is this only drawing proc allowed to be call rn
@@ -250,27 +274,32 @@ _draw_window :: (using win: *Window) {
 		}
 	}
 	if win.kind == .BUFFER {
+		time_this("Draw buffer");
 		lines_to_draw_count := min(lines.count - scroll, size.y);
 		lines_to_draw := []Line.{ data = lines.data + scroll, count = lines_to_draw_count };
 		_refresh_buffer_modifiers(win, buffer, scroll, scroll + lines_to_draw_count);
 		if win.apply_mods
 			win.apply_mods(win, lines_to_draw);
 		//
-		time_this("Draw buffer");
 		wclear(nwindow); // ONLY CLEARING BUFFER WINDOWS !
-		for lines_to_draw {
+		y_offset := 0;
+		// cursor actual position might be overriden !
+		cursor_actual_position: Position = .{
+			_get_real_x_in_line(*lines[cursor.y], cursor.x) + begin.x,
+			cursor.y + begin.y - scroll,
+		};
+		for * lines_to_draw {
 			y := it_index + scroll;
-			ny := it_index + begin.y; // ncurses y
+			ny := it_index + begin.y + y_offset; // ncurses y
+			if it_index + y_offset > size.y
+				break;
 			line_no := y;
 			if context.edit.flags & .RELATIVE_LINES {
 				if line_no != cursor.y
 					line_no = abs(line_no - cursor.y);
 			}
 			{
-				wattrset(nwindow, A_BOLD);
-				// I don't know which one to pick !
-				wattron(nwindow, COLOR_PAIR(color_fg_bg(3, -1)));
-				wattron(nwindow, COLOR_PAIR(color_fg_bg(6, -1)));
+				wattrset(nwindow, COLOR_PAIR(color_fg_bg(2, -1) | A_BOLD));
 				if win.flags & .BUFFER_MARKS {
 					// buffer makr position was already taken into account when resizing window !
 					ok, mark := get_mark_at_y(win.buffer, y);
@@ -278,6 +307,11 @@ _draw_window :: (using win: *Window) {
 						mvwaddch(nwindow, xx ny, xx (buffer_mark_position + 1), mark.name);
 					}
 				}
+				wattrset(nwindow, 0);
+				wattrset(nwindow, A_BOLD);
+				// I don't know which one to pick !
+				wattron(nwindow, COLOR_PAIR(color_fg_bg(3, -1)));
+				wattron(nwindow, COLOR_PAIR(color_fg_bg(6, -1)));
 				if win.flags & .BUFFER_LINE_NO {
 					line_no_str := tprint(ifx cursor.y == y then "%   " else " %  ", formatInt(line_no, padding = #char " ", minimum_digits = 3));
 					mvwaddnstr(nwindow, xx ny, xx buffer_line_no_position, line_no_str.data, xx line_no_str.count);
@@ -288,6 +322,10 @@ _draw_window :: (using win: *Window) {
 			using,only(mods, user_mods) it;
 			//assert (it.count <= mods.count);
 			for it.chars {
+				if cursor.position == Position.{it_index, y} {
+					cursor_actual_position.x = getcurx(nwindow);
+					cursor_actual_position.y = getcury(nwindow);
+				}
 				info := _get_char_info(it);
 				mod: Char_Mod = ---;
 				if it_index < user_mods.count {
@@ -313,6 +351,10 @@ _draw_window :: (using win: *Window) {
 				}
 				wattrset(nwindow, 0);
 			}
+			if cursor.position == Position.{it.chars.count, y} {
+				cursor_actual_position.x = getcurx(nwindow);
+				cursor_actual_position.y = getcury(nwindow);
+			}
 			if it.chars.count < user_mods.count {
 				attr := as_ncurses_attribute(user_mods[it.chars.count]);
 				wattrset(nwindow, attr);
@@ -320,14 +362,14 @@ _draw_window :: (using win: *Window) {
 				waddch(nwindow, #char " "); // to have normal color
 				wattrset(nwindow, 0);
 			}
+			final_y := getcury(nwindow);
+			y_offset += get_line_real_size_as_y(win, it) - 1;
 		}
 		if win.flags & .BUFFER_STATUS_LINE {
 			// draw buffer status line at `buffer_status_line_position`
 			using,except(lines) win.buffer;
 			fn := get_window_title(win,, allocator=temp);
-			//if buffer.is_dirty
-				//fn = tprint("% [+]", fn);
-			file_info := tprint(" %  FILE FLAGS: %, BUFFER CAPS: %", fn, file_flags, win.buffer.caps);
+			file_info := tprint(" %:%:%  FILE FLAGS: %, BUFFER CAPS: %", fn, cursor.y, cursor.x, file_flags, win.buffer.caps);
 			if win.user_message != "" {
 				file_info = tprint("% | %\n", file_info, win.user_message);
 			}
@@ -342,13 +384,14 @@ _draw_window :: (using win: *Window) {
 		}
 		real_x := _get_real_x_in_line(*lines[cursor.y], cursor.x);
 		//
-		wmove(nwindow, xx (cursor.y - scroll + begin.y), xx (real_x + begin.x));
+		//wmove(nwindow, xx (cursor.y - scroll + begin.y), xx (real_x + begin.x));
+		wmove(nwindow, xx cursor_actual_position.y, xx cursor_actual_position.x);
 	} // .BUFFER
 	if win.is_root {
 		// draw root status line at `root_status_line_y`
 		mode_s := tprint("%", context.edit.mode);
 		if context.edit.mode == .COMMAND {
-			mode_s = tprint("%: '%'", mode_s, keybind_to_string(context.command_state.all_chars,, allocator=temp));
+			mode_s = tprint("% '%'", mode_s, keybind_to_string(context.command_state.all_chars,, allocator=temp));
 		}
 		{
 			exec_string := get_exec_info_for_status_bar();
@@ -364,6 +407,7 @@ _draw_window :: (using win: *Window) {
 			mode_s = tprint("% | %", mode_s, it);
 		}
 		wattrset(nwindow, A_BOLD);
+		wattrset(nwindow, COLOR_PAIR(color_fg_bg(2, -1)));
 		p := root_status_line_position;
 		mvwaddnstr(nwindow, xx p.y, xx p.x, mode_s.data, xx mode_s.count);
 		wattrset(nwindow, 0);
@@ -725,6 +769,7 @@ refresh_window_size :: (using win: *Window, force := false) {
 	log("win % is now of size %\n", win, size);
 	if win.kind == {
 		case .BUFFER;
+			recalculate_window_real_size_y(win);
 			normalize_scroll(win);
 		case .CONTAINER;
 			if container_mode == .TABBED {
