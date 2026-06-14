@@ -21,155 +21,65 @@ Search_State :: struct {
 		SEARCH_REPLACE;
 		ERROR;
 	}
-	last_window: *Window;
-	status: Status = .ERROR;
-	chars: [..]u8; // input chars
-	#overlay(chars) char_string: string;
+	// String commands (MUST BE FIRST MEMBER):
+	#as using _: String_Command_State;
 	//
-	change_time: Editime = 0;
-	// These 2 are not touched by anything else!!!
-	// And they are views into char, OR constant strings
-	search_string: string;
-	replace_string: string;
+	status: Status = .ERROR;
+	//
+	compile_time: Editime = 0;
+	// these 2 are normally allocated
+	search_chars: [..]u8;
+	#overlay(search_chars) search_string: string;
+	replace_chars: [..]u8;
+	#overlay(replace_chars) replace_string: string;
+	// this is a view
+	motion_string: string;
+	is_special_case_search_replace: bool; // u flag
+	//
 	search_regex: Uniform.Regexp;
-	buffer: *Buffer;
-	window: *Window;
 }
 
 editool_search_init :: () {
 	using context.search;
-	buffer = create_custom_buffer();
-	buffer.flags |= .NO_SEARCH;
-	buffer.caps |= .MODE_INSERT | .MODE_COMMAND;
-	buffer.caps |= .INSERT_CHARS | .DELETE_CHARS;
-	buffer.caps |= .MOVE;
-	buffer.modify_buffer_operation = (win: *Window, op: *Buffer_Op) -> bool {
-		if win.cursor.y != win.lines.count - 1 {
-			line: *Line = *win.lines[win.lines.count-1];
-			if line.count > 0 {
-				//array_reset(*line.chars);
-				execute_buffer_operation(win, .{
-					kind = .ERASE_CHARS,
-					y = win.lines.count - 1,
-					x = 0,
-					count = line.count,
-				}, even_if_no_caps = true, no_callback = true);
-			}
-			execute_buffer_operation(win, .{
-				kind = .INSERT_CHARS,
-				y = win.lines.count - 1,
-				x = 0,
-				chars = win.lines[win.cursor.y].chars,
-				count = win.lines[win.cursor.y].count,
-			}, even_if_no_caps = true, no_callback = true);
-			move_cursor_y(win, win.lines.count - 1);
-			op.y = win.cursor.y;
-		}
-		edit_alert("op %", op.kind);
-		return true;
-	};
-	array_add(*buffer.commands, .{
-		keybind = to_keybind("\n"),
-		proc = wrap_command(execute_search),
-	});
-	array_add(*buffer.commands, .{
-		keybind = to_keybind(.[ KEY_ESCAPE ]),
-		proc = wrap_command(stop_search),
-	});
-	array_add(*buffer.insert_commands, .{
-		keybind = to_keybind("\n"),
-		proc = wrap_command(execute_search),
-	});
-	array_add(*buffer.insert_commands, .{
-		keybind = to_keybind(.[ 6 ]), // ctrl + f
+	string_commands_init(*context.search, "SEARCH");
+	add_command(*buffer.commands, 
+		keybind = .[ 6 ], // ctrl + f
+		mode = .INSERT | .COMMAND,
 		proc = (in: Command_In) -> Command_Result {
-			_maybe_recompile_search();
-			{
-				select_window(context.search.last_window);
+			// Update search
+			string_commands_ensure_up_to_date(*context.search);
+			//{
+				//select_window(context.search.last_window);
+			//}
+			//if context.buffer_window.buffer.kind != .FILE {
+				//return command_error();
+			//}
+			//
+			if context.search.status != .SEARCH {
+				return command_error("Bad search");
 			}
-			if context.buffer_window.buffer.kind != .FILE {
-				return command_error();
-			}
+			str := copy_string(context.search.search_string,, allocator=temp);
+			// messy control flow.. this should just change to window and not execute..
+			string_commands_execute(*context.search);
+			// Would be cool if through this fzf window i could search replace !!
 			fzf_win := make_fzf_window((res: *Fzf_Result, s: string, data: *void) {
 				buf := data.(*Buffer);
 				do_rg(res, s, ".", "/home/user/jai/latest");
-			}, context.buffer_window.buffer, start_search = context.search.search_string);
+			}, start_search = str);
 			if fzf_win == null
 				return command_error();
 			//_clear_search();
 			return .{};
 		},
-	});
-	array_add(*buffer.insert_commands, .{
-		keybind = to_keybind(.[ KEY_ESCAPE ]),
-		proc = wrap_command(stop_search),
-	});
-	parent := context.edit.second_root;
-	window = create_buffer_window(parent, context.search.buffer,
-			select = false, is_hidden = false);
-	add_flags(window, .BUFFER_LINE_NO);
-	window.user_title = "SEARCH";
+	);
+	context.search.execute = _execute_search;
+	context.search.cancel = _cancel_search;
+	context.search.update = _update_search;
 }
 
-start_search :: (start: string = "") {
+// callbacks from string commands
+_execute_search :: (__: *String_Command_State) {
 	using context.search;
-	if last_window
-		release(last_window);
-	last_window = context.buffer_window;
-	hold(last_window);
-	if window.lines[window.lines.count-1].count != 0 {
-		execute_buffer_operation(window, .{
-			kind = .INSERT_LINES,
-			y = window.lines.count,
-			count = 1,
-			lines = .[ "" ],
-		}, even_if_no_caps = true, no_callback = true);
-	}
-	move_cursor_y(window, window.lines.count - 1);
-	execute_buffer_operation(window, .{
-		kind = .INSERT_CHARS,
-		y = window.lines.count-1,
-		x = 0,
-		count = start.count,
-		chars = cast([]u8)start,
-	}, even_if_no_caps = true, no_callback = true);
-	//_clear_search();
-	select_window(window);
-	change_edit_mode(.INSERT);
-}
-
-// Can have a thing where execute_search gets passed a window?
-// pressed enter
-execute_search :: () {
-	using context.search;
-	if window.cursor.y + 1 != window.lines.count {
-		// move last executed line to the front
-		line: *Line = *window.lines[window.lines.count-1];
-		if line.count > 0 {
-			execute_buffer_operation(window, .{
-				kind = .INSERT_LINES,
-				y = window.lines.count,
-				count = 1,
-				lines = .[ "" ],
-			}, even_if_no_caps = true, no_callback = true);
-		}
-		execute_buffer_operation(window, .{
-			kind = .INSERT_CHARS,
-			y = window.lines.count-1,
-			x = 0,
-			count = window.lines[window.cursor.y].count,
-			chars = window.lines[window.cursor.y].chars, // should be fine to pass this reference
-		}, even_if_no_caps = true, no_callback = true);
-		//array_ordered_remove_by_index(*window.lines, window.cursor.y); // @Leak
-		execute_buffer_operation(window, .{
-			kind = .ERASE_LINES,
-			y = window.cursor.y,
-			count = 1,
-		}, even_if_no_caps = true, no_callback = true);
-		move_cursor_y(window, window.lines.count - 1);
-	}
-	select_window(last_window);
-	change_edit_mode(.COMMAND);
 	if status == .SEARCH_REPLACE {
 		_do_search_replace(context.buffer_window);
 		maybe_update_search_matches(context.buffer_window, force_update=true);
@@ -178,33 +88,29 @@ execute_search :: () {
 	}
 }
 
-// TODO: this auto changes to command mode,
-// because of how commands work...
-// i think ?? either way, it's wrong
-stop_search :: () {
-	using context.search;
-	if window.cursor.y + 1 == window.lines.count {
-		// remove last line!
-		y := window.cursor.y;
-		if window.lines[y].count > 0 {
-			// ahh @@
-			array_reset(*window.lines[y].chars);
-			move_cursor_y(window, window.lines.count - 1);
-		}
-	}
-	//_clear_search();
-	select_window(last_window);
-	change_edit_mode(.COMMAND);
+_update_search :: (_: *String_Command_State) {
+	_recompile_search();
 }
 
-/*
-_clear_search :: () {
-	using context.edit.search;
-	y := win.lines.count - 1;
-	delete_chars(window, .{0, y}, window.lines[y].count);
-	_maybe_recompile_search();
+_cancel_search :: (_: *String_Command_State) {
+	// do nothing
 }
-*/
+
+start_search :: (start: string = "") {
+	string_commands_start(*context.search, start);
+}
+
+// These 2 are not called, for now..
+
+// Can have a thing where execute_search gets passed a window?
+execute_search :: () {
+	string_commands_execute(*context.search);
+}
+
+// rename to cancel !
+stop_search :: () {
+	string_commands_cancel(*context.search);
+}
 
 // - parse error:
 // Search 'abc': parse error
@@ -216,18 +122,22 @@ _clear_search :: () {
 get_search_info_for_status_bar :: (win: *Window) -> string {
 	using,except(buffer) context.edit.search_state;
 	assert(win.kind == .BUFFER, "%", win.kind);
-	_maybe_recompile_search();
+	string_commands_ensure_up_to_date(*context.search);
 	if search_string == ""
 		return "";
 	b: String_Builder;
 	b.allocator = temp;
 	if status == .SEARCH_REPLACE {
 		print(*b, "Search/Replace ");
-		print(*b, "'%/%': ", search_string, replace_string);
+		print(*b, "'%/%'", search_string, replace_string);
 	} else {
 		print(*b, "Search ");
-		print(*b, "'%': ", cast(string)chars);
+		print(*b, "'%'", cast(string)chars);
 	}
+	if motion_string {
+		print(*b, " m:'%'", motion_string);
+	}
+	print(*b, ": ");
 	if status == .ERROR {
 		print(*b, "Parse error!");
 	} else {
@@ -245,37 +155,79 @@ get_search_info_for_status_bar :: (win: *Window) -> string {
 	return builder_to_string(*b,, allocator=temp);
 }
 
-_maybe_recompile_search :: () {
+_recompile_search :: () {
 	using context.edit.search_state;
 	y := window.cursor.y;
-	if char_string == buffer.lines[y].as_string
-		return;
-	change_time = context.edit.time;
+	compile_time = context.edit.time;
 	if status != .ERROR {
 		Uniform.uninit(*search_regex);
 	}
-	{
-		array_reset(*chars);
-		array_add(*chars, .. buffer.lines[y].chars);
-	}
 	status = .SEARCH;
-	search_string = cast(string)chars;
-	replace_string = "";
+	array_reset(*search_chars);
+	array_reset(*replace_chars);
+	motion_string = "";
+	is_special_case_search_replace = false;
 	idx := 0;
 	while idx < chars.count {
+		if chars[idx] == #char "\\" {
+			if idx + 1 == chars.count {
+				array_add(*search_chars, chars[idx]);
+				break;
+			}
+			// only these characters get escaped
+			if chars[idx+1] == "/" || chars[idx+1] == "!" || chars[idx+1] == "@" {
+				array_add(*search_chars, chars[idx+1]);
+				idx += 2;
+				continue;
+			}
+		}
+		if chars[idx] == #char "!" || chars[idx] == "@" {
+			motion_string = cast(string)advance(chars, idx+1);
+			break;
+		}
+		if chars[idx] != #char "/" {
+			array_add(*search_chars, chars[idx]);
+			idx += 1;
+			continue;
+		}
 		if chars[idx] == #char "/" {
-			search_string = string.{ data = chars.data, count = idx };
-			replace_string = cast(string)advance(chars, idx + 1);
+			idx += 1;
 			status = .SEARCH_REPLACE;
-			for replace_string {
-				if it == #char "/" {
-					status = .ERROR;
-					return;
+			while idx < chars.count {
+				if chars[idx] == #char "\\" {
+					if idx + 1 == chars.count {
+						array_add(*replace_chars, chars[idx]);
+						break;
+					}
+					// only these characters get escaped
+					if chars[idx+1] == "/" || chars[idx+1] == "!" || chars[idx+1] == "@" {
+						array_add(*replace_chars, chars[idx+1]);
+						idx += 2;
+						continue;
+					}
 				}
+				if chars[idx] == #char "!" || chars[idx] == "@" {
+					motion_string = cast(string)advance(chars, idx+1);
+					break;
+				}
+				if chars[idx] != #char "/" {
+					array_add(*replace_chars, chars[idx]);
+					idx += 1;
+					continue;
+				}
+				flag_string := cast(string)advance(chars, idx+1);
+				for flag_string {
+					if it == "u" {
+						is_special_case_search_replace = true;
+					} else {
+						status = .ERROR;
+						return;
+					}
+				}
+				break;
 			}
 			break;
 		}
-		idx += 1;
 		//if chars[idx] == #char "\\" {
 	}
 	full_regex_string := tprint(".*+(%)", search_string); // non-greedy whatever
@@ -292,6 +244,7 @@ _maybe_recompile_search :: () {
 		if !can_replace(search_regex, replace_string) {
 			Uniform.uninit(*search_regex);
 			status = .ERROR;
+			edit_warn("Bad replace string");
 			return;
 		}
 	}
@@ -331,6 +284,12 @@ go_to_search_match_offset :: (offset: int, jump := true) -> bool {
 }
 
 _do_search_replace :: (using win: *Window) {
+	is_lower :: (ch: u8) -> bool {
+		return #char "a" <= ch && ch <= "z";
+	}
+	is_upper :: (ch: u8) -> bool {
+		return #char "A" <= ch && ch <= "Z";
+	}
 	using,except(buffer) context.edit.search_state;
 	assert(status == .SEARCH_REPLACE);
 	if !can_replace(search_regex, replace_string) {
@@ -339,12 +298,22 @@ _do_search_replace :: (using win: *Window) {
 	}
 	maybe_update_search_matches(win);
 	using buffer.search_matches;
-	log("DOING SEARCH REPLACE (%)", matches.count);
+	edit_alert("Replacing %", matches.count);
 	// need to iterate them just right !
 	for < array_copy(matches,, allocator=temp) {
 		ok, searched, replaced := _match_search_replace(win, it, replace_string);
 		if !ok
 			return;
+		if is_special_case_search_replace && searched.count > 0 && replaced.count > 0 {
+			if is_lower(searched[0]) {
+				to_lower_in_place(replaced);
+			} else if searched.count >= 2 && is_upper(searched[0]) && is_upper(searched[1]) {
+				to_upper_in_place(replaced);
+			} else {
+				replaced[0] = to_upper(replaced[0]);
+				to_lower_in_place(advance(replaced, 1));
+			}
+		}
 		log("REPLACE % -> %", searched, replaced);
 		delete_chars(win, it.position, it.count);
 		// assumes ok string
@@ -353,12 +322,12 @@ _do_search_replace :: (using win: *Window) {
 }
 
 maybe_update_search_matches :: (win: *Window, force_update := false) -> bool {
-	_maybe_recompile_search();
+	string_commands_ensure_up_to_date(*context.search);
 	buf := win.buffer;
 	if buf.flags & .NO_SEARCH
 		return true;
 	should_update := force_update;
-	if buf.search_matches.match_time < max(buf.modify_time, context.edit.search_state.change_time) {
+	if buf.search_matches.match_time < max(buf.modify_time, context.edit.search_state.compile_time) {
 		should_update = true;
 	}
 	if should_update
@@ -367,6 +336,7 @@ maybe_update_search_matches :: (win: *Window, force_update := false) -> bool {
 }
 
 // temp allocated
+// doesn't handle search/replace flags ..?
 _match_search_replace :: (using win: *Window, m: Search_Match, replace: string) -> bool, string, string {
 	if !is_position_in_buffer(buffer, .{m.position.x + m.count, m.position.y}) {
 		edit_error("Failed search replace");
@@ -402,8 +372,26 @@ _update_search_matches :: (win: *Window) -> bool {
 	//text: [..]u8;
 	//indices: [..]Position;
 	//text.allocator, indices.allocator = temp;
+	ly := 0;
+	ry := win.buffer.lines.count - 1;
+	if motion_string {
+		waiting: Waiting_Chars;
+		waiting.chars.allocator = temp;
+		for motion_string {
+			waiting_chars_add(*waiting, it);
+		}
+		motion := find_motion(waiting.chars);
+		if !motion {
+			edit_warn("Couldn't find search motion '%'", motion_string);
+		} else {
+			res := execute_motion(motion, number = waiting.number, window = win);
+			ly = normalize_position(win, res.start, .NONE).y;
+			ry = normalize_position(win, res.end, .NONE).y;
+		}
+	}
 	MAX_MATCHES :: 10000;
-	for line, y: win.buffer.lines {
+	for y: ly..ry {
+		line := win.buffer.lines[y];
 		if matches.count >= MAX_MATCHES
 			break;
 		//array_add(*text, it);
@@ -411,9 +399,14 @@ _update_search_matches :: (win: *Window) -> bool {
 		s: string = cast(string)line.chars;
 		idx := 0;
 		while matches.count < MAX_MATCHES { // limit 
-			ok, m := Uniform.match(s, search_regex, .ANCHOR_START);
+			// Looks like i can use unanchored here??? to not have a group for the first match?
+			ok, m := Uniform.match(s, search_regex, .UNANCHORED,, allocator=temp);
 			if !ok
 				break;
+			if GROUP_ZERO >= m.count {
+				edit_error("nonsense"); // TODO: should check compiled regex to make sure that groups are ok 
+				return false;
+			}
 			match_str := m[GROUP_ZERO];
 			match_offset := match_str.data - s.data;
 			if match_str.count == 0 {
@@ -498,3 +491,5 @@ _replace_to_parts :: (replace: string) -> []Replace_Part {
 	}
 	return ret;
 }
+
+#import "String";

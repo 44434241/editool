@@ -431,14 +431,15 @@ _indentation_of_next_line :: (buf: *Buffer, y: int) -> int {
 			break;
 		ret += 1;
 	}
+	add := 0;
 	for buf.lines[y].chars {
 		if it == #char "{"
-			ret += 1;
+			add += 1;
 		if it == #char "}"
-			ret -= 1;
+			add -= 1;
 	}
-	ret = max(ret, 0);
-	return ret;
+	add = max(add, 0);
+	return ret + add;
 }
 
 split_line :: (using win: *Window, indent: bool = true) {

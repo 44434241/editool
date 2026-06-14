@@ -50,7 +50,7 @@ Motion :: struct {
 	char_proc: Char_Proc; // is .CONTINUE_CHAR
 }
 
-get_motion :: (keybind: $T/.[[]s32, string]) -> *Motion {
+find_motion :: (keybind: $T/.[[]s32, string]) -> *Motion {
 	for * context.edit.motions {
 		if keybind_matches(it.keybind, keybind)
 			return it;
@@ -62,7 +62,7 @@ get_motion :: (keybind: $T/.[[]s32, string]) -> *Motion {
 // works a bit differently than commands.. won't handle motions that get called again!
 make_motion_alias :: ($chars: $T/.[ []s32, string ]) -> Motion.Proc {
 	inner_proc :: (in: Motion_In) -> Motion_Result {
-		motion := get_motion(chars);
+		motion := find_motion(chars);
 		if !motion {
 			return .{
 				status = .ERROR,

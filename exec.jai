@@ -2,11 +2,7 @@
 
 
 Exec :: struct {
-	chars: [..]u8;
-	#overlay(chars) as_string: string;
-	window: *Window;
-	buffer: *Buffer;
-	last_win_id: WinId;
+	#as using _: String_Command_State;
 }
 
 Exec_Command :: struct {
@@ -24,88 +20,30 @@ Exec_Result :: struct {
 	error_message: string; // error message is constant or temp allocated
 }
 
-get_exec_info_for_status_bar :: () -> string {
-	using context.exec;
-	str := buffer.lines[0].as_string;
-	if !str
-		return "";
-	return tprint("EXEC :%", str);
-}
-
 start_exec :: () {
-	using context.exec;
-	last_win_id = context.buffer_window.id;
-	_clear_exec();
-	select_window(window);
-	change_edit_mode(.INSERT);
-}
-
-execute_exec :: () {
-	using context.exec;
-	win := find_window(last_win_id);
-	if win
-		select_window(win);
-	else
-		select_normal_window();
-	s := copy_string(window.lines[0].as_string,, allocator=temp);
-	_clear_exec();
-	change_edit_mode(.COMMAND);
-	eval_exec(s);
-}
-
-stop_exec :: () {
-	using context.exec;
-	win := find_window(last_win_id);
-	if win
-		select_window(win);
-	else
-		select_normal_window();
-	_clear_exec();
-}
-
-_clear_exec :: () {
-	using context.exec;
-	delete_chars(window, .{0, 0}, window.lines[0].count);
+	string_commands_start(*context.exec, "");
 }
 
 
 editool_exec_init :: () {
+	string_commands_init(*context.exec, "EXEC");
+	context.exec.execute = _execute_exec;
+}
+
+get_exec_info_for_status_bar :: () -> string {
 	using context.exec;
-	buffer = create_custom_buffer();
-	buffer.flags |= .NO_SEARCH;
-	buffer.caps |= .MODE_INSERT | .MODE_COMMAND;
-	buffer.caps |= .INSERT_CHARS | .DELETE_CHARS;
-	buffer.caps |= .MOVE;
-	array_add(*buffer.commands, .{
-		keybind = to_keybind("\n"),
-		proc = wrap_command(execute_exec),
-	});
-	array_add(*buffer.commands, .{
-		keybind = to_keybind(.[ KEY_ESCAPE ]),
-		proc = wrap_command(stop_exec),
-	});
-	array_add(*buffer.insert_commands, .{
-		keybind = to_keybind("\n"),
-		proc = wrap_command(execute_exec),
-	});
-	array_add(*buffer.insert_commands, .{
-		keybind = to_keybind(.[ KEY_ESCAPE ]),
-		proc = wrap_command(stop_exec),
-	});
-	window = create_buffer_window(context.edit.second_root, buffer,
-			select = false, is_hidden = false);
-	window.user_title = "EXEC";
+	if !as_string
+		return "";
+	if context.buffer_window != window
+		return "";
+	return tprint("EXEC :%", as_string);
 }
 
-exit_exec_mode :: () {
-	using context.edit.exec;
-	array_reset(*chars);
-}
-
-eval_exec :: (_s: string) {
+_execute_exec :: (__: *String_Command_State) {
+	using context.exec;
 	args: [..]string;
 	args.allocator = temp;
-	s := _s;
+	s := as_string;
 	while s.count {
 		if s[0] == #char " " {
 			s = advance(s, 1);
@@ -119,6 +57,7 @@ eval_exec :: (_s: string) {
 	}
 	if args.count == 0
 		return;
+	// exec commands should be part of Exec...
 	for context.edit.exec_commands {
 		if it.name == args[0] {
 			res := it.proc(advance(args, 1));
@@ -274,7 +213,7 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 				for * state.items {
 					if it.line.count && peek(it.line) == #char "\n"
 						it.line.count -= 1;
-					array_add(*new_lines, tprint("%:%: %", it.filename, it.line_number, it.line));
+					array_add(*new_lines, tprint("%:% %", it.filename, it.line_number, it.line));
 				}
 				if !state.items.count
 					array_add(*new_lines, "");
@@ -330,8 +269,6 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 		buf1.user_data = state;
 		buf2.user_data = state;
 	}
-	// start search
-	_write_normal_string(state.win2, {0, 0}, start_search);
 	parent.on_destroy = (win: *Window) {
 		state := win.user_data.(*Fzf_State);
 		state.res.release(*state.res);
@@ -352,10 +289,33 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 	}
 	// modifiers directly affect the window, not the buffer. is that what i want?
 	win1.apply_mods = (win: *Window, lines: []Line) {
+		state := win.user_data.(*Fzf_State);
 		for * win.lines[win.cursor.y].user_mods {
 			it.bg_color = 1;
 			it.fg_color = 4;
 			it.attributes |= A_STANDOUT;
+		}
+		for * lines {
+			y := it_index + (lines.data - win.lines.data);
+		//for y: win.scroll..min(win.lines.count, win.scroll+win.size.y)-1 {
+			if y >= state.res.items.count
+				break;
+			item := state.res.items[y];
+			if item.end <= 0
+				continue;
+			dummy := tprint("%:% ", item.filename, item.line_number);
+			for x: item.start+dummy.count..item.end+dummy.count {
+				if x >= it.count
+					continue;
+				if x >= Line.user_mods.count
+					continue;
+				if y != win.cursor.y {
+					it.user_mods[x].fg_color = 3;
+				} else {
+					it.user_mods[x].bg_color = 3;
+					//it.user_mods[x].attributes |= A_BOLD;
+				}
+			}
 		}
 	};
 	Select_Mode :: enum {
@@ -376,7 +336,7 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 		if select_mode == .OPEN {
 			new_win = get_window(.BUFFER, not_floating = true, not_special = true);
 			change_buffer(new_win, buf);
-		} else { // .TAB
+		} else { // .TAB or .VERTICAL
 			parent := get_window(.CONTAINER, not_floating = true);
 			need_container: Window.Container_Mode = ifx select_mode == .TAB then .TABBED else .VERTICAL;
 			while parent != null {
@@ -407,37 +367,31 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 		select_window(new_win);
 		return .{};
 	}
-	enter_command := Command.{
-		keybind = to_keybind("\n"),
+	add_command(*buf2.commands, 
+		keybind = "\n",
+		mode = .COMMAND | .INSERT,
 		proc = #bake_arguments select_proc(select_mode = .OPEN),
-	};
-	split_enter_command := Command.{
-		keybind = to_keybind(.[ 20 ]), // ctrl + t
+	);
+	add_command(*buf2.commands, 
+		keybind = .[ 20 ], // ctrl + t
+		mode = .COMMAND | .INSERT,
 		proc = #bake_arguments select_proc(select_mode = .TAB),
-	};
-	vert_enter_command := Command.{
-		keybind = to_keybind(.[ 22 ]), // ctrl + v
+	);
+	add_command(*buf2.commands,
+		keybind = .[ 22 ], // ctrl + v
+		mode = .COMMAND | .INSERT,
 		proc = #bake_arguments select_proc(select_mode = .VERTICAL),
-	};
-	escape_command := Command.{
-		keybind = to_keybind(.[ KEY_ESCAPE ]),
+	);
+	add_command(*buf2.commands, 
+		keybind = .[ KEY_ESCAPE ],
+		mode = .COMMAND | .INSERT,
 		proc = (_: Command_In) -> Command_Result {
 			state := context.buffer_window.user_data.(*Fzf_State);
 			destroy_window(state.parent, force = true);
 			change_edit_mode(.COMMAND);
 			return .{};
 		}
-	};
-	//
-	array_add(*buf2.commands, enter_command);
-	array_add(*buf2.commands, split_enter_command);
-	array_add(*buf2.commands, vert_enter_command);
-	array_add(*buf2.insert_commands, enter_command);
-	array_add(*buf2.insert_commands, split_enter_command);
-	array_add(*buf2.insert_commands, vert_enter_command);
-	//
-	array_add(*buf2.insert_commands, escape_command);
-	array_add(*buf2.commands, escape_command);
+	);
 	set_floating(parent, .{
 		lx = .{ .BEGIN, 10 },
 		rx = .{ .END, -10 },
@@ -447,6 +401,8 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 	maybe_update_state(state, force = true);
 	select_window(win2);
 	change_edit_mode(.INSERT);
+	// start search
+	_write_normal_string(state.win2, {0, 0}, start_search);
 	return parent;
 }
 
@@ -523,9 +479,11 @@ add_all_execs :: () {
 	_save_file :: () -> bool {
 		using win := context.buffer_window;
 		if buffer.kind != .FILE {
+			edit_warn("not a file");
 			return false;
 		}
 		if buffer.file_flags & (.NO_FILE | .READ_ONLY) {
+			edit_warn("bad flags: %", buffer.file_flags);
 			return false;
 		}
 		s := buffer_as_string_for_saving(buffer,, allocator=temp);
@@ -577,6 +535,11 @@ add_all_execs :: () {
 		if ok 
 			select_window(win);
 		return ok;
+	});
+	add_exec("norm", (path: string) -> bool {
+		arr := normalize_path(path,, allocator=temp);
+		edit_alert("normalized: %", arr);
+		return true;
 	});
 }
 

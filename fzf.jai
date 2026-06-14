@@ -63,7 +63,7 @@ do_fd :: (ret: *Fzf_Result, search: string, dir: string = ".") {
 			line_number = 0,
 			line = "",
 			start = 0,
-			end = 0,
+			end = -1,
 		});
 	}
 }
@@ -108,7 +108,7 @@ do_rg :: (ret: *Fzf_Result, search: string, paths: .. string) {
 			line_number = val.line_number - 1,
 			line = val.lines.text,
 			start = val.submatches[0].start,
-			end = val.submatches[0].end,
+			end = val.submatches[0].end - 1,
 		};
 		array_add(*res.items, item);
 	}

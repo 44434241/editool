@@ -10,6 +10,19 @@ waiting_chars_reset :: (waiting: *Waiting_Chars) {
 	array_reset(*waiting.chars);
 }
 
+// Returns true if chars was added (and therefore there might be a new matching command)
+waiting_chars_add :: (waiting: *Waiting_Chars, ch: s32) -> bool {
+	if waiting.chars.count == 0 && is_digit(ch) && !waiting.no_number {
+		digit := ch - #char "0";
+		//if waiting.number == 0 && digit != 0
+			//waiting.number = 1;
+		waiting.number = waiting.number * 10 + digit;
+		return false;
+	}
+	array_add(*waiting.chars, ch);
+	return true;
+}
+
 // for now, only a command is waiting for a motion
 Waiting_For_Motion :: struct {
 	#as using _: Waiting_Chars;
@@ -36,10 +49,12 @@ Command_State :: struct {
 	waiting_for_char: [..]Waiting_For_Char;
 }
 
-execute_motion :: (motion: *Motion, num: int = 1) -> Motion_Res, Motion_In {
+execute_motion :: (motion: *Motion, number: int = 1, window: *Window = null) -> Motion_Res, Motion_In {
+	if window == null
+		window = context.buffer_window;
 	in := Motion_In.{
-		number = max(num, 1),
-		window = context.buffer_window,
+		number = max(number, 1),
+		window = window,
 	};
 	if in.window.map_window_for_motion {
 		in.window = in.window.map_window_for_motion(in.window, motion);
@@ -99,7 +114,7 @@ handle_command_char :: (ch: s32) {
 	should_reset := true;
 	found_command := false;
 	for *waiting: context.command_state.waiting_for_char {
-		if !update_waiting_chars(waiting, ch) {
+		if !waiting_chars_add(waiting, ch) {
 			should_reset = false;
 			continue;
 		}
@@ -131,7 +146,7 @@ handle_command_char :: (ch: s32) {
 		if found_command
 			break;
 		assert(waiting.command.motion_proc != null);
-		if !update_waiting_chars(waiting, ch) {
+		if !waiting_chars_add(waiting, ch) {
 			should_reset = false;
 			continue;
 		}
@@ -148,13 +163,15 @@ handle_command_char :: (ch: s32) {
 				should_reset = false;
 		}
 	}
-	array_add(*context.command_state.all_chars, ch);
-	if update_waiting_chars(*context.command_state, ch) {
-		step_reset, step_command := handle_command_step();
-		should_reset &= step_reset;
-		found_command |= step_command;
-	} else {
-		should_reset = false;
+	if !found_command {
+		array_add(*context.command_state.all_chars, ch);
+		if waiting_chars_add(*context.command_state, ch) {
+			step_reset, step_command := handle_command_step();
+			should_reset &= step_reset;
+			found_command |= step_command;
+		} else {
+			should_reset = false;
+		}
 	}
 	if should_reset {
 		if !found_command {
@@ -209,7 +226,7 @@ handle_command_step :: () -> (should_reset: bool, found_command: bool) {
 			}
 		}
 	}
-	for * context.edit.commands {
+	for get_current_valid_commands(.COMMAND) {
 		if keybind_matches(it.keybind, context.command_state.chars) {
 			in := Command_In.{
 				number = max(1, context.command_state.number),
@@ -313,18 +330,5 @@ _handle_motion_result :: (motion: *Motion, in: Motion_In, res: Motion_Result, wa
 			return true;
 	}
 	edit_alert("BAD motion status: %\n", res.status);
-	return true;
-}
-
-// returns true if chars was added
-update_waiting_chars :: (waiting: *Waiting_Chars, ch: s32) -> bool {
-	if waiting.chars.count == 0 && is_digit(ch) && !waiting.no_number {
-		digit := ch - #char "0";
-		//if waiting.number == 0 && digit != 0
-			//waiting.number = 1;
-		waiting.number = waiting.number * 10 + digit;
-		return false;
-	}
-	array_add(*waiting.chars, ch);
 	return true;
 }

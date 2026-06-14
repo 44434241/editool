@@ -109,7 +109,6 @@ Buffer :: struct {
 	modify_time: Editime; // when the last modifying operation happened?
 	windows: [..]*Window; // doing it like this for now..
 	commands: [..]Command; // can only be added to after buffer creation
-	insert_commands: [..]Command; // these keybinds are all assumed to be of length 1!!!
 	search_matches: Search_Matches; // touched by search..
 	marks: [..]Mark;
 	// file
@@ -126,7 +125,7 @@ find_or_create_file_buffer :: (_filename: string, flags: Buffer.Flags = .NONE, f
 	assert((file_flags & .READ_ONLY) == file_flags); // has no other flags
 	filename := _filename;
 	if filename {
-		filename = _normalize_path(filename,, allocator=temp);
+		filename = normalize_path(filename,, allocator=temp);
 		if is_directory(filename) {
 			// TODO: idk fix shit
 			assert(false, "Trying to open directory (% -> %)...", _filename, filename);
@@ -180,7 +179,6 @@ _new_buffer :: (kind: Buffer.Kind) -> *Buffer {
 	allocator := Allocator.{pool_allocator_proc, *buf.pool};
 	buf.lines.allocator = allocator;
 	buf.commands.allocator = allocator;
-	buf.insert_commands.allocator = allocator;
 	buf.marks.allocator = allocator;
 	buf.ops.allocator = allocator;
 	buf.windows.allocator = allocator;
@@ -792,54 +790,51 @@ _get_char_info :: (ch: u8) -> Buffer_Char_Info {
 	return .{};
 }
 
-#scope_file
-
-#run {
-	log("%\n", _normalize_path("./asdf.jai"));
-}
-// sheesh
-// TODO: './', '../' not supported
-_normalize_path :: (_path: string) -> string {
-	path := _path;
-	if !path {
-		return path;
-	}
-	b: String_Builder;
-	b.allocator = temp;
-	// lil hack
-	while path.count >= 2 && path[0] == #char "." && path[1] == "/" {
-		path = advance(path, 2);
-	}
+normalize_path :: (path: string) -> string {
+	arr: [..]string;
+	arr.allocator = temp;
 	if path[0] == "~" {
 		home, ok := get_home_directory(,, allocator=temp);
-		if !ok
+		if !ok {
+			log_error("Cannot get home directory");
 			return "";
-		print(*b, "%", home);
-		path = advance(path, 1);
-	}
-	if path[0] != #char "/" {
+		}
+		array_add(*arr, .. split(home, #char "/",, allocator=temp));
+	} else if path[0] != #char "/" {
 		dir := get_working_directory(,, allocator=temp);
 		if !dir {
 			log_error("Cannot get working directory");
 			return ""; 
 		}
-		append(*b, dir);
-		if peek(dir) != #char "/"
-			append(*b, "/");
-	} 
-	while path {
-		if path[0] != #char "/" {
-			append(*b, string.{ data = path.data, count = 1 });
-			path = advance(path, 1);
+		array_add(*arr, .. split(dir, "/",, allocator=temp));
+	}
+	array_add(*arr, .. split(path, "/",, allocator=temp));
+	idx := 0;
+	while idx < arr.count {
+		if arr[idx] == "" || arr[idx] == "." {
+			array_ordered_remove_by_index(*arr, idx);
 			continue;
 		}
-		append(*b, "/");
-		while path.count && path[0] == #char "/" {
-			path = advance(path, 1);
+		if arr[idx] == ".." {
+			array_ordered_remove_by_index(*arr, idx);
+			if idx > 0 {
+				array_ordered_remove_by_index(*arr, idx-1);
+				idx -= 1;
+			}
+			continue;
 		}
+		idx += 1;
+	}
+	if arr.count == 0
+		return "/";
+	b: String_Builder;
+	for arr {
+		print(*b, "/%", it);
 	}
 	return builder_to_string(*b);
 }
+
+#scope_file
 
 #import "Math";
 #import "File";

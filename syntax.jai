@@ -165,7 +165,7 @@ get_jai_syntax :: () -> Syntax {
 	elements[DECLARATION].match_suffix = "(?:\\s*\\,\\s*\\w+)*\\s*:";
 	syntax.elements[TYPE2].match = "[A-Z]\\w*[a-z]\\w*+";
 	syntax.elements[DIRECTIVE].match = "#\\w*(?:\\,\\w*+)*+";
-	syntax.elements[STRING].match = "\"(?:[^\"\\\\]|\\\\\"|\\\\)*(?:\"|$)";
+	syntax.elements[STRING].match = "\"(?:[^\"\\\\]|\\\\.)*(?:\"|$)";
 	syntax.elements[NUMBER].match = "\\d+(?:\\.\\d+)?";
 	syntax.elements[TAB].match = "\\t++";
 	syntax.elements[COMMENT].match = "//.*?$";

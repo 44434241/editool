@@ -4,32 +4,22 @@
 // Same for leaving command mode without reseting running dot command.
 // ...
 // 
-// more options for search/replace (make it case sensitive?)
-// 
 // OTHER TODO: (i need a list for this) pwn library for jai?
 // 
-// - fix filename normalization + relative filenames
 // - directories (and a buffer thing for renaming directories)
-// - some stuff in the search logic still modifies lines directly .. <- make sure no empty/repeat commands in history (i think i fixed that one though)
-// - ^ generalized command history for search/exec <- need this to be able to edit floating files
 //
 // - keybinds to undo/redo ff & fr (as in, see history??) (just make it proper !)
-// - undo is still off ? but how ?
-// - multiple clipboards ?
-// - delete_motion "ct." is being goofy (because dot?) <- need to fix up commands and their priorities !!
+// - multiple clipboards ? idk
 // - multiline searching?
-// - move windows
 // - breaks clipboard image, when open ...
-// - change inner: '.', '_'
-// thinking...:
-// - how do i manage tabs? alt + something? <- fuckign do this after fzf or now idk
-// - i need to have multiple previous-jump lists, for short and long jumps..
-// { } matching in do_some_extra_stuff* with multiple windows is wrong !
 //
-// ff/fd previews files ! <- + highlighting
+// thinking...:
+// - i need to have multiple previous-jump lists, for short and long jumps..
+//
+// ff/fd previews files ! <- + highlighting (for fd)
+//
 //
 
-// hmm..
 Keybind :: struct {
 	chars: []s32;
 }
@@ -86,6 +76,13 @@ Edit_Mode :: enum int {
 	INSERT;
 	COMMAND;
 	NOP; // different to none
+}
+
+Edit_Mode_Bits :: enum_flags {
+	INSERT :: 1 << Edit_Mode.INSERT;
+	COMMAND :: 1 << Edit_Mode.COMMAND;
+	// don't have one for .NOP !
+	NONE :: 0;
 }
 
 Clipboard :: struct {
@@ -151,6 +148,8 @@ edit_error :: (fmt: string, args: .. Any) {
 	edit_alert(fmt, .. args, is_internal = true);
 } @PrintLike
 
+edit_warn :: edit_error;
+
 // assumed to be a warning
 // (it isn't actually.. )
 edit_alert :: (fmt: string, args: .. Any, is_internal := false) {
@@ -190,8 +189,6 @@ _change_edit_mode :: (mode: Edit_Mode, force: bool) {
 	// reset
 	if context.edit.mode == .COMMAND
 		exit_command_mode();
-	//if context.edit.mode == .EXEC
-		//exit_exec_mode();
 	if context.buffer_window != null {
 		// hacky...
 		if mode == .INSERT && get_current_buffer().caps & .MODE_INSERT == 0 {
@@ -260,20 +257,21 @@ do_some_extra_stuff_to_the_buffer_colors :: (win: *Window) {
 		cursor := context.buffer_window.cursor;
 		line := *lines[cursor.y];
 		if cursor.x < line.count {
+			w := context.buffer_window;
 			ch := line.chars[cursor.x];
 			pos: Position = .{ -1, -1 };
 			if ch == #char "(" {
-				pos = find_char_in_window(win, ")", "(",  1);
+				pos = find_char_in_window(w, ")", "(",  1);
 			} else if ch == #char ")" {
-				pos = find_char_in_window(win, "(", ")", -1);
+				pos = find_char_in_window(w, "(", ")", -1);
 			} else if ch == #char "{" {
-				pos = find_char_in_window(win, "}", "{",  1);
+				pos = find_char_in_window(w, "}", "{",  1);
 			} else if ch == #char "}" {
-				pos = find_char_in_window(win, "{", "}", -1);
+				pos = find_char_in_window(w, "{", "}", -1);
 			} else if ch == #char "[" {
-				pos = find_char_in_window(win, "]", "[",  1);
+				pos = find_char_in_window(w, "]", "[",  1);
 			} else if ch == #char "]" {
-				pos = find_char_in_window(win, "[", "]", -1);
+				pos = find_char_in_window(w, "[", "]", -1);
 			}
 			if pos.y >= 0 && pos.x < Line.user_mods.count {
 				line := *lines[pos.y];
@@ -310,9 +308,31 @@ do_some_extra_stuff_to_the_buffer_colors :: (win: *Window) {
 	}
 }
 
+// they'll be in the correct order (first commands will have more priority)
+get_current_valid_commands :: (mode: Edit_Mode = .NONE) -> []*Command {
+	if mode == .NONE
+		mode = context.edit.mode;
+	mode_bits := cast(Edit_Mode_Bits)(1 << mode);
+	ret: [..]*Command;
+	ret.allocator = temp;
+	if context.buffer_window != null {
+		for * context.buffer_window.buffer.commands {
+			if it.mode & mode_bits {
+				array_add(*ret, it);
+			}
+		}
+	}
+	for * context.edit.commands {
+		if it.mode & mode_bits {
+			array_add(*ret, it);
+		}
+	}
+	return ret;
+}
+
 handle_insert_char :: (ch: s32) {
 	win := context.buffer_window;
-	for * win.buffer.insert_commands {
+	for get_current_valid_commands() {
 		//log("testing % (%)", s32.[ ch ], it.keybind);
 		if keybind_matches(it.keybind, .[ch]) {
 			// calling bad commands here might mess up !!
@@ -335,7 +355,7 @@ handle_insert_char :: (ch: s32) {
 		case KEY_ESCAPE; // escape
 			change_edit_mode(.COMMAND);
 		case;
-			motion: *Motion = get_motion(.[ ch ]);
+			motion: *Motion = find_motion(.[ ch ]);
 			if motion != null {
 				res := execute_motion(motion);
 				move_cursor(res);
@@ -611,6 +631,7 @@ main :: () {
 #load "exec.jai";
 #load "search.jai";
 #load "fzf.jai";
+#load "string_commands.jai";
 
 #import "Basic";
 #import "File";

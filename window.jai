@@ -413,6 +413,7 @@ create_container_window :: (parent: *Window, nwindow: *WINDOW = null, flags: Win
 	win.id = next_window_id();
 	win.is_hidden = is_hidden;
 	win.flags = flags;
+	win.flags |= .CONTAINER_TABS;
 	array_add(*context.edit.windows, win);
 	win.kind = .CONTAINER;
 	win.container_mode = mode;
@@ -446,6 +447,7 @@ create_container_window :: (parent: *Window, nwindow: *WINDOW = null, flags: Win
 		#if SECOND_ROOT {
 			assert(context.edit.second_root == null);
 			tmp := create_container_window(null, null, mode = .TABBED);
+			//remove_flags(tmp, .CONTAINER_TABS);
 			assert(tmp == context.edit.second_root);
 		}
 	}
@@ -673,9 +675,6 @@ refresh_window_size :: (using win: *Window, force := false) {
 	}
 	if win == context.search.window || win == context.exec.window || win == context.edit.second_root || win.container_item.fixed_size > 0
 		win.flags &= ~.BORDER;
-	if win.kind == .CONTAINER {
-		win.flags |= .CONTAINER_TABS;
-	}
 	if win.flags & .BORDER {
 		begin.y += 1;
 		begin.x += 1;
@@ -897,6 +896,26 @@ change_buffer :: (win: *Window, new_buf: *Buffer) {
 	refresh_window_size(win); // the buffer might be of different kind..
 }
 
+// There might be some nonsense if one of these windows is selected.
+// So call select_window(...) right after this.
+swap_window_locations :: (win1: *Window, win2: *Window) -> bool, string {
+	if win1 == win2
+		return true, "";
+	if win1.parent == null || win2.parent == null
+		return false, "Can't swap locations with roots";
+	p1 := win1.parent;
+	p2 := win2.parent;
+	idx1 := _child_index_of_window(win1);
+	idx2 := _child_index_of_window(win2);
+	p1.children[idx1] = win2;
+	p2.children[idx2] = win1;
+	win1.parent = p2;
+	win2.parent = p1;
+	refresh_window_size(p1);
+	refresh_window_size(p2);
+	return true, "";
+}
+
 nest_window :: (parent: *Window, child: *Window, mode: Window.Container_Mode = .NONE, select := true) -> (created: *Window) {
 	if parent == null {
 		return null;
@@ -935,6 +954,13 @@ change_container_mode :: (win: *Window, mode: Window.Container_Mode) {
 	refresh_window_size(win, force = true);
 }
 
+_lowest_child_of :: (win: *Window) -> *Window {
+	while win.kind == .CONTAINER && win.children.count > 0 {
+		win = win.children[win.active_child];
+	}
+	return win;
+}
+
 // This should return whatever window of kind, depending on what you wanna do.. 
 // Don't wanna do stuff just yet though
 // `not_special` means it doesn't belong to second root
@@ -949,11 +975,11 @@ get_window :: (kind: Window.Kind, $not_floating := false, not_special := true, $
 	// From here, win != null
 	if not_special {
 		if _root_of(win).is_second_root
-			win = context.edit.root; // this will never float
+			win = _lowest_child_of(context.edit.root); // this will never float
 	}
 	if not_floating {
 		if _root_of(win).is_floating
-			win = context.edit.root;
+			win = _lowest_child_of(context.edit.root);
 	}
 	assert(win != null);
 	if kind == .NONE || win.kind == kind {
@@ -1031,18 +1057,30 @@ select_normal_window :: () {
 	select_window(get_window(.NONE, not_floating = true, not_special = true));
 }
 
-select_relative_window :: (rel: int, wanted_mode := Window.Container_Mode.NONE) -> bool {
-	parent := context.container_window;
-	while parent && (wanted_mode != .NONE && parent.container_mode != wanted_mode) {
-		parent = parent.parent;
+find_relative_window :: (rel: int, wanted_mode := Window.Container_Mode.NONE) -> *Window {
+	return find_relative_window(context.buffer_window, rel, wanted_mode);
+}
+
+find_relative_window :: (win: *Window, rel: int, wanted_mode := Window.Container_Mode.NONE) -> *Window {
+	if !win 
+		return null;
+	while win.parent && (wanted_mode != .NONE && win.parent.container_mode != wanted_mode) {
+		win = win.parent;
 	}
-	if !parent
-		return false;
-	sibling_count := parent.children.count;
-	idx := parent.active_child;
+	if !win.parent
+		return null;
+	sibling_count := win.parent.children.count;
+	idx := _child_index_of_window(win);
 	idx = (idx + rel) % sibling_count;
 	idx = (idx + sibling_count) % sibling_count;
-	select_window(parent.children[idx]);
+	return win.parent.children[idx];
+}
+
+select_relative_window :: (rel: int, wanted_mode := Window.Container_Mode.NONE) -> bool {
+	win := find_relative_window(rel, wanted_mode);
+	if !win
+		return false;
+	select_window(win);
 	return true;
 }
 

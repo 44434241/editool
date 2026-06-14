@@ -8,6 +8,7 @@ Command :: struct {
 	proc: Proc;
 	motion_proc: Motion_Proc;
 	char_proc: Char_Proc;
+	mode: Edit_Mode_Bits = .COMMAND;
 }
 
 Command_Result :: struct {
@@ -112,6 +113,8 @@ command_delete :: (_: Command_In) -> Command_Result {
 command_delete_motion :: (in: Command_In, motion: Motion_Result, enter_insert_mode: bool) -> Command_Result {
 	if enter_insert_mode
 		change_edit_mode(.INSERT);
+	if motion.start.x > motion.end.x
+		return command_error("Bad motion");
 	win := in.window;
 	copy_motion(win, motion);
 	if motion.start.y != motion.end.y {
@@ -138,6 +141,8 @@ command_yank :: (_: Command_In) -> Command_Result {
 }
 
 command_yank_motion :: (in: Command_In, motion: Motion_Result) -> Command_Result {
+	if motion.start.x > motion.end.x
+		return command_error("Bad motion");
 	win := in.window;
 	ok := copy_motion(win, motion);
 	if !ok {
@@ -251,7 +256,7 @@ command_redo :: (in: Command_In) -> Command_Result {
 
 command_search :: (in: Command_In) -> Command_Result {
 	//return .{ status = .CONTINUE_MOTION };
-	return command_search_motion(in, execute_motion(get_motion("iw")));
+	return command_search_motion(in, execute_motion(find_motion("iw")));
 }
 
 command_search_motion :: (in: Command_In, motion: Motion_Res) -> Command_Result {
@@ -503,147 +508,160 @@ command_dot :: (in: Command_In) -> Command_Result {
 command_relative_window :: (in: Command_In, step: int, mode: Window.Container_Mode) -> Command_Result {
 	ok := select_relative_window(step * in.number, mode);
 	if !ok {
-		return .{ status = .ERROR };
+		return command_error();
 	}
 	return .{};
 }
 
+command_move_relative_window :: (in: Command_In, step: int, mode: Window.Container_Mode) -> Command_Result {
+	other := find_relative_window(step, mode);
+	if !other
+		return command_error("Nowhere to move");
+	current := find_relative_window(other, -step, mode);
+	assert(current != null, "oops");
+	edit_alert("Swapping current '%' and other '%'", get_window_title(current), get_window_title(other));
+	swap_window_locations(other, current);
+	select_window(current);
+	return .{};
+}
+
+
 add_all_commands :: () {
 	// COMMANDS
-	add_command(
+	add_global_command(
 		keybind = "",
 		proc = command_motion,
 		motion_proc = command_motion_motion,
 	);
-	add_command(
+	add_global_command(
 		keybind = "q",
 		proc = command_quit,
 	);
-	add_command(
+	add_global_command(
 		keybind = "i",
 		proc = #bake_arguments command_change_edit_mode(mode = .INSERT),
 	);
-	add_command(
+	add_global_command(
 		keybind = "/",
 		proc = #run wrap_command(#bake_arguments start_search(start = "")),
 	);
-	add_command(
+	add_global_command(
 		keybind = ":",
 		proc = #run wrap_command(start_exec),
 	);
-	add_command(
+	add_global_command(
 		keybind = "A",
 		proc = make_command_alias(.[ #char "i", KEY_END ]),
 	);
-	add_command(
+	add_global_command(
 		keybind = "I",
 		//proc = make_command_alias(.[ KEY_HOME, #char "i" ]),
 		proc = #bake_arguments command_go_to_indent_start(enter_insert_mode = true),
 	);
-	add_command(
+	add_global_command(
 		keybind = "d",
 		proc = command_delete,
 		motion_proc = #bake_arguments command_delete_motion(enter_insert_mode = false),
 	);
-	add_command(
+	add_global_command(
 		keybind = "dd",
 		proc = command_delete_line,
 	);
-	add_command(
+	add_global_command(
 		keybind = "y",
 		proc = command_yank,
 		motion_proc = command_yank_motion,
 	);
-	add_command(
+	add_global_command(
 		keybind = "yy",
 		proc = command_yank_line,
 	);
-	add_command(
+	add_global_command(
 		keybind = "p",
 		proc = #bake_arguments command_paste(on_next_char = true),
 	);
-	add_command(
+	add_global_command(
 		keybind = "P",
 		proc = #bake_arguments command_paste(on_next_char = false),
 	);
-	add_command(
+	add_global_command(
 		keybind = "c",
 		proc = command_delete,
 		motion_proc = #bake_arguments command_delete_motion(enter_insert_mode = true),
 	);
-	add_command(
+	add_global_command(
 		keybind = "D",
 		proc = make_command_alias(.[ #char "d", #char "$" ]),
 	);
-	add_command(
+	add_global_command(
 		keybind = "C",
 		proc = make_command_alias(.[ #char "c", #char "$" ]),
 	);
-	add_command(
+	add_global_command(
 		keybind = "Y",
 		proc = make_command_alias(.[ #char "y", #char "$" ]),
 	);
-	add_command(
+	add_global_command(
 		keybind = "u",
 		proc = command_undo,
 	);
-	add_command(
+	add_global_command(
 		keybind = .[ 18 ], // ctrl + r
 		proc = command_redo,
 	);
-	add_command(
+	add_global_command(
 		keybind = "r",
 		proc = command_replace,
 		char_proc = command_replace_char,
 	);
-	add_command(
+	add_global_command(
 		keybind = "n",
 		proc = #bake_arguments command_jump_search(step = 1),
 	);
-	add_command(
+	add_global_command(
 		keybind = "N",
 		proc = #bake_arguments command_jump_search(step = -1),
 	);
-	add_command(
+	add_global_command(
 		keybind = ">",
 		proc = command_indent,
 		motion_proc = #bake_arguments command_indent_motion(step = 1),
 	);
-	add_command(
+	add_global_command(
 		keybind = "<",
 		proc = command_indent,
 		motion_proc = #bake_arguments command_indent_motion(step = -1),
 	);
-	add_command(
+	add_global_command(
 		keybind = ">>",
 		proc = #bake_arguments command_indent_indent(step = 1),
 	);
-	add_command(
+	add_global_command(
 		keybind = "<<",
 		proc = #bake_arguments command_indent_indent(step = -1),
 	);
-	add_command(
+	add_global_command(
 		keybind = "M",
 		proc = command_mark_create,
 		char_proc = command_mark_create_char,
 	);
-	add_command(
-		keybind = "\t", // ctrl + i
-		proc = command_cursor_redo,
-	);
-	add_command(
+	add_global_command(
 		keybind = ".",
 		proc = command_dot,
 	);
-	add_command(
-		keybind = .[ 15 ], // ctrl + o, means "SI (shift out)" ??
+	add_global_command(
+		keybind = .[ 15 ], // ctrl + o (means "SI (shift out)" ??)
 		proc = command_cursor_undo,
 	);
-	add_command(
+	add_global_command(
+		keybind = "\t", // ctrl + i, same as tab !
+		proc = command_cursor_redo,
+	);
+	add_global_command(
 		keybind = "x",
 		proc = command_delete_chars,
 	);
-	add_command(
+	add_global_command(
 		keybind = "?",
 		proc = (in: Command_In) -> Command_Result {
 			log("=================== INFO START ===============================================");
@@ -677,16 +695,10 @@ add_all_commands :: () {
 			return .{};
 		}
 	);
-	add_command(
-		keybind = .[ KEY_ARIGHT ],
-		proc = #bake_arguments command_relative_window(step = 1, mode = .VERTICAL),
-	);
-	add_command(
-		keybind = .[ KEY_ALEFT ],
-		proc = #bake_arguments command_relative_window(step = -1, mode = .VERTICAL),
-	);
-	add_command(
+	// When pressing escape in command mode, we might be in some special window that we wanna exit.
+	add_global_command(
 		keybind = .[ KEY_ESCAPE ],
+		mode = .COMMAND,
 		proc = (in: Command_In) -> Command_Res {
 			win := get_window(.NONE, not_floating = true, not_special = true);
 			if win
@@ -694,15 +706,47 @@ add_all_commands :: () {
 			return .{};
 		}
 	);
-	add_command(
+	add_global_command(
+		keybind = .[ KEY_ARIGHT ],
+		mode = .INSERT | .COMMAND,
+		proc = #bake_arguments command_relative_window(step = 1, mode = .VERTICAL),
+	);
+	add_global_command(
+		keybind = .[ KEY_ALEFT ],
+		mode = .INSERT | .COMMAND,
+		proc = #bake_arguments command_relative_window(step = -1, mode = .VERTICAL),
+	);
+	add_global_command(
 		keybind = .[ KEY_ADOWN ],
+		mode = .INSERT | .COMMAND,
 		proc = #bake_arguments command_relative_window(step = 1, mode = .TABBED),
 	);
-	add_command(
+	add_global_command(
 		keybind = .[ KEY_AUP ],
+		mode = .INSERT | .COMMAND,
 		proc = #bake_arguments command_relative_window(step = -1, mode = .TABBED),
 	);
-	add_command(
+	add_global_command(
+		keybind = .[ KEY_ASRIGHT ],
+		mode = .INSERT | .COMMAND,
+		proc = #bake_arguments command_move_relative_window(step = 1, mode = .VERTICAL),
+	);
+	add_global_command(
+		keybind = .[ KEY_ASLEFT ],
+		mode = .INSERT | .COMMAND,
+		proc = #bake_arguments command_move_relative_window(step = -1, mode = .VERTICAL),
+	);
+	add_global_command(
+		keybind = .[ KEY_ASDOWN ],
+		mode = .INSERT | .COMMAND,
+		proc = #bake_arguments command_move_relative_window(step = 1, mode = .TABBED),
+	);
+	add_global_command(
+		keybind = .[ KEY_ASUP ],
+		mode = .INSERT | .COMMAND,
+		proc = #bake_arguments command_move_relative_window(step = -1, mode = .TABBED),
+	);
+	add_global_command(
 		keybind = .[ 6 ], // ctrl + f
 		proc = command_search,
 		motion_proc = command_search_motion,
@@ -812,13 +856,18 @@ _paste :: (using win: *Window, on_next_char: bool) -> bool {
 	return true;
 }
 
-add_command :: inline (name: string = "", keybind: $T/.[string, []s32],
-			proc: Command.Proc, motion_proc: Command.Motion_Proc = null, char_proc: Command.Char_Proc = null, loc := #caller_location) {
-	actual_name := name;
-	if !actual_name
-		actual_name = sprint("%:%:%", loc.fully_pathed_filename, loc.line_number, loc.character_number);
-	array_add(*context.edit.commands, .{
-		name = actual_name,
+add_global_command :: inline (name: string = "", keybind: $T/.[string, []s32],
+			mode: Edit_Mode_Bits = .COMMAND,
+			proc: Command.Proc, motion_proc: Command.Motion_Proc = null, char_proc: Command.Char_Proc = null) {
+	add_command(*context.edit.commands, name, keybind, mode, proc, motion_proc, char_proc);
+}
+
+add_command :: inline (commands: *[..]Command, name: string = "", keybind: $T/.[string, []s32],
+			mode: Edit_Mode_Bits = .COMMAND,
+			proc: Command.Proc, motion_proc: Command.Motion_Proc = null, char_proc: Command.Char_Proc = null) {
+	array_add(commands, .{
+		name = name,
+		mode = mode,
 		keybind = to_keybind(keybind),
 		proc = proc,
 		motion_proc = motion_proc,

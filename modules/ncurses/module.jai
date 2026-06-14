@@ -67,12 +67,22 @@ KEY_ESCAPE : s32 : 0x1b;
 // Shift is 1 mask, but might get a different key if just shift is pressed...
 // (actually they're not rly masks.. more like addition)
 
+// ctrl
 KEY_CRIGHT : s32 : 569;
 KEY_CLEFT  : s32 : 554;
 KEY_CUP    : s32 : 575;
 KEY_CDOWN  : s32 : 534;
 
+// alt
 KEY_ARIGHT : s32 : 567;
 KEY_ALEFT  : s32 : 552;
 KEY_AUP    : s32 : 573;
 KEY_ADOWN  : s32 : 532;
+
+// alt + shift
+KEY_ASRIGHT : s32 : 568;
+KEY_ASLEFT  : s32 : 553;
+KEY_ASUP    : s32 : 574;
+KEY_ASDOWN  : s32 : 533;
+
+
