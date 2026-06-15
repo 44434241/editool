@@ -163,9 +163,10 @@ handle_command_char :: (ch: s32) {
 				should_reset = false;
 		}
 	}
+	array_add(*context.command_state.all_chars, ch);
+	should_try_more_commands := waiting_chars_add(*context.command_state, ch);
 	if !found_command {
-		array_add(*context.command_state.all_chars, ch);
-		if waiting_chars_add(*context.command_state, ch) {
+		if should_try_more_commands {
 			step_reset, step_command := handle_command_step();
 			should_reset &= step_reset;
 			found_command |= step_command;

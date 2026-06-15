@@ -52,7 +52,7 @@ Search_State :: struct {
 
 editool_search_init :: () {
 	using context.search;
-	string_commands_init(*context.search, "SEARCH");
+	string_commands_init(*context.search, "Search");
 	add_command(*buffer.commands, 
 		keybind = .[ 6 ], // ctrl + f
 		mode = .INSERT | .COMMAND,
@@ -82,50 +82,76 @@ editool_search_init :: () {
 }
 
 // callbacks from string commands
-_execute_search :: (__: *String_Command_State) {
+_execute_search :: (__: *String_Command_State, win: *Window) {
 	using context.search;
-	if status == .SEARCH_REPLACE {
-		revert_to_checkpoint(context.buffer_window);
-		_do_search_replace(context.buffer_window);
-		maybe_update_search_matches(context.buffer_window, force_update=true);
-	} else {
-		go_to_search_match_offset(0, jump = true);
+	if win.buffer != context.search.buffer {
+		restore_checkpoint(win);
+		if status == .SEARCH_REPLACE {
+			if flags & .REPLACE_CONFIRM == 0 {
+				_do_search_replace(win);
+				maybe_update_search_matches(win, force_update=true);
+			} else if win.buffer.search_matches.matches.count != 0 {
+				hold(win);
+				using win.buffer.search_matches;
+				if matches.count > 0
+					move_cursor(win, matches[0].position);
+				ask_for_char("Do u wanna confirm (y/n)", (ch: s32, _win: *void) -> bool {
+					win := _win.(*Window);
+					maybe_update_search_matches(win);
+					ret: bool;
+					using win.buffer.search_matches;
+					if matches.count > 0 && context.search.status == .SEARCH_REPLACE {
+						if ch == {
+							case 0;
+							case #char "n";
+								ret = false;
+							case #char "y";
+								ok := _do_search_replace(win, limit = 1);
+								maybe_update_search_matches(win, force_update=true);
+								ret = ok && matches.count > 0;
+								if matches.count > 0 {
+									pos := matches[0].position;
+									move_cursor(win, pos);
+								}
+							case;
+								edit_alert("Invalid char");
+								ret = true;
+						}
+					} else {
+						ret = false;
+					}
+					if !ret
+						release(win);
+					return ret;
+				}, win);
+			}
+		} else {
+			go_to_search_match_offset(0, jump = true);
+		}
 	}
 }
 
 // This thing with checkpoints should be cleaner.
 // It doesn't properly update highlighting !!
-_update_search :: (_: *String_Command_State) {
+_update_search :: (_: *String_Command_State, win: *Window) {
 	_recompile_search();
-	if context.search.status == .SEARCH_REPLACE {
-		// 
-		win := get_window(.BUFFER);
-		revert_to_checkpoint(win);
-		create_checkpoint(win);
-		_do_search_replace(win);
+	if win.buffer != context.search.buffer {
+		restore_checkpoint(win);
+		if context.search.status == .SEARCH_REPLACE && context.search.flags & .REPLACE_CONFIRM == 0 {
+			// 
+			create_checkpoint(win);
+			_do_search_replace(win, is_after_checkpoint = true);
+		}
 	}
 }
 
-_cancel_search :: (_: *String_Command_State) {
+_cancel_search :: (_: *String_Command_State, win: *Window) {
 	// do nothing
-	win := get_window(.BUFFER);
-	revert_to_checkpoint(win);
+	restore_checkpoint(win);
 }
 
 start_search :: (start: string = "") {
 	string_commands_start(*context.search, start);
-}
-
-// These 2 are not called, for now..
-
-// Can have a thing where execute_search gets passed a window?
-execute_search :: () {
-	string_commands_execute(*context.search);
-}
-
-// rename to cancel !
-stop_search :: () {
-	string_commands_cancel(*context.search);
 }
 
 // - parse error:
@@ -160,13 +186,6 @@ get_search_info_for_status_bar :: (win: *Window) -> string {
 		using win.buffer.search_matches;
 		maybe_update_search_matches(win); // sanity check
 		print(*b, "%/%", last_match_index+1, matches.count);
-		if status == .SEARCH_REPLACE && matches.count > 0 {
-			idx := max(last_match_index, 0);
-			ok, searched, replaced := _match_search_replace(win, matches[idx], replace_string);
-			if ok {
-				print(*b, ", Replace: % -> %", searched, replaced);
-			}
-		}
 	}
 	return builder_to_string(*b,, allocator=temp);
 }
@@ -242,6 +261,11 @@ _recompile_search :: () {
 							flags |= .SEARCH_ONLY;
 						case "r";
 							flags |= .REPLACE;
+						case "c";
+							flags |= .REPLACE_CONFIRM;
+						case "!";
+							motion_string = advance(flag_string, it_index+1);
+							break;
 						case;
 							status = .ERROR;
 							return;
@@ -251,7 +275,6 @@ _recompile_search :: () {
 			}
 			break;
 		}
-		//if chars[idx] == #char "\\" {
 	}
 	if flags & .SEARCH_ONLY
 		status = .SEARCH;
@@ -313,7 +336,8 @@ go_to_search_match_offset :: (offset: int, jump := true) -> bool {
 	return true;
 }
 
-_do_search_replace :: (using,except(flags, Flags) win: *Window) {
+// search replace works with preview i guess.. don't need to overengineer it :: 
+_do_search_replace :: (using,except(flags, Flags) win: *Window, limit := -1, $is_after_checkpoint := false) -> bool {
 	is_lower :: (ch: u8) -> bool {
 		return #char "a" <= ch && ch <= "z";
 	}
@@ -324,16 +348,36 @@ _do_search_replace :: (using,except(flags, Flags) win: *Window) {
 	assert(status == .SEARCH_REPLACE);
 	if !can_replace(search_regex, replace_string) {
 		edit_error("Can't search replace");
-		return;
+		return false;
 	}
 	maybe_update_search_matches(win);
 	using buffer.search_matches;
 	edit_alert("Replacing %", matches.count);
-	// need to iterate them just right !
-	for < array_copy(matches,, allocator=temp) {
-		ok, searched, replaced := _match_search_replace(win, it, replace_string);
-		if !ok
-			return;
+	// Match positions are in increasing position
+	x_offset := 0;
+	last_y := 0;
+	#if is_after_checkpoint {
+		new_matches: [..]Match;
+		defer {
+			match_time = context.edit.time;
+			array_reset(*matches);
+			matches = new_matches;
+		}
+	}
+	here_matches: []Match = matches;
+	if limit >= 0
+		here_matches.count = min(here_matches.count, limit);
+	for * array_copy(here_matches,, allocator=temp) {
+		if it.position.y != last_y {
+			x_offset = 0;
+			last_y = it.position.y;
+		}
+		it.position.x += x_offset;
+		ok, searched, replaced := _match_search_replace(win, it.*, replace_string);
+		if !ok {
+			edit_alert("Can't search replace (2)");
+			return false;
+		}
 		if flags & .SPECIAL_CASE_SEARCH_REPLACE && searched.count > 0 && replaced.count > 0 {
 			if is_lower(searched[0]) {
 				to_lower_in_place(replaced);
@@ -348,20 +392,12 @@ _do_search_replace :: (using,except(flags, Flags) win: *Window) {
 		erase_chars(win, it.position, it.count);
 		// assumes ok string
 		_write_normal_string(win, it.position, replaced);
+		x_offset += replaced.count - searched.count;
+		#if is_after_checkpoint {
+			array_add(*new_matches, it.*);
+			peek_pointer(new_matches).count = replaced.count;
+		}
 	}
-}
-
-maybe_update_search_matches :: (win: *Window, force_update := false) -> bool {
-	string_commands_ensure_up_to_date(*context.search);
-	buf := win.buffer;
-	if buf.flags & .NO_SEARCH
-		return true;
-	should_update := force_update;
-	if buf.search_matches.match_time < max(buf.modify_time, context.edit.search_state.compile_time) {
-		should_update = true;
-	}
-	if should_update
-		return _update_search_matches(win);
 	return true;
 }
 
@@ -377,10 +413,25 @@ _match_search_replace :: (using,except(flags, Flags) win: *Window, m: Search_Mat
 	// uses global search regex !
 	ok, new_str := search_replace(context.edit.search_state.search_regex, s, replace,, allocator=temp);
 	if !ok {
-		edit_error("Failed search replace (2)");
+		edit_error("Failed search replace (2) % %", m, replace);
+		log_stack_trace(context.stack_trace);
 		return false, "", "";
 	}
 	return true, s, new_str;
+}
+
+maybe_update_search_matches :: (win: *Window, force_update := false) -> bool {
+	string_commands_ensure_up_to_date(*context.search);
+	buf := win.buffer;
+	if buf.flags & .NO_SEARCH
+		return true;
+	should_update := force_update;
+	if buf.search_matches.match_time < max(buf.modify_time, context.edit.search_state.compile_time) {
+		should_update = true;
+	}
+	if should_update
+		return _update_search_matches(win);
+	return true;
 }
 
 // returns true if match was *valid*

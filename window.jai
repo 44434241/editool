@@ -127,6 +127,11 @@ Window :: struct {
 		V :: VERTICAL;
 		H :: HORIZONTAL;
 	}
+	Container_Mode_Bits :: enum_flags {
+		VERTICAL :: (1 << Container_Mode.VERTICAL);
+		HORIZONTAL :: (1 << Container_Mode.HORIZONTAL);
+		TABBED :: (1 << Container_Mode.TABBED);
+	}
 	container_mode: Container_Mode = .NONE;
 	children: [..]*Window;
 	active_child: int = 0; // maybe should be -1 by default?
@@ -140,7 +145,6 @@ Window :: struct {
 	cursor_mark_index: int = -1;
 	cursor_marks: [..]Mark; // cursor undo/redo !
 	_in_cursor_op: bool; // trying to undo or redo
-	user_title: string;
 	_is_being_destroyed: bool = false;
 	// callbacks ... should be careful
 	// 
@@ -154,6 +158,7 @@ Window :: struct {
 	user_data: *void;
 	ref_count: int; // hold/release
 	//real_size_y: int = -1; // only valid for buffer windows
+	commands: [..]Command;
 }
 
 // not used as a constant everywhere
@@ -351,7 +356,7 @@ _draw_window :: (using win: *Window) {
 		if win.flags & .BUFFER_STATUS_LINE {
 			// draw buffer status line at `buffer_status_line_position`
 			using,except(lines) win.buffer;
-			fn := get_window_title(win,, allocator=temp);
+			fn := get_title(win,, allocator=temp);
 			file_info := tprint(" %:%:%  FILE FLAGS: %, BUFFER CAPS: %", fn, cursor.y, cursor.x, file_flags, win.buffer.caps);
 			if win.user_message != "" {
 				file_info = tprint("% | %\n", file_info, win.user_message);
@@ -375,6 +380,9 @@ _draw_window :: (using win: *Window) {
 		mode_s := tprint("%", context.edit.mode);
 		if context.edit.mode == .COMMAND {
 			mode_s = tprint("% '%'", mode_s, keybind_to_string(context.command_state.all_chars,, allocator=temp));
+		}
+		if context.edit.mode == .ASK {
+			mode_s = tprint("% I AM ASKING: '%'", mode_s, context.ask.request);
 		}
 		{
 			exec_string := get_exec_info_for_status_bar();
@@ -405,19 +413,19 @@ _draw_window :: (using win: *Window) {
 		//wmove(nwindow, 0, 0);
 		for children {
 			if it_index == win.active_child {
-				wattron(nwindow, COLOR_PAIR(color_fg_bg(2, 7)));
+				wattron(nwindow, COLOR_PAIR(color_fg_bg(2, -1)));
 				wattron(nwindow, A_BOLD);
 			} else {
 				wattron(nwindow, COLOR_PAIR(color_fg_bg(0, -1)));
 				wattron(nwindow, A_UNDERLINE);
 			}
-			title := tprint(" % ", get_window_title(it,, allocator=temp));
+			title := tprint(" % ", get_title(it,, allocator=temp));
 			waddnstr(nwindow, title.data, xx title.count);
 			count += title.count;
 			wattrset(nwindow, 0);
 		}
 		wattrset(nwindow, 0);
-		wattron(nwindow, COLOR_PAIR(color_fg_bg(0, 7)));
+		wattron(nwindow, COLOR_PAIR(color_fg_bg(0, -1)));
 		wattron(nwindow, A_STANDOUT);
 		for count..size.x-1 {
 			waddch(nwindow, #char " ");
@@ -437,6 +445,7 @@ create_container_window :: (parent: *Window, nwindow: *WINDOW = null, flags: Win
 	}
 	win := New(Window);
 	set_allocators(*win.pool);
+	win.commands.allocator = allocator_of(*win.pool);
 	win.id = next_window_id();
 	win.is_hidden = is_hidden;
 	win.flags = flags;
@@ -498,6 +507,7 @@ create_buffer_window :: (parent: *Window, buf: *Buffer, flags: Window.Flags = .N
 	}
 	win := New(Window);
 	set_allocators(*win.pool);
+	win.commands.allocator = allocator_of(*win.pool);
 	win.id = next_window_id();
 	array_add(*context.edit.windows, win);
 	win.is_hidden = is_hidden;
@@ -571,14 +581,16 @@ destroy_window :: (win: *Window, force := false) {
 		array_add(*context.edit.windows_to_force_destroy, win);
 }
 
-hold :: (win: *Window) {
-	win.ref_count += 1;
+hold :: (thing: *$T/.[Window, Buffer]) {
+	log("holding %", get_title(thing));
+	log_stack_trace(context.stack_trace);
+	thing.ref_count += 1;
 }
 
 // not sure if i like the name "release", since it usually means memory..
-release :: (win: *Window) {
-	assert(win.ref_count > 0);
-	win.ref_count -= 1;
+release :: (thing: *$T/.[Window, Buffer]) {
+	assert(thing.ref_count > 0);
+	thing.ref_count -= 1;
 }
 
 can_destroy_window :: (win: *Window, force: bool = false, even_if_only_child := false) -> bool, string {
@@ -651,9 +663,6 @@ _destroy_window :: (win: *Window, force: bool = false, even_only_child := false)
 		assert(ok);
 		// doesn't have to be ordered remove, i think
 		array_ordered_remove_by_index(*win.buffer.windows, idx);
-		if win.buffer.flags & .TEMP != 0 && win.buffer.windows.count == 0 {
-			destroy_buffer(win.buffer);
-		}
 	}
 	parent := win.parent;
 	if should_unselect {
@@ -902,7 +911,7 @@ _set_floating :: (win: *Window, flag: bool, pos: Floating_Position, border := tr
 // This assumes that current container/buffer windows are invalid !
 // Maybe in the future there should be some un_unselect callback?
 select_window :: (win: *Window) {
-	reset_edit_mode();
+	//reset_edit_mode(); // actually let's not do this
 	// win.parent might be null !!
 	context.container_window = ifx win.kind == .CONTAINER then win else win.parent;
 	context.buffer_window = _active_buffer_of(win);
@@ -930,9 +939,6 @@ change_buffer :: (win: *Window, new_buf: *Buffer) {
 		assert(ok);
 		// doesn't have to be ordered remove, i think
 		array_ordered_remove_by_index(*win.buffer.windows, idx);
-		if (win.buffer.flags & .TEMP != 0) && win.buffer.windows.count == 0 {
-			destroy_buffer(win.buffer);
-		}
 	}
 	win.buffer = new_buf;
 	array_add(*new_buf.windows, win);
@@ -1047,39 +1053,43 @@ get_window :: (kind: Window.Kind, $not_floating := false, not_special := true, $
 
 /// WINDOWING HELPERS
 
+get_title :: (using buf: *Buffer) -> string {
+	if user_title
+		return user_title;
+	if kind == {
+		case .FILE;
+			s := ifx filename else "[EMPTY]";
+			
+			if filename {
+				pwd := get_working_directory(,,allocator = temp);
+				if starts_with(s, pwd) {
+					s = advance(s, pwd.count);
+					if s.count && s[0] == #char "/"
+						s = advance(s, 1);
+				}
+			}
+			if filename && is_dirty(buf)
+				s = tprint("*%", s);
+			return s;
+		case .CUSTOM;
+			return "[custom]";
+		case;
+			return "<UNKNOWN BUFFER>";
+	}
+}
+
 // should be used with temp alloc?
 // also, maybe should be set instead of queried
-get_window_title :: (using win: *Window) -> string {
-	if win.user_title
-		return win.user_title;
+get_title :: (using win: *Window) -> string {
 	if win.kind == {
 		case .BUFFER;
-			if buffer.kind == {
-				case .FILE;
-					s := ifx buffer.filename else "[EMPTY]";
-					
-					if buffer.filename {
-						pwd := get_working_directory(,,allocator = temp);
-						if starts_with(s, pwd) {
-							s = advance(s, pwd.count);
-							if s.count && s[0] == #char "/"
-								s = advance(s, 1);
-						}
-					}
-					if buffer.filename && is_dirty(buffer)
-						s = tprint("% [+]", s);
-					return s;
-				case .CUSTOM;
-					return "[custom]";
-				case;
-					return "<UNKNOWN BUFFER>";
-			}
+			return get_title(buffer);
 		case .CONTAINER;
 			if win.children.count == 0
 				return "<empty container>";
 			if win.children.count == 1
-				return get_window_title(win.children[win.active_child]);
-			return tprint("[%] %", win.children.count, get_window_title(win.children[win.active_child]));
+				return get_title(win.children[win.active_child]);
+			return tprint("[%] %", win.children.count, get_title(win.children[win.active_child]));
 		case;
 			return "<UNKNOWN WINDOW>";
 	}

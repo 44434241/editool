@@ -1,12 +1,18 @@
 
 
+// HMM
+// There should this kind of logic here:
+// When trying to "start" commands, we *hold* any window but ours, even if it's buffer is the same.
+// But, when continuing inputting in the window, we hold any window but that window or ours
+// (except for cases where it's not possible to find any other window. I suppose then using our own is fine, but there should be some checks for that)
+
 // Not sure about the naming..
 // String commands are something that:
 // - commands are written in their own buffer/window
 // - have history
 // Right now, it's only search and exec
 String_Command_State :: struct {
-	saved_window: *Window = null; // held
+	held_window: *Window = null; // held
 	buffer: *Buffer;
 	window: *Window;
 	// .update must be called after chars get changed, since there might be some string views referencing it..
@@ -14,20 +20,17 @@ String_Command_State :: struct {
 	#overlay(chars) as_string: string;
 	// callbacks:
 	// Gonna pass state, but search/exec won't use them...
-	execute: #type (*String_Command_State) -> ();
-	update: #type (*String_Command_State) -> (); // update is called when chars were changed, in any way
-	cancel: #type (*String_Command_State) -> ();
+	execute: #type (*String_Command_State, *Window) -> ();
+	update: #type (*String_Command_State, *Window) -> (); // update is called when chars were changed, in any way
+	cancel: #type (*String_Command_State, *Window) -> ();
 }
 
 string_commands_start :: (state: *String_Command_State, start_text: string) {
-	using state;
+	using,except(window) state;
+	//window := ifx context.buffer_window.buffer == buffer then context.buffer_window else state.window;
+	window := state.window;
 	//
-	if saved_window {
-		release(saved_window);
-		saved_window = null;
-	}
-	saved_window = context.buffer_window;
-	hold(saved_window);
+	_ensure_window_held(state);
 	// IT CRASHES SOMEWHERE HERE??? is start_text referencing something that gets changed?
 	// Create new line if needed
 	if window.lines[window.lines.count-1].count != 0 {
@@ -59,7 +62,8 @@ string_commands_start :: (state: *String_Command_State, start_text: string) {
 
 string_commands_execute :: (state: *String_Command_State) {
 	string_commands_ensure_up_to_date(state);
-	using state;
+	using,except(window) state;
+	window := ifx context.buffer_window.buffer == buffer then context.buffer_window else state.window;
 	if window.cursor.y + 1 != window.lines.count {
 		// move last executed line to the front
 		line: *Line = *window.lines[window.lines.count-1];
@@ -95,21 +99,41 @@ string_commands_execute :: (state: *String_Command_State) {
 			}, even_if_no_caps = true, no_callback = true);
 		}
 	}
-	if saved_window {
-		select_window(saved_window);
-		release(saved_window);
-		saved_window = null;
-	} else {
-		// this only happens you get into some nonsense window-jumping
-		select_normal_window();
-	}
+	_ensure_window_held(state);
+	win := state.held_window;
+	_ensure_window_released(state);
+	select_window(win);
 	change_edit_mode(.COMMAND);
 	if state.execute
-		state.execute(state);
+		state.execute(state, win);
+}
+
+_ensure_window_held :: (state: *String_Command_State) {
+	if state.held_window == null {
+		state.held_window = context.buffer_window;
+		if state.held_window.buffer == state.buffer {
+			// we wanna hold some other window, but the search window is selected...
+			// so let's override that with some other random window!
+			if state.held_window.is_floating
+				state.held_window = get_window(.BUFFER, not_floating = true);
+		}
+		hold(state.held_window);
+	}
+}
+
+_ensure_window_released :: (state: *String_Command_State) {
+	if state.held_window != null {
+		release(state.held_window);
+		state.held_window = null;
+	}
 }
 
 string_commands_cancel :: (state: *String_Command_State) {
-	using state;
+	using,except(window) state;
+	window := ifx context.buffer_window.buffer == buffer then context.buffer_window else state.window;
+	if window.cursor.y + 1 != window.lines.count {
+		move_cursor_y(window, window.lines.count - 1);
+	}
 	if window.cursor.y + 1 == window.lines.count {
 		// *clear* last line! (it's fine if it exists as empty, i think)
 		y := window.cursor.y;
@@ -121,27 +145,25 @@ string_commands_cancel :: (state: *String_Command_State) {
 			}, even_if_no_caps = true, no_callback = true);
 		}
 	}
-	if saved_window {
-		select_window(saved_window);
-		release(saved_window);
-		saved_window = null;
-	} else {
-		// this only happens you get into some nonsense window-jumping
-		select_normal_window();
-	}
+	_ensure_window_held(state);
+	win := state.held_window;
+	_ensure_window_released(state);
+	select_window(win);
 	change_edit_mode(.COMMAND);
 	if state.cancel
-		state.cancel(state);
+		state.cancel(state, win);
 }
 
 string_commands_ensure_up_to_date :: (state: *String_Command_State) {
-	using state;
+	using,except(window) state;
+	window := ifx context.buffer_window.buffer == buffer then context.buffer_window else state.window;
+	win := ifx state.held_window else (ifx context.buffer_window.buffer != buffer then context.buffer_window else get_window(.BUFFER, not_floating = true));
 	s := window.lines[window.cursor.y].as_string;
 	if s != state.as_string {
 		array_reset(*state.chars);
 		array_adds(*state.chars, s);
 		if state.update
-			state.update(state);
+			state.update(state, win);
 	}
 }
 
@@ -182,7 +204,9 @@ string_commands_init :: (state: *String_Command_State, title: string) {
 		keybind = "\n",
 		mode = .INSERT | .COMMAND,
 		proc = (in: Command_In) -> Command_Res {
-			state := context.buffer_window.buffer.user_data.(*String_Command_State);
+			state := in.window.buffer.user_data.(*String_Command_State);
+			if !state
+				return command_error("Not the right buffer?");
 			string_commands_execute(state);
 			return .{};
 		},
@@ -199,7 +223,7 @@ string_commands_init :: (state: *String_Command_State, title: string) {
 	window = create_buffer_window(context.edit.second_root, buffer,
 			select = false, is_hidden = false);
 	add_flags(window, .BUFFER_LINE_NO);
-	window.user_title = title;
+	buffer.user_title = title;
 	//
 	buffer.user_data = state;
 	window.user_data = state;

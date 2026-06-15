@@ -523,7 +523,7 @@ command_move_relative_window :: (in: Command_In, step: int, mode: Window.Contain
 		return command_error("Nowhere to move");
 	current := find_relative_window(other, -step, mode);
 	assert(current != null, "oops");
-	edit_alert("Swapping current '%' and other '%'", get_window_title(current), get_window_title(other));
+	edit_alert("Swapping current '%' and other '%'", get_title(current), get_title(other));
 	swap_window_locations(other, current);
 	select_window(current);
 	return .{};
@@ -688,9 +688,10 @@ add_all_commands :: () {
 			using context.edit;
 			log("Root window has % children\n", root.children.count);
 			log("Window counts: %, buffer count: %, floating count: %\n", windows.count, buffers.count, floating_windows.count);
-			log("Windows: root: %, container: %, buffer: % ('%'), from in: %", root, container_window, buffer_window, buffer_window.user_title, in.window);
+			log("Windows: root: %, container: %, buffer: % ('%'), from in: %", root, container_window, buffer_window, buffer_window.buffer.user_title, in.window);
 			log("window id: %, buffer id: %", context.buffer_window.id, context.buffer_window.buffer.id);
 			log("Current dot: %\n", keybind_to_string(context.edit.current_dot_command));
+			log("Search held window: %\n", context.search.held_window);
 			log("DUMPING BUFFERS:");
 			for buffers {
 				log("%: flags: % windows: %", it_index, it.flags, it.windows);
@@ -749,6 +750,23 @@ add_all_commands :: () {
 		keybind = .[ KEY_ASUP ],
 		mode = .INSERT | .COMMAND,
 		proc = #bake_arguments command_move_relative_window(step = -1, mode = .TABBED),
+	);
+	// these don't respect number
+	add_global_command(
+		keybind = .[ KEY_DC ],
+		mode = .INSERT | .COMMAND,
+		proc = (in: Command_In) -> Command_Res {
+			delete_at_x_offset(in.window, 0);
+			return .{};
+		},
+	);
+	add_global_command(
+		keybind = .[ KEY_BACKSPACE ],
+		mode = .INSERT | .COMMAND,
+		proc = (in: Command_In) -> Command_Res {
+			delete_at_x_offset(in.window, -1);
+			return .{};
+		},
 	);
 	add_global_command(
 		keybind = .[ 6 ], // ctrl + f

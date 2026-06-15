@@ -5,8 +5,8 @@
 // ...
 // 
 // OTHER TODO: (i need a list for this) pwn library for jai?
-// Should i?
 // - multiple clipboards ? idk
+// ^ should i?
 //
 // - multiline searching?
 // - directories (and a buffer thing for renaming directories)
@@ -14,7 +14,6 @@
 // - breaks clipboard image, when open ...
 // - here string syntax (need multiline shit)
 // - hook for moving cursor in window (or could have a last time for cursor change, could be cleaner)
-// - MAKE LONG LINES WORK <- real_y thing is not correct ... 
 //
 // Things for ff (mostly for debugging idk)
 // - buffers/windows
@@ -25,12 +24,10 @@
 // - should i rename command_delete* -> command_erase* ?
 //
 // Thinking: user confirmations? <- for search/replace && directory files
-// - don't use confirmations use virtual text next to what will change (for directory renames)
 // - callbacks? (confirm mode? that would mean that no nonsense must happen during draw)
 // - freezee and just wait...
 //
 //
-// Reduce memory thing: Char_Whatever in line could be 4 times smaller
 
 Keybind :: struct {
 	chars: []s32;
@@ -87,12 +84,14 @@ Edit_Mode :: enum int {
 	NONE :: 0;
 	INSERT;
 	COMMAND;
+	ASK;
 	NOP; // different to none
 }
 
 Edit_Mode_Bits :: enum_flags {
 	INSERT :: 1 << Edit_Mode.INSERT;
 	COMMAND :: 1 << Edit_Mode.COMMAND;
+	ASK :: 1 << Edit_Mode.ASK;
 	// don't have one for .NOP !
 	NONE :: 0;
 }
@@ -146,6 +145,7 @@ Editool :: struct {
 	//
 	x11_window: X11.Window;
 	syntaxes: [..]*Syntax;
+	ask: Ask_State;
 }
 
 edit_get_os_clipboard :: () -> string {
@@ -172,7 +172,7 @@ edit_alert :: (fmt: string, args: .. Any, is_internal := false) {
 } @PrintLike
 
 #add_context edit: Editool;
-#add_context using,only(command_state, container_window, buffer_window, search, exec) edit;
+#add_context using,only(command_state, container_window, buffer_window, search, exec, ask) edit;
 
 insert_tty_input :: (chars: $T/.[ []s32, string ]) {
 	for chars
@@ -199,7 +199,10 @@ change_edit_mode :: (mode: Edit_Mode) {
 _change_edit_mode :: (mode: Edit_Mode, force: bool) {
 	if !force && context.edit.mode == mode
 		return;
+	edit_alert("changing to mode: %", mode);
 	// reset
+	if context.edit.mode == .ASK
+		exit_ask_mode();
 	if context.edit.mode == .COMMAND
 		exit_command_mode();
 	if context.buffer_window != null {
@@ -218,6 +221,8 @@ _change_edit_mode :: (mode: Edit_Mode, force: bool) {
 	// start
 	if context.edit.mode == .COMMAND
 		enter_command_mode();
+	//if context.edit.mode == .ASK
+		//enter_confirm_mode();
 	if context.buffer_window
 		normalize_cursor(context.buffer_window, with_scroll = false);
 }
@@ -304,6 +309,11 @@ get_current_valid_commands :: (mode: Edit_Mode = .NONE) -> []*Command {
 	ret: [..]*Command;
 	ret.allocator = temp;
 	if context.buffer_window != null {
+		for * context.buffer_window.commands {
+			if it.mode & mode_bits {
+				array_add(*ret, it);
+			}
+		}
 		for * context.buffer_window.buffer.commands {
 			if it.mode & mode_bits {
 				array_add(*ret, it);
@@ -320,7 +330,7 @@ get_current_valid_commands :: (mode: Edit_Mode = .NONE) -> []*Command {
 
 handle_insert_char :: (ch: s32) {
 	win := context.buffer_window;
-	for get_current_valid_commands() {
+	for get_current_valid_commands(.INSERT) {
 		//log("testing % (%)", s32.[ ch ], it.keybind);
 		if keybind_matches(it.keybind, .[ch]) {
 			// calling bad commands here might mess up !!
@@ -361,6 +371,8 @@ handle_char :: (ch: s32) {
 		if ch == {
 			case KEY_RESIZE;
 				refresh_window_size(context.edit.root, force = true);
+				for context.edit.floating_windows
+					refresh_window_size(it, force = true);
 				wclear(stdscr);
 				return;
 		}
@@ -368,6 +380,7 @@ handle_char :: (ch: s32) {
 				(context.edit.mode == .INSERT && context.edit.next_dot_command.count > 0) {
 			array_add(*context.edit.next_dot_command, ch);
 		}
+		/*
 		// special case rn for these!!
 		if context.edit.mode == .INSERT || context.edit.mode == .COMMAND {
 			if ch == {
@@ -380,12 +393,15 @@ handle_char :: (ch: s32) {
 					return;
 			}
 		}
+		*/
 	}
 	{
 		was_handled := true;
 		if context.edit.mode == {
 			case .NOP;
 				// pass
+			case .ASK;
+				handle_ask_char(ch);
 			case .INSERT;
 				handle_insert_char(ch);
 			case .COMMAND;
@@ -403,8 +419,9 @@ handle_char :: (ch: s32) {
 // these 3 add_* are in main instead of their files...
 
 // still dont get colors, but this is stable for now (BUT :colors IS STILL GLICHING)
-COLOR_BG_LAST :: 8; // some nonsense happens when bg color > 8
-COLOR_FG_LAST :: 21;
+// alright, this looks ok.. 6 + 1 bg colors
+COLOR_BG_LAST :: 6; // some nonsense happens when bg color > 8
+COLOR_FG_LAST :: 30;
 COLOR_BG_COUNT :: COLOR_BG_LAST + 2;
 COLOR_FG_COUNT :: COLOR_FG_LAST + 2;
 
@@ -415,12 +432,12 @@ color_fg_bg :: (fg: int, bg: int) -> (pair: s32) {
 	assert(-1 <= bg);
 	assert(fg <= COLOR_FG_LAST, "%", fg);
 	assert(bg <= COLOR_BG_LAST, "%", bg);
-	idx := (fg + 1) + (bg + 1) * (COLOR_FG_LAST+2);
+	idx := (fg + 1) + (bg + 1) * (COLOR_FG_COUNT);
 	return xx idx;
 }
 
 uncolor_fg_bg :: (col: s32) -> (fg: s8, bg: s8) {
-	fg, bg := col % (COLOR_FG_LAST+2) - 1, col / (COLOR_FG_LAST+2) - 1;
+	fg, bg := col % (COLOR_FG_COUNT) - 1, col / (COLOR_FG_COUNT) - 1;
 	assert(-1 <= fg);
 	assert(-1 <= bg);
 	assert(fg <= COLOR_FG_LAST);
@@ -472,11 +489,14 @@ editool_init :: () {
 	}
 	start_color();
 	use_default_colors(); // use terminals colors..
+	log("COLOR PAIRS: %", COLOR_PAIRS);
 	#if 1 {
-		for bg: -1..COLOR_BG_LAST {
 			for fg: -1..COLOR_FG_LAST {
+		for bg: -1..COLOR_BG_LAST {
 				idx := color_fg_bg(fg, bg);
-				//fg2, bg2 := uncolor_fg_bg(idx);
+				fg2, bg2 := uncolor_fg_bg(idx);
+				assert(fg2 == fg);
+				assert(bg2 == bg);
 				//log_error("init color % (%, %) (% %)", idx, fg, bg, fg2, bg2);
 				ret := init_pair(xx idx, xx fg, xx bg);
 				if ret == ERR {
@@ -555,6 +575,7 @@ main :: () {
 			windows_to_force_destroy := edit.windows_to_force_destroy;
 			edit.windows_to_destroy = default_of([..]*Window);
 			edit.windows_to_force_destroy = default_of([..]*Window);
+			// CRASH: when destroying a window and then buffer, something in buffers pool reset() fails (null pointer)
 			for windows_to_destroy {
 				_destroy_window(it);
 			}
@@ -563,6 +584,20 @@ main :: () {
 			}
 			array_reset(*windows_to_destroy);
 			array_reset(*windows_to_force_destroy);
+			{
+				buffers_to_destroy: [..]BufId;
+				buffers_to_destroy.allocator = temp;
+				for context.edit.buffers {
+					if can_destroy_buffer(it)
+						array_add(*buffers_to_destroy, it.id);
+				}
+				for buffers_to_destroy {
+					buf := find_buffer(it);
+					if buf {
+						destroy_buffer(buf);
+					}
+				}
+			}
 		}
 		ch: s32 = ---;
 		if context.edit.added_chars.count == 0 {
@@ -579,10 +614,12 @@ main :: () {
 				free(it);
 			array_reset(*context.edit.alerts);
 			//refresh();
-			if edit.mode == .INSERT
-				print("\x1b[6 q"); // thin
-			else
-				print("\x1b[2 q"); // normal
+			#if 1 {
+				if edit.mode == .INSERT
+					print("\x1b[6 q"); // thin
+				else
+					print("\x1b[2 q"); // normal
+			}
 			while true {
 				update_window_events();
 				ch = getch();
@@ -619,6 +656,7 @@ main :: () {
 #load "exec.jai";
 #load "search.jai";
 #load "fzf.jai";
+#load "ask.jai";
 #load "string_commands.jai";
 
 #import "Basic";

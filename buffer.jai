@@ -10,7 +10,7 @@ Line :: struct {
 	chars: [..]u8;
 	#overlay(chars.count) count: int;
 	#overlay(chars) as_string: string;
-	CONST_MOD_COUNT :: 128; // looks like the best for memory
+	CONST_MOD_COUNT :: 128 + 64; // looks like the best for memory
 	//
 	mods: [CONST_MOD_COUNT]Char_Mod = ---; // A LOT !
 	user_mods: [CONST_MOD_COUNT]Char_Mod = ---;
@@ -119,7 +119,8 @@ Buffer :: struct {
 	}
 	Flags :: enum_flags {
 		NO_SEARCH;
-		TEMP; // destroy when windows stop referencing it !
+		//TEMP; // destroy when windows stop referencing it !
+		PERM; // actually, an explicitly perm flag makes more sense. not implemented
 		NONE :: 0;
 	}
 	pool: Pool;
@@ -151,6 +152,8 @@ Buffer :: struct {
 	user_data: *void; // has to be explicitly
 	modify_buffer_operation: #type (*Window, *Buffer_Op) -> bool;
 	active_checkpoint: Buffer_Checkpoint = BUFFER_CHECKPOINT_NULL;
+	user_title: string;
+	ref_count: int;
 }
 
 BUFFER_CHECKPOINT_NULL : Buffer_Checkpoint : -1;
@@ -173,13 +176,13 @@ reset_checkpoint :: (win: *Window, checkpoint: Buffer_Checkpoint) {
 	active_checkpoint = BUFFER_CHECKPOINT_NULL;
 }
 
-revert_to_checkpoint :: (win: *Window) {
+restore_checkpoint :: (win: *Window) {
 	using win.buffer;
 	if active_checkpoint != CHECKPOINT_NULL
-		revert_to_checkpoint(win, active_checkpoint);
+		restore_checkpoint(win, active_checkpoint);
 }
 
-revert_to_checkpoint :: (win: *Window, checkpoint: Buffer_Checkpoint) {
+restore_checkpoint :: (win: *Window, checkpoint: Buffer_Checkpoint) {
 	using win.buffer;
 	assert(checkpoint != BUFFER_CHECKPOINT_NULL);
 	assert(checkpoint == active_checkpoint);
@@ -204,6 +207,7 @@ find_or_create_directory_buffer :: (_path: string) -> *Buffer {
 find_or_create_file_buffer :: (_filename: string, flags: Buffer.Flags = .NONE, file_flags: Buffer.File_Flags = .NONE, must_respect_flags := false) -> *Buffer {
 	assert(!must_respect_flags); // some flags might be whatever ! but not always ! in the future there will be some case
 	assert((file_flags & .READ_ONLY) == file_flags); // has no other flags
+	assert(flags == .NONE); // ...
 	filename := _filename;
 	if filename {
 		filename = normalize_path(filename,, allocator=temp);
@@ -216,8 +220,6 @@ find_or_create_file_buffer :: (_filename: string, flags: Buffer.Flags = .NONE, f
 				if it.file_flags != file_flags
 					continue;
 				// for the buffer to be temp, both the previous and this "new created" buffer must be temp
-				if !((it.flags & .TEMP) && (flags &.TEMP))
-					it.flags &= ~(.TEMP);
 				return it;
 			}
 		}
@@ -238,8 +240,23 @@ find_buffer :: (id: BufId) -> *Buffer {
 	return null;
 }
 
+can_destroy_buffer :: (buf: *Buffer) -> bool {
+	if buf.ref_count > 0
+		return false;
+	if buf.windows.count > 0
+		return false;
+	if buf.flags & .PERM
+		return false;
+	if buf.kind == .FILE && is_dirty(buf)
+		return false;
+	return true;
+}
+
 destroy_buffer :: (buffer: *Buffer) {
-	assert(buffer.windows.count == 0);
+	if !can_destroy_buffer(buffer) {
+		edit_error("ruh roh, can't destroy buffer..");
+		return;
+	}
 	ok := array_ordered_remove_by_value(*context.edit.buffers, buffer);
 	assert(ok);
 	release(*buffer.pool);
@@ -486,7 +503,7 @@ execute_buffer_operation :: (win: *Window, _op: Buffer_Op, even_if_no_caps := fa
 		} else if op.kind == .INSERT_LINES {
 			lines: [..]string;
 			lines.allocator = allocator_of(win.buffer);
-			array_reserve(*lines, op.lines.count);
+			//array_reserve(*lines, op.lines.count);
 			for op.lines {
 				log("looking for error in op lines (%/%)", it_index, op.lines.count);
 				array_add(*lines, copy_string(it));
@@ -544,9 +561,10 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 	}
 	using,only(cursor) win;
 	allocator := Allocator.{pool_allocator_proc, *win.buffer.pool};
-	//if even_if_no_caps
-		//flags &= ~.FILL_FOR_REVERSE;
+	if even_if_no_caps
+		flags &= ~.FILL_FOR_REVERSE;
 	if flags & .FILL_FOR_REVERSE {
+		// only place where cursor is used..
 		op.begin_cursor_position = cursor.position;
 		op.begin_mode = context.edit.mode;
 		op.begin_time = context.edit.time;
@@ -621,7 +639,7 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 	shift_y :: (y: int, count: int) #expand {
 		shift_y(.{0, y}, count);
 	}
-	shift_y :: (pos: Position, count: int) #expand {
+	shift_y :: (pos: Position, count: int, dont_update_from_virtual_x := false) #expand {
 		if buf.caps & .MOVE_Y == 0
 			return;
 		for * buf.marks {
@@ -631,7 +649,9 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 			moved_line_y: bool = false;
 			_shift_y(*it.cursor.position, pos, count, *moved_line_y);
 			if moved_line_y {
-				update_from_cursor_virtual_x(it);
+				if !dont_update_from_virtual_x {
+					update_from_cursor_virtual_x(it);
+				}
 			}
 		}
 	}
@@ -683,7 +703,7 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 			array_add(*new_line.chars, .. advance(curr_line.chars, op.x));
 			curr_line.chars.count = op.x;
 			// this messes up but whatever rn
-			shift_y(.{op.x, op.y}, 1);
+			shift_y(.{op.x, op.y}, 1, dont_update_from_virtual_x = false);
 			shift_x(.{0, op.y+1}, -curr_line.count);
 			new_line.dirty_flags |= .ALL;
 			curr_line.dirty_flags |= .ALL;
@@ -699,7 +719,7 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 			array_add(*line.chars, .. next_line.chars);
 			array_ordered_remove_by_index(*lines, op.y+1); 
 			shift_x(.{0, op.y+1 }, line_len);
-			shift_y(op.y, -1);
+			shift_y(.{0, op.y}, -1, dont_update_from_virtual_x = true);
 			line.dirty_flags |= .ALL;
 		case .INSERT_LINES;
 			assert(op.lines.count == op.count);
@@ -734,10 +754,7 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 				shift_y_val -= 1;
 			shift_y(shift_y_val, -shift_count);
 			// TODO: this should be handled differently !!
-			if lines.count == 0 {
-				assert(false, "you shouldve handled this !!!");
-				array_add(*lines);
-			}
+			assert(lines.count != 0, "you shouldve handled this !!!");
 		case;
 			log("unsupported op: %\n", op.kind);
 	}
@@ -847,6 +864,7 @@ apply_syntax_mods :: (line: *Line, syntax: *Syntax, line_no_hint := -1, first_x 
 _refresh_buffer_modifiers :: (win: *Window, using buf: *Buffer, ly: int, ry: int) {
 	time_this("Refresh buffer modifiers");
 	lines_to_refresh := []Line.{ data = lines.data + ly, count = ry - ly };
+	maybe_update_search_matches(win); // makes sure search replace is ok
 	for * lines_to_refresh {
 		true_line_no := it_index + ly;
 		//assert (it.count <= mods.count, "%", it.count);

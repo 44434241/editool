@@ -545,16 +545,6 @@ add_all_motions :: () {
 	);
 	*/
 	add_motion(
-		keybind = "Z",
-		proc = motion_scroll_center,
-		flags = .SCROLL_ONLY,
-	);
-	add_motion(
-		keybind = "zz",
-		proc = motion_scroll_center,
-		flags = .SCROLL_ONLY,
-	);
-	add_motion(
 		keybind = "w",
 		flags = .X_ONLY,
 		proc = #bake_arguments(motion_word(step = 1, flags = .NONE)),
