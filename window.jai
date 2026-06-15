@@ -184,9 +184,7 @@ recalculate_window_real_size_y :: (using win: *Window) {
 // this is this only drawing proc allowed to be call rn
 draw_windows_recursive :: (win: *Window) {
 	if win.is_floating {
-		refresh_window_size(win); // uhh actually
-		//if !this_is_the_floating_call
-			//return;
+		//refresh_window_size(win); // uhh actually
 	}
 	time_this("Draw all windows", really_time = win.is_root);
 	//wclear(win.nwindow); // clear before children update?
@@ -209,19 +207,8 @@ draw_windows_recursive :: (win: *Window) {
 			// expensive to resize !!
 			{
 				//FLOATING_PADDING :: Vec2i.{ 20, 10 };
-				p := it.floating_position;
-				pos := Vec2i.{
-					_eval_anchored(p.lx, win.begin.x, win.size.x),
-					_eval_anchored(p.ly, win.begin.y, win.size.y),
-				};
-				size := Vec2i.{
-					_eval_anchored(p.rx, win.begin.x, win.size.x),
-					_eval_anchored(p.ry, win.begin.y, win.size.y),
-				};
-				size -= pos;
-				_ncurses_full_resize(it.nwindow, pos, size);
 			}
-			refresh_window_size(it); 
+			//refresh_window_size(it); 
 			draw_windows_recursive(it);
 		}
 	}
@@ -329,20 +316,16 @@ _draw_window :: (using win: *Window) {
 				info := _get_char_info(it);
 				mod: Char_Mod = ---;
 				if it_index < user_mods.count {
-					// doing goofy colors here.. whatever !!
-					if context.edit.flags & .GOOFY_COLORS {
-						user_mods[it_index].bg = xx (it_index / 1 - 1);
-					}
 					mod = user_mods[it_index];
 				} else {
-					mod = .{};
+					Initialize(*mod);
 				}
 				// matches are color 2
 				attr := as_ncurses_attribute(mod);
-				wattron(nwindow, attr);
-				if mod.replaced.count > 0 {
-					waddch(nwindow, mod.replaced[0]);
-				} else if info.replaced {
+				wattrset(nwindow, attr);
+				//if mod.replaced.count > 0 {
+					//waddch(nwindow, mod.replaced[0]);
+				if info.replaced {
 					assert(info.replaced.count == info.size);
 					waddnstr(nwindow, info.replaced.data, xx info.replaced.count);
 				} else {
@@ -425,7 +408,7 @@ _draw_window :: (using win: *Window) {
 				wattron(nwindow, COLOR_PAIR(color_fg_bg(2, 7)));
 				wattron(nwindow, A_BOLD);
 			} else {
-				wattron(nwindow, COLOR_PAIR(color_fg_bg(0, 7)));
+				wattron(nwindow, COLOR_PAIR(color_fg_bg(0, -1)));
 				wattron(nwindow, A_UNDERLINE);
 			}
 			title := tprint(" % ", get_window_title(it,, allocator=temp));
@@ -697,6 +680,21 @@ update_container_item :: (win: *Window, item: Container_Item) {
 // This is the most messy proc, unclear when it is or when it should be called...
 // But works! Just slow.
 refresh_window_size :: (using win: *Window, force := false) {
+	log("REFRESHING WINDOW SIZE");
+	if is_floating {
+		p := floating_position;
+		root := context.edit.root;
+		pos := Vec2i.{
+			_eval_anchored(p.lx, root.begin.x, root.size.x),
+			_eval_anchored(p.ly, root.begin.y, root.size.y),
+		};
+		sz := Vec2i.{
+			_eval_anchored(p.rx, root.begin.x, root.size.x),
+			_eval_anchored(p.ry, root.begin.y, root.size.y),
+		};
+		sz -= pos;
+		_ncurses_full_resize(nwindow, pos, sz);
+	}
 	force = true; // WHATEVER MANNN
 	new_nsize := Vec2i.{
 		getmaxx(nwindow),
@@ -885,6 +883,7 @@ _set_floating :: (win: *Window, flag: bool, pos: Floating_Position, border := tr
 				win.flags |= .BORDER; 
 		}
 		win.floating_position = pos;
+		refresh_window_size(win);
 	} else { // !flag
 		if win.is_floating {
 			ok := array_ordered_remove_by_value(*context.edit.floating_windows, win);

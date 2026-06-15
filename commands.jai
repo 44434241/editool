@@ -210,6 +210,7 @@ command_undo :: (in: Command_In) -> Command_Result {
 		ok1, _ := buffer_undo(win);
 		if !ok1
 			break;
+		iter_count += 1;
 		while true {
 			next_ok, next_op := peek_last_operation(win.buffer);
 			if !next_ok
@@ -221,7 +222,6 @@ command_undo :: (in: Command_In) -> Command_Result {
 				break iter;
 			prev_op = next_op;
 		}
-		iter_count += 1;
 	}
 	if iter_count == 0 {
 		return command_error("Can't undo");
@@ -239,6 +239,7 @@ command_redo :: (in: Command_In) -> Command_Result {
 		ok1, _ := buffer_redo(win);
 		if !ok1
 			break;
+		iter_count += 1;
 		while true {
 			next_ok, next_op := peek_next_operation(win.buffer);
 			if !next_ok
@@ -250,7 +251,6 @@ command_redo :: (in: Command_In) -> Command_Result {
 				break iter;
 			prev_op = next_op;
 		}
-		iter_count += 1;
 	}
 	if iter_count == 0 {
 		return command_error("Can't redo");

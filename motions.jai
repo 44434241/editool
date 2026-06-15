@@ -741,6 +741,15 @@ add_all_motions :: () {
 		keybind = "}",
 		proc = #bake_arguments motion_empty_line(step = 1),
 	);
+	add_motion( // identity motion
+		keybind = "!",
+		proc = (in: Motion_In) -> Motion_Res {
+			return .{
+				start = in.window.cursor.position,
+				end = in.window.cursor.position,
+			};
+		}
+	);
 	add_motion(
 		keybind = "m",
 		proc = motion_mark,

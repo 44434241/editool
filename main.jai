@@ -30,7 +30,7 @@
 // - freezee and just wait...
 //
 //
-//
+// Reduce memory thing: Char_Whatever in line could be 4 times smaller
 
 Keybind :: struct {
 	chars: []s32;
@@ -261,8 +261,8 @@ do_some_extra_stuff_to_the_buffer_colors :: (win: *Window) {
 			for it.position.x..min(line.count, it.position.x + it.count)-1 {
 				if it >= Line.user_mods.count
 					break;
-				line.user_mods[it].bg_color = 6;
-				line.user_mods[it].fg_color = 1;
+				line.user_mods[it].bg = 6;
+				line.user_mods[it].fg = 1;
 			}
 		}
 	}
@@ -401,21 +401,31 @@ handle_char :: (ch: s32) {
 }
 
 // these 3 add_* are in main instead of their files...
-// thats fine?
 
-// actually, counting -1 color, there is one more color
-COLOR_COUNT :: 31; // having 32 colors messes up some stuff! (tab A_STANDOUT thing)
+// still dont get colors, but this is stable for now (BUT :colors IS STILL GLICHING)
+COLOR_BG_LAST :: 8; // some nonsense happens when bg color > 8
+COLOR_FG_LAST :: 21;
+COLOR_BG_COUNT :: COLOR_BG_LAST + 2;
+COLOR_FG_COUNT :: COLOR_FG_LAST + 2;
 
 
 // returns pair index, still need to call COLOR_PAIR
 color_fg_bg :: (fg: int, bg: int) -> (pair: s32) {
-	idx := (fg + 1) + (bg + 1) * (COLOR_COUNT+1);
+	assert(-1 <= fg);
+	assert(-1 <= bg);
+	assert(fg <= COLOR_FG_LAST, "%", fg);
+	assert(bg <= COLOR_BG_LAST, "%", bg);
+	idx := (fg + 1) + (bg + 1) * (COLOR_FG_LAST+2);
 	return xx idx;
 }
 
-uncolor_fg_bg :: (col: s32) -> (fg: int, bg: int) {
-	fg, bg := col % (COLOR_COUNT+1) - 1, col / (COLOR_COUNT+1) - 1;
-	return fg, bg;
+uncolor_fg_bg :: (col: s32) -> (fg: s8, bg: s8) {
+	fg, bg := col % (COLOR_FG_LAST+2) - 1, col / (COLOR_FG_LAST+2) - 1;
+	assert(-1 <= fg);
+	assert(-1 <= bg);
+	assert(fg <= COLOR_FG_LAST);
+	assert(bg <= COLOR_BG_LAST);
+	return xx fg, xx bg;
 	//return COLOR_PAIR(xx ((fg + 1) + (bg + 1) * COLOR_COUNT));
 }
 
@@ -463,12 +473,14 @@ editool_init :: () {
 	start_color();
 	use_default_colors(); // use terminals colors..
 	#if 1 {
-		for i: -1..COLOR_COUNT-1 {
-			for j: -1..COLOR_COUNT-1 {
-				idx := color_fg_bg(i, j);
-				ret := init_pair(xx idx, xx i, xx j);
+		for bg: -1..COLOR_BG_LAST {
+			for fg: -1..COLOR_FG_LAST {
+				idx := color_fg_bg(fg, bg);
+				//fg2, bg2 := uncolor_fg_bg(idx);
+				//log_error("init color % (%, %) (% %)", idx, fg, bg, fg2, bg2);
+				ret := init_pair(xx idx, xx fg, xx bg);
 				if ret == ERR {
-					log_error("can't init color % (%, %)", idx, i, j);
+					log_error("can't init color % (%, %)", idx, fg, bg);
 					editool_deinit();
 					exit(1);
 				}

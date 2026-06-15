@@ -1,11 +1,19 @@
 
+#run {
+	//fg, bg := -1, -1;
+	//pair := color_fg_bg(31, 1);
+	//fg, bg := uncolor_fg_bg(pair);
+	//log("pair: %, fg: %, bg: %", pair, fg, bg);
+}
+
 Line :: struct {
 	chars: [..]u8;
 	#overlay(chars.count) count: int;
 	#overlay(chars) as_string: string;
+	CONST_MOD_COUNT :: 128; // looks like the best for memory
 	//
-	mods: [256]Char_Mod = ---; // A LOT !
-	user_mods: [256]Char_Mod = ---;
+	mods: [CONST_MOD_COUNT]Char_Mod = ---; // A LOT !
+	user_mods: [CONST_MOD_COUNT]Char_Mod = ---;
 	Dirty_Flags :: enum_flags {
 		MODS; 
 		USER1; // something the user sets
@@ -45,14 +53,12 @@ get_real_size :: (line: *Line) -> int {
 
 // hm...
 Char_Mod :: struct {
-	bg_color: s32 = -1;
-	#overlay(bg_color) bg: s32;
-	fg_color: s32 = -1;
-	#overlay(fg_color) fg: s32;
-	attributes: s32;
 	// there might be reasons why i'd want this as a strong..
 	// syntax real_x doesn't respect this !
-	replaced: string; // count <= 1
+	//replaced: string; // count <= 1
+	attributes: s32;
+	fg: s8 = 0;
+	bg: s8 = -1;
 }
 
 as_ncurses_attribute :: (mod: Char_Mod) -> s32 {
@@ -144,6 +150,44 @@ Buffer :: struct {
 	// extra stuff
 	user_data: *void; // has to be explicitly
 	modify_buffer_operation: #type (*Window, *Buffer_Op) -> bool;
+	active_checkpoint: Buffer_Checkpoint = BUFFER_CHECKPOINT_NULL;
+}
+
+BUFFER_CHECKPOINT_NULL : Buffer_Checkpoint : -1;
+CHECKPOINT_NULL : Buffer_Checkpoint : -1;
+
+Buffer_Checkpoint :: #type,distinct int;
+
+create_checkpoint :: (win: *Window) -> Buffer_Checkpoint {
+	using win.buffer;
+	if active_checkpoint != BUFFER_CHECKPOINT_NULL
+		return BUFFER_CHECKPOINT_NULL;
+	active_checkpoint = xx op_index;
+	return active_checkpoint;
+}
+
+reset_checkpoint :: (win: *Window, checkpoint: Buffer_Checkpoint) {
+	using win.buffer;
+	assert(checkpoint != BUFFER_CHECKPOINT_NULL);
+	assert(checkpoint == active_checkpoint);
+	active_checkpoint = BUFFER_CHECKPOINT_NULL;
+}
+
+revert_to_checkpoint :: (win: *Window) {
+	using win.buffer;
+	if active_checkpoint != CHECKPOINT_NULL
+		revert_to_checkpoint(win, active_checkpoint);
+}
+
+revert_to_checkpoint :: (win: *Window, checkpoint: Buffer_Checkpoint) {
+	using win.buffer;
+	assert(checkpoint != BUFFER_CHECKPOINT_NULL);
+	assert(checkpoint == active_checkpoint);
+	while xx checkpoint < op_index {
+		ok := buffer_undo(win);
+		assert(ok);
+	}
+	active_checkpoint = BUFFER_CHECKPOINT_NULL;
 }
 
 Directory_Buffer :: struct {
@@ -260,8 +304,10 @@ _create_buffer_from_filename :: (filename: string, flags: Buffer.Flags, file_fla
 				buf.file_flags |= .CLRF;
 			}
 		}
+		// Doing this because a line is added on buffer creation
 		if string_lines.count > 0 && peek(string_lines) == ""
 			string_lines.count -= 1;
+		array_reserve(*buf.lines, string_lines.count + 10);
 		for string_lines {
 			// Only place left where lines/chars are directly added/removed.
 			array_adds(*peek_pointer(buf.lines).chars, it);
@@ -382,8 +428,11 @@ buffer_undo :: (win: *Window) -> bool, Buffer_Op {
 		return true;
 	}
 	using buf: *Buffer = win.buffer;
-	if buf.op_index <= 0
+	if op_index <= 0
 		return false, .{};
+	if active_checkpoint != BUFFER_CHECKPOINT_NULL && xx active_checkpoint >= op_index {
+		return false, .{};
+	}
 	op := buf.ops[buf.op_index-1];
 	if op.flags & .NO_UNDO {
 		return false, op;
@@ -395,6 +444,7 @@ buffer_undo :: (win: *Window) -> bool, Buffer_Op {
 	ok := _execute_buffer_operation(win, buf, *op, .MOVE_CURSOR);
 	if ok {
 		buf.op_index -= 1;
+		assert(buf.op_index >= 0);
 	}
 	return ok, op;
 }
@@ -430,15 +480,12 @@ execute_buffer_operation :: (win: *Window, _op: Buffer_Op, even_if_no_caps := fa
 	op := _op;
 	using buf: *Buffer = win.buffer;
 	ok: bool = true;
-	if ok && buf.modify_buffer_operation && !no_callback {
-		// this doesn't have to return a bool, instead it could modify it to a nop !
-		ok = buf.modify_buffer_operation(win, *op);
-	}
 	if ok {
 		if op.kind == .INSERT_CHARS {
 			op.chars = array_copy(op.chars,, allocator);
 		} else if op.kind == .INSERT_LINES {
 			lines: [..]string;
+			lines.allocator = allocator_of(win.buffer);
 			array_reserve(*lines, op.lines.count);
 			for op.lines {
 				log("looking for error in op lines (%/%)", it_index, op.lines.count);
@@ -447,14 +494,19 @@ execute_buffer_operation :: (win: *Window, _op: Buffer_Op, even_if_no_caps := fa
 			op.lines = lines;
 		}
 	}
+	if ok && buf.modify_buffer_operation && !no_callback {
+		// this doesn't have to return a bool, instead it could modify it to a nop !
+		ok = buf.modify_buffer_operation(win, *op);
+	}
 	if ok {
 		ok = _execute_buffer_operation(win, buf, *op, .FILL_FOR_REVERSE, even_if_no_caps = even_if_no_caps,, allocator);
 	}
 	if ok {
 		assert(buf.op_index <= ops.count);
-		ops.count = buf.op_index; // @Leak
-		log("looking for error in ops");
+		log("looking for error in ops % %", buf.op_index, ops.count); // <- here
+		ops.count = buf.op_index; 
 		array_add(*ops, op);
+		log("done looking for error in ops"); // <- here
 		op_index += 1;
 		if save_op_index > ops.count
 			set_dirty(buf);
@@ -651,13 +703,18 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 			line.dirty_flags |= .ALL;
 		case .INSERT_LINES;
 			assert(op.lines.count == op.count);
+			lines_to_insert: [..]Line;
+			lines_to_insert.allocator = temp;
+			array_reserve(*lines_to_insert, op.lines.count);
 			for op.lines {
 				line: Line; // dirty flags already all !
 				line.chars.allocator = allocator_of(buf);
 				array_add(*line.chars, .. cast([]u8)it); 
-				y := op.y + it_index;
-				array_insert_at(*lines, line, y);
+				array_add(*lines_to_insert, line);
+				//y := op.y + it_index;
+				//array_insert_at(*lines, line, y);
 			}
+			array_insert_range_at(*lines, op.y, lines_to_insert);
 			shift_y(op.y, op.lines.count); // this isn't tested for non undos
 		case .ERASE_LINES;
 			assert(op.y + op.count <= lines.count);
@@ -771,8 +828,10 @@ apply_syntax_mods :: (line: *Line, syntax: *Syntax, line_no_hint := -1, first_x 
 			if idx + it < mods.count {
 				mod := *mods[idx+it];
 				mod.fg = color;
-				if replace.count > 0 {
-					mod.replaced = string.{ data = *replace[it%replace.count], count = 1 };
+				#if 0 {
+					if replace.count > 0 {
+						mod.replaced = string.{ data = *replace[it%replace.count], count = 1 };
+					}
 				}
 			}
 		}
@@ -794,7 +853,7 @@ _refresh_buffer_modifiers :: (win: *Window, using buf: *Buffer, ly: int, ry: int
 		if (it.dirty_flags & .MODS) {
 			for * it.mods {
 				it.* = .{};
-				it.fg_color = syntax.normal_color;
+				it.fg = syntax.normal_color;
 			}
 			if syntax.is_compiled
 				apply_syntax_mods(it, syntax, line_no_hint = true_line_no, first_x = 0);

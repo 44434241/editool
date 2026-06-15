@@ -130,6 +130,8 @@ string_commands_cancel :: (state: *String_Command_State) {
 		select_normal_window();
 	}
 	change_edit_mode(.COMMAND);
+	if state.cancel
+		state.cancel(state);
 }
 
 string_commands_ensure_up_to_date :: (state: *String_Command_State) {

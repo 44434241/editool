@@ -324,26 +324,30 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 			}
 			if win.cursor.y == y {
 				for * it.user_mods {
-					//it.fg_color = 1;
-					it.bg_color = 4;
-					if it.fg_color == it.bg_color {
-						it.fg_color = 7;
+					//it.fg = 1;
+					it.bg = 4;
+					if it.fg == it.bg {
+						it.fg = 7;
 					}
 					//it.attributes |= A_STANDOUT;
 				}
 			}
 			for x: item.filename_start..item.filename_start+item.filename.count-1 {
+				if x >= Line.user_mods.count
+					break;
 				if win.cursor.y != y {
-					it.user_mods[x].fg_color = 5;
+					it.user_mods[x].fg = 5;
 				} else {
-					it.user_mods[x].fg_color = 2;
+					it.user_mods[x].fg = 2;
 				}
 			}
 			for x: item.filename_start+item.filename.count..item.filename_start+item.filename.count+tprint("%", item.line_number).count {
+				if x >= Line.user_mods.count
+					break;
 				if win.cursor.y != y {
-					it.user_mods[x].fg_color = 1;
+					it.user_mods[x].fg = 1;
 				} else {
-					it.user_mods[x].fg_color = 1;
+					it.user_mods[x].fg = 1;
 				}
 			}
 			for x: item.start+prefix_count..item.end+prefix_count {
@@ -353,11 +357,11 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 					continue;
 				it.user_mods[x].attributes |= A_BOLD;
 				if y == win.cursor.y || true {
-					//it.user_mods[x].bg_color = 7;
-					//it.user_mods[x].fg_color = 1;
+					//it.user_mods[x].bg = 7;
+					//it.user_mods[x].fg = 1;
 				} else {
-					//it.user_mods[x].fg_color = 6;
-					//it.user_mods[x].bg_color = 1; // same as initial
+					//it.user_mods[x].fg = 6;
+					//it.user_mods[x].bg = 1; // same as initial
 				}
 			}
 		}
@@ -588,7 +592,8 @@ add_all_execs :: () {
 	add_exec("colors", () -> bool {
 		alphabet :: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 		#assert alphabet.count == 64;
-		#assert COLOR_COUNT == 31;
+		#assert COLOR_BG_LAST < alphabet.count;
+		#assert COLOR_FG_LAST < alphabet.count;
 		buf := create_custom_buffer(.TEMP);
 		buf.caps = .ALL;
 		win := create_buffer_window(null, buf, flags = .TEMP_FLOATING, is_hidden = true);
@@ -601,16 +606,17 @@ add_all_execs :: () {
 		set_floating(win);
 		win.floating_position.ly.value -= 10;
 		win.floating_position.ry.value += 10;
+		refresh_window_size(win);
 		win.apply_mods = (win: *Window, lines: []Line) {
 			for * lines {
 				y := it - win.lines.data;
 				for x: 0..it.count-1 {
 					mod := *it.user_mods[x];
-					mod.fg = xx (x-1);
-					mod.bg = xx (y-1);
-					if mod.bg >= COLOR_COUNT {
-						mod.bg -= (COLOR_COUNT+1);
-						swap(*mod.bg, *mod.fg);
+					mod.fg = xx ((x % (COLOR_FG_COUNT)) - 1);
+					mod.bg = xx ((y % (COLOR_BG_COUNT)) - 1);
+					if y >= COLOR_BG_COUNT {
+						mod.fg = xx ((y % (COLOR_FG_COUNT)) - 1);
+						mod.bg = xx ((x % (COLOR_BG_COUNT)) - 1);
 						mod.attributes |= A_STANDOUT;
 					}
 				}
@@ -624,6 +630,15 @@ add_all_execs :: () {
 		} else {
 			remove_flags(context.buffer_window, flags);
 		}
+		return true;
+	});
+	add_exec("checkpoint", () -> bool {
+		checkpoint := create_checkpoint(context.buffer_window);
+		return checkpoint != CHECKPOINT_NULL;
+	});
+	add_exec("checkpoint_revert", () -> bool {
+		if context.buffer_window.buffer.active_checkpoint != CHECKPOINT_NULL
+			revert_to_checkpoint(context.buffer_window, context.buffer_window.buffer.active_checkpoint);
 		return true;
 	});
 }

@@ -21,6 +21,20 @@ array_insert_at :: (array: *[..] $T, index: int) -> *T {
 	return *(array.*[index]);
 }
 
+array_insert_range_at :: (array: *[..] $T, index: int, items: []T) {
+	assert(index >= 0);
+	assert(index <= array.count);
+	array_reserve(array, array.count + items.count);
+	prev_count := array.count;
+	array.count += items.count;
+	for < index..prev_count-1 {
+		array.*[it+items.count] = array.*[it];
+	}
+	for items {
+		array.*[index+it_index] = it;
+	}
+}
+
 advance :: inline (array: []$T, amount: int) -> []T {
 	assert(0 <= amount);
 	assert(amount <= array.count);

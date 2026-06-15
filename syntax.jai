@@ -29,7 +29,7 @@ Syntax_Element :: struct {
 	COUNT :: Kind.COUNT;
 	match: string;
 	match_suffix: string; // not captured
-	color: s32 = -1; // 
+	color: s8 = -1; // 
 	replace: string; // ** this isn't a direct replace, but it keeps length ** 
 }
 
@@ -73,7 +73,7 @@ Syntax :: struct {
 	elements[DECLARATION].color = 14; // dark green (24 or 30 or 6?)
 	elements[NOTE].color = 6; // dark green (24 or 30 or 6?)
 	elements[EOL_SPACE].color = 4; // grey, same as comment
-	normal_color: s32 = 0;
+	normal_color: s8 = 0;
 	is_compiled: bool = false;
 	regex: Uniform.Regexp;
 }

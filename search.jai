@@ -77,14 +77,15 @@ editool_search_init :: () {
 		},
 	);
 	context.search.execute = _execute_search;
-	context.search.cancel = _cancel_search;
 	context.search.update = _update_search;
+	context.search.cancel = _cancel_search;
 }
 
 // callbacks from string commands
 _execute_search :: (__: *String_Command_State) {
 	using context.search;
 	if status == .SEARCH_REPLACE {
+		revert_to_checkpoint(context.buffer_window);
 		_do_search_replace(context.buffer_window);
 		maybe_update_search_matches(context.buffer_window, force_update=true);
 	} else {
@@ -92,12 +93,23 @@ _execute_search :: (__: *String_Command_State) {
 	}
 }
 
+// This thing with checkpoints should be cleaner.
+// It doesn't properly update highlighting !!
 _update_search :: (_: *String_Command_State) {
 	_recompile_search();
+	if context.search.status == .SEARCH_REPLACE {
+		// 
+		win := get_window(.BUFFER);
+		revert_to_checkpoint(win);
+		create_checkpoint(win);
+		_do_search_replace(win);
+	}
 }
 
 _cancel_search :: (_: *String_Command_State) {
 	// do nothing
+	win := get_window(.BUFFER);
+	revert_to_checkpoint(win);
 }
 
 start_search :: (start: string = "") {

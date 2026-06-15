@@ -3,3 +3,4 @@
 /compile.sh
 /editool
 /editool.ok
+sqlite3.c
