@@ -204,7 +204,7 @@ do_fzf_buffers :: (res: *Fzf_Result, search: string) {
 	//
 	for context.edit.buffers {
 		array_add(*res.items, .{
-			filename = it.filename,
+			filename = it.path,
 			line = sprint("% % %", get_title(it), it.kind, it.flags),
 			user_data = cast(*void)it.id,
 		});
@@ -212,7 +212,7 @@ do_fzf_buffers :: (res: *Fzf_Result, search: string) {
 }
 
 _default_get_buffer :: (item: Fzf_Item) -> *Buffer {
-	return get_file_buffer(item.filename);
+	return get_path_buffer(item.filename);
 }
 
 #scope_file 

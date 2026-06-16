@@ -389,7 +389,6 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 		}
 		hold(buf);
 		defer release(buf);
-		//buf := get_file_buffer(item.filename);
 		//
 		new_win: *Window = ---;
 		if select_mode == .OPEN {
@@ -505,7 +504,7 @@ add_all_execs :: () {
 			return false;
 		buf := context.buffer_window.buffer;
 		if name {
-			buf = get_file_buffer(name);
+			buf = get_path_buffer(name);
 		}
 		if !buf
 			return false;
@@ -521,7 +520,7 @@ add_all_execs :: () {
 		return true;
 	});
 	add_exec("open", (filename: string) -> bool {
-		buf := get_file_buffer(filename); // doesn't fail?
+		buf := get_path_buffer(filename); // doesn't fail?
 		if !buf
 			return false;
 		change_buffer(context.buffer_window, buf);
@@ -547,25 +546,15 @@ add_all_execs :: () {
 		destroy_window(context.buffer_window, force = true); // if it can't destroy, it will notify later?
 		return true;
 	});
-	_save_file :: () -> bool {
+	_save :: () -> bool {
 		using win := context.buffer_window;
-		if buffer.kind != .FILE {
-			edit_warn("not a file");
-			return false;
-		}
-		if buffer.file_flags & (.NO_FILE | .READ_ONLY) {
-			edit_warn("bad flags: %", buffer.file_flags);
-			return false;
-		}
-		s := buffer_as_string_for_saving(buffer,, allocator=temp);
-		edit_alert("Writing % bytes to '%'", s.count, buffer.filename);
-		ok := write_entire_file(buffer.filename, s);
-		if ok
-			clear_dirty(buffer);
+		ok, msg := save_buffer(buffer);
+		if !ok
+			edit_warn(msg);
 		return ok;
 	}
-	add_exec("save", _save_file);
-	add_exec("s", _save_file);
+	add_exec("save", _save);
+	add_exec("s", _save);
 	add_exec("size_fixed", (v: int) -> bool {
 		win := get_window(.NONE);
 		item := Container_Item.{ fixed_size = v };
@@ -589,7 +578,7 @@ add_all_execs :: () {
 			return false;
 		win := make_fzf_window((res: *Fzf_Result, s: string, data: *void) {
 			buf := data.(*Buffer);
-			do_rg(res, s, buf.filename);
+			do_rg(res, s, buf.path);
 		}, context.buffer_window.buffer, start_search = context.search.search_string);
 		return win != null;
 	}));

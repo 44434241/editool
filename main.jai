@@ -14,6 +14,10 @@
 // - breaks clipboard image, when open ...
 // - here string syntax (need multiline shit)
 // - hook for moving cursor in window (or could have a last time for cursor change, could be cleaner)
+// - maybe n/N should scroll a bit differently?
+// - scroll still not working with jumps (need to look into them)
+// - need to store buffer filename in mark?
+// - for search replace, could mark the last search differently for readability !!
 //
 // Things for ff (mostly for debugging idk)
 // - buffers/windows
@@ -455,13 +459,13 @@ editool_quit :: (force: bool = false) {
 	can_quit := true;
 	if !force {
 		for context.edit.buffers {
-			if it.kind != .FILE
+			if it.kind != .FILE && it.kind != .DIRECTORY
 				continue;
-			if it.filename == ""
+			if it.path == ""
 				continue;
 			if !is_dirty(it)
 				continue;
-			edit_alert("File '%' is still dirty!", it.filename);
+			edit_alert("File '%' is still dirty!", it.path);
 			win := get_window(.BUFFER, not_floating = true);
 			change_buffer(win, it);
 			can_quit = false;
@@ -538,17 +542,17 @@ main :: () {
 	editool_init();
 	{
 		// init buffer
-		filename: string = "";
+		filename: string = "."; // current dir
 		args := get_command_line_arguments();
 		assert(args.count <= 2);
 		if args.count > 1
 			filename = args[1];
 		//parent := create_container_window(context.edit.root);
 		parent := context.edit.root;
-		buf := get_file_buffer(filename);
+		buf: *Buffer = get_path_buffer(filename);
 		assert(buf != null);
 		//
-		win1 := create_buffer_window(parent, buf);
+		win1 := create_buffer_window(parent, buf, flags = .BUFFER_LINE_NO);
 		select_window(win1);
 		change_container_mode(win1.parent, .TABBED);
 		{
@@ -650,6 +654,7 @@ main :: () {
 #load "commands.jai";
 #load "command_mode.jai";
 #load "buffer.jai";
+#load "buffer_creation.jai";
 #load "syntax.jai";
 #load "window.jai";
 #load "window_ext.jai";

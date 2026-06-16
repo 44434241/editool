@@ -64,21 +64,32 @@ Mark :: struct {
 	name: u8 = 0; // Not all marks are named.
 	buffer_id: BufId = BUF_ID_NULL;
 	time: Editime = -1;
+	// Allocated in window or buffer, depending on which it belongs to
+	// But that means mark can't be copied
+	path: string;
 }
 
 // name has to be explicitly set
 create_mark :: (using win: *Window) -> Mark {
-	return .{
+	mark := Mark.{
 		position = cursor.position,
 		scroll = scroll,
 		buffer_id = buffer.id,
 		time = context.edit.time,
 	};
+	if buffer.kind == .FILE || buffer.kind == .DIRECTORY {
+		mark.path = copy_string(buffer.path,, allocator=allocator_of(*win.pool));
+	}
+	return mark;
 }
 
 go_to_mark :: (win: *Window, mark: Mark, is_jump := true) -> bool {
-	if !change_buffer(win, mark.buffer_id)
+	buf := find_buffer(mark.buffer_id);
+	if !buf && mark.path
+		buf = get_path_buffer(mark.path);
+	if !buf
 		return false;
+	change_buffer(win, buf);
 	move_cursor(win, mark.position, jump = is_jump);
 	set_scroll(win, mark.scroll);
 	return true;

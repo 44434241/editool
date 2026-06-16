@@ -270,6 +270,9 @@ _draw_window :: (using win: *Window) {
 		lines_to_draw_count := min(lines.count - scroll, size.y);
 		lines_to_draw := []Line.{ data = lines.data + scroll, count = lines_to_draw_count };
 		_refresh_buffer_modifiers(win, buffer, scroll, scroll + lines_to_draw_count);
+		// buf apply mods takes priority
+		if buffer.apply_mods
+			buffer.apply_mods(win, lines_to_draw);
 		if win.apply_mods
 			win.apply_mods(win, lines_to_draw);
 		//
@@ -1057,10 +1060,10 @@ get_title :: (using buf: *Buffer) -> string {
 	if user_title
 		return user_title;
 	if kind == {
+		case .DIRECTORY; #through;
 		case .FILE;
-			s := ifx filename else "[EMPTY]";
-			
-			if filename {
+			s := ifx path else "[EMPTY]";
+			if path {
 				pwd := get_working_directory(,,allocator = temp);
 				if starts_with(s, pwd) {
 					s = advance(s, pwd.count);
@@ -1068,8 +1071,15 @@ get_title :: (using buf: *Buffer) -> string {
 						s = advance(s, 1);
 				}
 			}
-			if filename && is_dirty(buf)
-				s = tprint("*%", s);
+			if kind == .DIRECTORY {
+				if s == ""
+					s = "./";
+				else if peek(s) != #char "/"
+					s = tprint("%/", s);
+				s = tprint("[D] %", s);
+			}
+			if path && is_dirty(buf)
+				s = tprint("* %", s);
 			return s;
 		case .CUSTOM;
 			return "[custom]";

@@ -70,16 +70,6 @@ as_ncurses_attribute :: (mod: Char_Mod) -> s32 {
 	return ret;
 }
 
-BufId :: #type,distinct s64;
-BUF_ID_NULL :: 0;
-_running_buffer_id: BufId = 1;
-
-next_buffer_id :: () -> BufId {
-	ret := _running_buffer_id;
-	_running_buffer_id += 1;
-	return ret;
-}
-
 // creating/destroying buffers still leaks some shit !
 
 // For now, buffer operations must be executed within a window..
@@ -145,15 +135,32 @@ Buffer :: struct {
 	search_matches: Search_Matches; // touched by search..
 	marks: [..]Mark;
 	// file
-	filename: string;
+	path: string; // for .FILE or .DIRECTORY
 	file_flags: File_Flags;
 	syntax: *Syntax;
 	// extra stuff
 	user_data: *void; // has to be explicitly
 	modify_buffer_operation: #type (*Window, *Buffer_Op) -> bool;
+	// both buffer and window have apply_mods
+	apply_mods: #type (*Window, []Line) -> ();
 	active_checkpoint: Buffer_Checkpoint = BUFFER_CHECKPOINT_NULL;
 	user_title: string;
 	ref_count: int;
+	//
+	directory_files: [..]Directory_File;
+	directory_files_confirm_index := -1;
+	//is_in_directory_confirm_thing := false;
+}
+
+Directory_File :: struct {
+	last_name: string;
+	Flags :: enum_flags {
+		IMMUTABLE;
+		NONE :: 0;
+	}
+	flags: Flags;
+	is_marked_for_delete: int; // true if > 0
+	is_new: bool = false; // actuall could have a last_name == ""
 }
 
 BUFFER_CHECKPOINT_NULL : Buffer_Checkpoint : -1;
@@ -193,94 +200,277 @@ restore_checkpoint :: (win: *Window, checkpoint: Buffer_Checkpoint) {
 	active_checkpoint = BUFFER_CHECKPOINT_NULL;
 }
 
-Directory_Buffer :: struct {
-	buffer: *Buffer;
-}
-
-find_or_create_directory_buffer :: (_path: string) -> *Buffer {
-	path := normalize_path(_path);
-	assert(is_directory(path), "'%' is not directory", path);
-	assert(false);
-	return null;
-}
-
-find_or_create_file_buffer :: (_filename: string, flags: Buffer.Flags = .NONE, file_flags: Buffer.File_Flags = .NONE, must_respect_flags := false) -> *Buffer {
-	assert(!must_respect_flags); // some flags might be whatever ! but not always ! in the future there will be some case
-	assert((file_flags & .READ_ONLY) == file_flags); // has no other flags
-	assert(flags == .NONE); // ...
-	filename := _filename;
-	if filename {
-		filename = normalize_path(filename,, allocator=temp);
-		if is_directory(filename) {
-			// TODO: idk fix shit
-			assert(false, "Trying to open directory (% -> %)...", _filename, filename);
-		}
-		for context.edit.buffers {
-			if it.filename == filename {
-				if it.file_flags != file_flags
-					continue;
-				// for the buffer to be temp, both the previous and this "new created" buffer must be temp
-				return it;
+save_buffer :: (buf: *Buffer) -> bool, string {
+	if buf.kind == {
+		case .FILE;
+			if buf.file_flags & (.NO_FILE | .READ_ONLY) {
+				return false, tprint("Bad flags: %", buf.file_flags);
 			}
-		}
+			s := buffer_as_string_for_saving(buf,, allocator=temp);
+			edit_alert("Writing % bytes to '%'", s.count, buf.path);
+			ok := write_entire_file(buf.path, s);
+			if ok
+				clear_dirty(buf);
+			if !ok
+				return false, "Failed to modify file";
+			return true, "";
+		case .DIRECTORY;
+			if buf.directory_files_confirm_index >= 0 {
+				return false, "Already saving";
+			}
+			if buf.windows.count == 0 {
+				return false, "Man... no windows :(";
+			}
+			decode_filename :: (s: string) -> (ok: bool, name: string, is_directory: bool) {
+				idx := find_index_from_left(s, "/");
+				if idx >= 0 {
+					if idx != s.count - 1
+						return false, "", false;
+					return true, slice(s, 0, s.count-1), true;
+				} else {
+					return true, s, false;
+				}
+			}
+			Directory_Thing_Res :: struct {
+				ok: bool;
+				error_message: string;
+				should_execute: bool; // if this has any modifications
+				should_delete_line: bool; // only set if `request || execute`
+				execute_request: string; // allocated in temp?
+			}
+			name_table: Table(string, void);
+			name_table.allocator = temp;
+			check_file_and_maybe_execute :: (f: *Directory_File, line: *Line,
+					name_table: *Table(string, void) = null, base_path := "",
+					$request := false, $execute: bool = false) -> Directory_Thing_Res {
+				if line.as_string == "" {
+					return .{
+						ok = false,
+						error_message = "Can't have empty filenames!"
+					};
+				}
+				ok, name, is_dir := decode_filename(line.as_string);
+				if !ok {
+					return .{
+						ok = false,
+						error_message = tprint("Invalid name: '%'", line.as_string),
+					};
+				}
+				if name_table {
+					if table_find(name_table, name) {
+						return .{ 
+							ok = false,
+							error_message = tprint("Dupe name: '%'", name),
+						};
+					}
+					table_add(name_table, name, default_of(void));
+				}
+				if f.last_name != line.as_string {
+					last_ok, last_name, last_is_dir := decode_filename(f.last_name);
+					assert(last_ok);
+					if !f.is_new && is_dir != last_is_dir {
+						return .{
+							ok = false,
+							error_message = tprint("Don't mess with with directories ('%')", line.as_string),
+						};
+					}
+					if name_table {
+						if table_find(name_table, last_name) {
+							return .{
+								ok = false,
+								error_message = tprint("Dupe name (last_): '%'", last_name),
+							};
+						}
+						table_add(name_table, last_name, default_of(void));
+					}
+				}
+				#assert !request || !execute; // can't do both!
+				#if !request && !execute {
+					return .{
+						ok = true,
+					};
+				} else {
+					if f.is_new && f.is_marked_for_delete {
+						return .{
+							ok = true,
+							should_delete_line = true,
+						};
+					}
+					file_or_dir := ifx is_dir then "dir" else "file";
+					// can this be tprinted?
+					full_path := path_join(base_path, name,, allocator=temp);
+					if is_dir
+						full_path = tprint("%/", full_path);
+					last_full_path := path_join(base_path, f.last_name,, allocator=temp);
+					if is_dir
+						last_full_path = tprint("%/", last_full_path);
+					if f.is_marked_for_delete {
+						#if request {
+							return .{
+								ok = true,
+								execute_request = tprint("Delete % '%'?", file_or_dir, last_full_path),
+								should_delete_line = true,
+							};
+						} else {
+							ok := true;
+							if is_dir && false {
+								// this is recursive
+								ok = delete_directory(last_full_path);
+							} else {
+								ok = file_delete(last_full_path);
+							}
+							return .{
+								ok = ok,
+								should_delete_line = true,
+							};
+						}
+					} else if f.is_new {
+						#if request {
+							return .{
+								ok = true,
+								execute_request = tprint("Create % '%'?", file_or_dir, full_path),
+							};
+						} else {
+							ok := true;
+							if is_dir {
+								ok = make_directory_if_it_does_not_exist(full_path);
+							} else {
+								ok = write_entire_file(full_path, "");
+							}
+							return .{
+								ok = ok,
+							};
+						}
+					} else if f.last_name != line.as_string {
+						#if request {
+							return .{
+								ok = true,
+								execute_request = tprint("Rename % '%' -> '%'", file_or_dir, last_full_path, full_path),
+							};
+						} else {
+							ok := file_move(last_full_path, full_path);
+							return .{
+								ok = ok,
+							};
+						}
+					} else {
+						return .{
+							ok = true,
+						};
+					}
+				}
+			}
+			for * buf.directory_files {
+				line := *buf.lines[it_index];
+				res := check_file_and_maybe_execute(it, line, *name_table);
+				if !res.ok {
+					return false, res.error_message;
+				}
+			}
+			get_next_request :: (using buf: *Buffer, idx: int) -> int, string {
+				while idx < directory_files.count {
+					res := check_file_and_maybe_execute(*directory_files[idx], *lines[idx], base_path = path, request = true);
+					assert(res.ok);
+					if !res.execute_request {
+						if res.should_delete_line {
+							// Case where there's nothing to execute but data should be modified anyway..
+							execute_buffer_operation(windows[0], .{
+								kind = .ERASE_LINES,
+								y = idx,
+								count = 1,
+								flags = .NO_CALLBACK | .NO_UNDO,
+							});
+							array_ordered_remove_by_index(*directory_files, idx);
+							continue;
+						}
+						idx += 1;
+						continue;
+					}
+					return idx, res.execute_request;
+				}
+				return directory_files.count, "";
+			}
+			execute_and_get_next_request :: (using buf: *Buffer, idx: int) -> int, string {
+				res := check_file_and_maybe_execute(*directory_files[idx], *lines[idx], base_path = path, execute = true);
+				if !res.ok {
+					edit_alert("File op for '%' failed: %", lines[idx].as_string, res.error_message);
+					return directory_files.count, "";
+				}
+				if res.should_delete_line {
+					execute_buffer_operation(windows[0], .{
+						kind = .ERASE_LINES,
+						y = idx,
+						count = 1,
+						flags = .NO_CALLBACK | .NO_UNDO,
+					});
+					array_ordered_remove_by_index(*directory_files, idx);
+				} else {
+					execute_buffer_operation(windows[0], .{
+						kind = .NOP,
+						flags = .NO_CALLBACK | .NO_UNDO,
+					});
+					assert(!directory_files[idx].is_marked_for_delete);
+					// unnecessary copy
+					directory_files[idx].last_name = copy_string(lines[idx].as_string,, allocator=allocator_of(buf));
+					directory_files[idx].is_new = false;
+					idx += 1;
+				}
+				new_idx, req := get_next_request(buf, idx);
+				return new_idx, req;
+			}
+			maybe_clear_dirty :: (buf: *Buffer) {
+				idx := get_next_request(buf, 0,, allocator=temp);
+				if idx >= buf.directory_files.count
+					clear_dirty(buf);
+			}
+			//
+			idx, req := get_next_request(buf, 0);
+			if idx == buf.directory_files.count {
+				clear_dirty(buf);
+				return true, ""; // actually, clear dirty here if needed !
+			}
+			hold(buf);
+			buf.directory_files_confirm_index = idx;
+			ask_for_char(req, (ch: s32, _buf: *void) -> bool, string {
+				buf := _buf.(*Buffer);
+				ret: bool;
+				msg: string;
+				if ch == {
+					case 0;
+						ret = false;
+					case #char "n";
+						new_idx, new_msg := get_next_request(buf, buf.directory_files_confirm_index+1);
+						if new_idx >= buf.directory_files.count {
+							ret = false;
+						} else {
+							ret = true;
+							buf.directory_files_confirm_index = new_idx;
+							msg = new_msg;
+						}
+					case #char "y";
+						new_idx, new_msg := execute_and_get_next_request(buf, buf.directory_files_confirm_index);
+						if new_idx >= buf.directory_files.count {
+							maybe_clear_dirty(buf);
+							ret = false;
+						} else {
+							ret = true;
+							buf.directory_files_confirm_index = new_idx;
+							msg = new_msg;
+						}
+					case;
+						ret = true;
+						edit_warn("Bad char");
+				}
+				if !ret {
+					release(buf);
+					buf.directory_files_confirm_index = -1;
+				}
+				return ret, msg;
+			}, buf);
+			return true, "";
+		case;
+			return false, "Not a file (%)";
 	}
-	filename = copy_string(filename);
-	buf := _create_buffer_from_filename(filename, flags, file_flags);
-	return buf;
-}
-
-get_file_buffer :: find_or_create_file_buffer;
-
-// find implies that it might return null
-find_buffer :: (id: BufId) -> *Buffer {
-	for context.edit.buffers {
-		if it.id == id
-			return it;
-	}
-	return null;
-}
-
-can_destroy_buffer :: (buf: *Buffer) -> bool {
-	if buf.ref_count > 0
-		return false;
-	if buf.windows.count > 0
-		return false;
-	if buf.flags & .PERM
-		return false;
-	if buf.kind == .FILE && is_dirty(buf)
-		return false;
-	return true;
-}
-
-destroy_buffer :: (buffer: *Buffer) {
-	if !can_destroy_buffer(buffer) {
-		edit_error("ruh roh, can't destroy buffer..");
-		return;
-	}
-	ok := array_ordered_remove_by_value(*context.edit.buffers, buffer);
-	assert(ok);
-	release(*buffer.pool);
-	free(buffer);
-}
-
-_new_buffer :: (kind: Buffer.Kind) -> *Buffer {
-	buf := New(Buffer);
-	set_allocators(*buf.pool);
-	buf.id = next_buffer_id();
-	buf.kind = kind;
-	array_add(*context.edit.buffers, buf);
-	allocator := Allocator.{pool_allocator_proc, *buf.pool};
-	// in order of declaration
-	buf.lines.allocator = allocator;
-	buf.ops.allocator = allocator;
-	buf.windows.allocator = allocator;
-	buf.commands.allocator = allocator;
-	buf.search_matches.matches.allocator = allocator;
-	buf.marks.allocator = allocator;
-	array_add(*buf.lines, .{
-		chars.allocator = allocator,
-	});
-	return buf;
 }
 
 // this should never fail, i think, even in the future?
@@ -288,56 +478,6 @@ get_current_buffer :: () -> *Buffer {
 	win := get_selected_window_of_kind(.BUFFER);
 	//assert(win != null);
 	return win.buffer;
-}
-
-// this doesn't have lines, so it'll crash if u dont add any
-create_custom_buffer :: (flags: Buffer.Flags = .NONE) -> *Buffer {
-	buf := _new_buffer(.CUSTOM);
-	buf.syntax = get_syntax_for_filename("");
-	buf.flags |= flags;
-	return buf;
-}
-
-_create_buffer_from_filename :: (filename: string, flags: Buffer.Flags, file_flags: Buffer.File_Flags) -> *Buffer {
-	time_this("Create buffer");
-	buf := _new_buffer(.FILE);
-	buf.caps = .ALL;
-	buf.flags = flags;
-	buf.file_flags = file_flags;
-	buf.filename = filename;
-	//refresh_buffer_size(*buf); // from LINES, COLS
-	buf.syntax = get_syntax_for_filename(filename);
-	file_str: string;
-	file_ok: bool = false;
-	if filename {
-		file_str, file_ok = read_entire_file(filename,, allocator=temp);
-	}
-	if file_ok {
-		string_lines: []string = split(file_str, #char "\n",, allocator=temp);
-		for * string_lines {
-			// maybe should have some flag for clrf endings ?
-			if it.count && peek(it.*) == #char "\r" {
-				it.count -= 1;
-				buf.file_flags |= .CLRF;
-			}
-		}
-		// Doing this because a line is added on buffer creation
-		if string_lines.count > 0 && peek(string_lines) == ""
-			string_lines.count -= 1;
-		array_reserve(*buf.lines, string_lines.count + 10);
-		for string_lines {
-			// Only place left where lines/chars are directly added/removed.
-			array_adds(*peek_pointer(buf.lines).chars, it);
-			if it_index + 1 != string_lines.count {
-				array_add(*buf.lines, .{
-					chars.allocator = .{pool_allocator_proc, *buf.pool},
-				});
-			}
-		}
-	} else {
-		buf.file_flags |= .NO_FILE;
-	}
-	return buf;
 }
 
 buffer_as_string_for_saving :: (using buf: *Buffer) -> string {
@@ -385,7 +525,14 @@ for_expansion :: (using buffer: *Buffer, body: Code, for_flags: For_Flags) #expa
 
 Buffer_Op :: struct {
 	Flags :: enum_flags {
-		NO_UNDO; // cannot be undone (opening a file)
+		NO_UNDO; // cannot be undone (when opening a file, tbh not used)
+		NO_CALLBACK; // 
+		IGNORE_CAPS; // (handled by _) execute even if capabilities disallow it
+		IS_UNDO; // this is info for callbacks
+		// This shit is very specific:
+		// (this still saves stuff like cursor position..)
+		DO_NOT_EXECUTE_BUT_CONSIDER_EXECUTED; // (handled by _)
+		CALLBACK_BEFORE_UNDO_AND_REDO;
 		NONE :: 0;
 	}
 	Kind :: enum {
@@ -413,14 +560,26 @@ Buffer_Op :: struct {
 	begin_mode: Edit_Mode;
 }
 
-Execute_Buffer_Op_Flags :: enum_flags {
-	FILL_FOR_REVERSE;
-	MOVE_CURSOR;
-	NONE :: 0;
+set_dirty :: (buf: *Buffer) {
+	buf.save_op_index = -1;
 }
 
-buffer_undo :: (win: *Window) -> bool, Buffer_Op {
+clear_dirty :: (buf: *Buffer) {
+	buf.save_op_index = buf.op_index;
+}
+
+is_dirty :: (buf: *Buffer) -> bool {
+	return buf.save_op_index != buf.op_index;
+}
+
+allocator_of :: (buf: *Buffer) -> Allocator {
+	return .{pool_allocator_proc, *buf.pool};
+}
+
+buffer_undo :: (win: *Window) -> bool {
 	reverse_operation :: inline (op: *Buffer_Op) -> bool {
+		assert(op.flags & .IS_UNDO == 0); // sanity check, there's a lot to mess up here
+		op.flags |= .IS_UNDO;
 		if op.kind == {
 			case .NOP; //
 			case .ERASE_LINES;
@@ -446,53 +605,53 @@ buffer_undo :: (win: *Window) -> bool, Buffer_Op {
 	}
 	using buf: *Buffer = win.buffer;
 	if op_index <= 0
-		return false, .{};
+		return false;
 	if active_checkpoint != BUFFER_CHECKPOINT_NULL && xx active_checkpoint >= op_index {
-		return false, .{};
+		return false;
 	}
 	op := buf.ops[buf.op_index-1];
 	if op.flags & .NO_UNDO {
-		return false, op;
+		return false;
 	}
 	if !reverse_operation(*op) {
 		edit_alert("Can't undo? %\n", op.kind, is_internal = true);
-		return false, op; // this is a panic
+		return false; // this is a panic
 	}
-	ok := _execute_buffer_operation(win, buf, *op, .MOVE_CURSOR);
+	ok := true;
+	if ok && (op.flags & .NO_CALLBACK == 0) && (op.flags &.CALLBACK_BEFORE_UNDO_AND_REDO) {
+		if win.buffer.modify_buffer_operation
+			ok = win.buffer.modify_buffer_operation(win, *op);
+	}
+	if ok
+		ok = _execute_buffer_operation(win, buf, *op, update_cursor = true);
 	if ok {
 		buf.op_index -= 1;
 		assert(buf.op_index >= 0);
 	}
-	return ok, op;
+	return ok;
 }
 
-buffer_redo :: (win: *Window) -> bool, Buffer_Op {
+buffer_redo :: (win: *Window) -> bool {
 	using buf: *Buffer = win.buffer;
 	if op_index >= ops.count
-		return false, .{};
+		return false;
 	op := buf.ops[buf.op_index];
-	ok := _execute_buffer_operation(win, buf, *op, .MOVE_CURSOR);
+	ok := true;
+	if ok && (op.flags & .NO_CALLBACK == 0) && (op.flags &.CALLBACK_BEFORE_UNDO_AND_REDO) {
+		if win.buffer.modify_buffer_operation
+			ok = win.buffer.modify_buffer_operation(win, *op);
+	}
+	if ok
+		ok = _execute_buffer_operation(win, buf, *op, update_cursor = true);
 	if ok {
 		op_index += 1;
 	}
-	return ok, op;
-}
-
-set_dirty :: (buf: *Buffer) {
-	buf.save_op_index = -1;
-}
-
-clear_dirty :: (buf: *Buffer) {
-	buf.save_op_index = buf.op_index;
-}
-
-is_dirty :: (buf: *Buffer) -> bool {
-	return buf.save_op_index != buf.op_index;
+	return ok;
 }
 
 // buffer operation THROUGH window
 // This is the only one that respects the callback?
-execute_buffer_operation :: (win: *Window, _op: Buffer_Op, even_if_no_caps := false, no_callback := false) -> bool {
+execute_buffer_operation :: (win: *Window, _op: Buffer_Op) -> bool {
 	allocator := Allocator.{pool_allocator_proc, *win.buffer.pool};
 	op := _op;
 	using buf: *Buffer = win.buffer;
@@ -511,12 +670,15 @@ execute_buffer_operation :: (win: *Window, _op: Buffer_Op, even_if_no_caps := fa
 			op.lines = lines;
 		}
 	}
-	if ok && buf.modify_buffer_operation && !no_callback {
+	// TODO: check i need parenths here
+	if ok && (op.flags & .NO_CALLBACK == 0) {
 		// this doesn't have to return a bool, instead it could modify it to a nop !
-		ok = buf.modify_buffer_operation(win, *op);
+		if buf.modify_buffer_operation
+			ok = buf.modify_buffer_operation(win, *op);
 	}
 	if ok {
-		ok = _execute_buffer_operation(win, buf, *op, .FILL_FOR_REVERSE, even_if_no_caps = even_if_no_caps,, allocator);
+		// it's actually scary to pass the allocator here, incase some callback happens?
+		ok = _execute_buffer_operation(win, buf, *op, fill_for_undo = true,, allocator);
 	}
 	if ok {
 		assert(buf.op_index <= ops.count);
@@ -531,14 +693,11 @@ execute_buffer_operation :: (win: *Window, _op: Buffer_Op, even_if_no_caps := fa
 	return ok;
 }
 
-allocator_of :: (buf: *Buffer) -> Allocator {
-	return .{pool_allocator_proc, *buf.pool};
-}
-
 // leak? (?)
-// The only time this touches `win` instead of just its buffer, is when .MOVE_CURSOR flag is true !!!
-_execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op: *Buffer_Op, flags: Execute_Buffer_Op_Flags, even_if_no_caps := false) -> bool {
-	if !even_if_no_caps {
+// The only time this touches `win` instead of just its buffer, is when move_cursor is true !!!
+_execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op: *Buffer_Op,
+			fill_for_undo := false, update_cursor := false) -> bool {
+	if op.flags & .IGNORE_CAPS == 0 {
 		if op.kind == {
 			case .NOP; //
 			case .INSERT_CHARS;
@@ -561,16 +720,14 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 	}
 	using,only(cursor) win;
 	allocator := Allocator.{pool_allocator_proc, *win.buffer.pool};
-	if even_if_no_caps
-		flags &= ~.FILL_FOR_REVERSE;
-	if flags & .FILL_FOR_REVERSE {
+	if fill_for_undo {
 		// only place where cursor is used..
 		op.begin_cursor_position = cursor.position;
 		op.begin_mode = context.edit.mode;
 		op.begin_time = context.edit.time;
 	}
 	defer {
-		if flags & .MOVE_CURSOR {
+		if update_cursor {
 			move_cursor(win, op.begin_cursor_position);
 		}
 		buf.modify_time = context.edit.time;
@@ -590,6 +747,27 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 	assert(op.count >= 0);
 	assert(op.y >= 0);
 	assert(op.x >= 0, "% %", op.x, op.count);
+	if fill_for_undo {
+		if op.kind == {
+			case .ERASE_CHARS;
+				assert(op.chars.count == 0);
+				line := *lines[op.y];
+				op.chars = array_copy([]u8.{ data = line.chars.data + op.x, count = op.count },, allocator=allocator_of(buf));
+			case .MERGE_LINES;
+				op.x = lines[op.y].count;
+			case .ERASE_LINES;
+				assert(op.lines.count == 0);
+				lines: [..]string; // alloc here too
+				lines.allocator = allocator_of(buf);
+				for op.y..op.y+op.count-1 {
+					array_add(*lines, copy_string(cast(string)buf.lines[it].chars),, allocator=allocator_of(buf));
+				}
+				op.lines = lines;
+		}
+	}
+	if op.flags & .DO_NOT_EXECUTE_BUT_CONSIDER_EXECUTED {
+		return true;
+	}
 	_shift_x :: (it: *Position, pos: Position, count: int, moved_real_x: *bool) {
 		if pos.y == it.y {
 			if count > 0 {
@@ -655,7 +833,7 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 			}
 		}
 	}
-	shift_x :: (pos: Position, count: int) #expand {
+	shift_x :: (pos: Position, count: int, dont_refresh_virtual_x := false) #expand {
 		if buf.caps & .MOVE_X == 0
 			return;
 		for * buf.marks {
@@ -664,8 +842,10 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 		for buf.windows {
 			moved_real_x := false;
 			_shift_x(*it.cursor.position, pos, count, *moved_real_x);
-			if moved_real_x
-				refresh_cursor_virtual_x(it);
+			if moved_real_x {
+				if !dont_refresh_virtual_x
+					refresh_cursor_virtual_x(it);
+			}
 		}
 	}
 	if op.kind == {
@@ -684,11 +864,6 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 			// slow
 			line := *lines[op.y];
 			assert(op.x + op.count <= line.count);
-			if flags & .FILL_FOR_REVERSE {
-				assert(op.chars.count == 0);
-				// alloc here aswell
-				op.chars = array_copy([]u8.{ data = line.chars.data + op.x, count = op.count },, allocator=allocator_of(buf));
-			}
 			for < op.x..op.x+op.count-1 {
 				array_ordered_remove_by_index(*line.chars, it);
 			}
@@ -710,15 +885,12 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 		case .MERGE_LINES;
 			assert(op.y + 1 < lines.count);
 			assert(op.count == 1);
-			if flags & .FILL_FOR_REVERSE {
-				op.x = lines[op.y].count;
-			}
 			line: *Line = *lines[op.y];
 			line_len := line.count;
 			next_line: *Line = *lines[op.y+1];
 			array_add(*line.chars, .. next_line.chars);
 			array_ordered_remove_by_index(*lines, op.y+1); 
-			shift_x(.{0, op.y+1 }, line_len);
+			shift_x(.{0, op.y+1 }, line_len, dont_refresh_virtual_x = true);
 			shift_y(.{0, op.y}, -1, dont_update_from_virtual_x = true);
 			line.dirty_flags |= .ALL;
 		case .INSERT_LINES;
@@ -738,15 +910,6 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 			shift_y(op.y, op.lines.count); // this isn't tested for non undos
 		case .ERASE_LINES;
 			assert(op.y + op.count <= lines.count);
-			if flags & .FILL_FOR_REVERSE {
-				assert(op.lines.count == 0);
-				lines: [..]string; // alloc here too
-				lines.allocator = allocator_of(buf);
-				for op.y..op.y+op.count-1 {
-					array_add(*lines, copy_string(cast(string)buf.lines[it].chars),, allocator=allocator_of(buf));
-				}
-				op.lines = lines;
-			}
 			array_ordered_remove_range(*lines, op.y, op.count);
 			shift_count := op.count;
 			shift_y_val := op.y;
@@ -768,23 +931,25 @@ replace_buffer_lines_without_caps :: (using win: *Window, new_lines: []string) {
 		y = lines.count,
 		count = new_lines.count,
 		lines = new_lines,
-	}, even_if_no_caps = true);
+		flags = .IGNORE_CAPS,
+	});
 	if new_lines.count == 0 {
 		execute_buffer_operation(win, .{
 			kind = .INSERT_LINES,
 			y = lines.count,
 			count = 1,
 			lines = .[ "" ],
-		}, even_if_no_caps = true);
+			flags = .IGNORE_CAPS,
+		});
 	}
 	execute_buffer_operation(win, .{
 		kind = .ERASE_LINES,
 		y = 0,
 		count = lines.count - max(new_lines.count, 1),
-	}, even_if_no_caps = true);
+		flags = .IGNORE_CAPS,
+	});
 	move_cursor(win, cursor_pos); // this normalizes it too
 }
-
 
 peek_last_operation :: (using buf: *Buffer) -> bool, Buffer_Op {
 	if op_index > 0
@@ -860,7 +1025,7 @@ apply_syntax_mods :: (line: *Line, syntax: *Syntax, line_no_hint := -1, first_x 
 }
 
 // It takes a window on which the buffer will be drawn to.
-// Maybe should organize this better.
+// Maybe should organize this better (user_mods should belong to window?? that seems too much).
 _refresh_buffer_modifiers :: (win: *Window, using buf: *Buffer, ly: int, ry: int) {
 	time_this("Refresh buffer modifiers");
 	lines_to_refresh := []Line.{ data = lines.data + ly, count = ry - ly };
@@ -913,53 +1078,20 @@ _get_char_info :: (ch: u8) -> Buffer_Char_Info {
 	return .{};
 }
 
-normalize_path :: (path: string) -> string {
-	arr: [..]string;
-	arr.allocator = temp;
-	if path[0] == "~" {
-		home, ok := get_home_directory(,, allocator=temp);
-		if !ok {
-			log_error("Cannot get home directory");
-			return "";
-		}
-		array_add(*arr, .. split(home, #char "/",, allocator=temp));
-	} else if path[0] != #char "/" {
-		dir := get_working_directory(,, allocator=temp);
-		if !dir {
-			log_error("Cannot get working directory");
-			return ""; 
-		}
-		array_add(*arr, .. split(dir, "/",, allocator=temp));
+file_list_including_directories :: (path: string, recursive := false, follow_directory_symlinks := true) -> [] string {
+	files : [..] string;
+	visitor :: (info: *File_Visit_Info, user_data: *[..] string) {
+		array_add(user_data, copy_string(info.full_name));
 	}
-	array_add(*arr, .. split(path, "/",, allocator=temp));
-	idx := 0;
-	while idx < arr.count {
-		if arr[idx] == "" || arr[idx] == "." {
-			array_ordered_remove_by_index(*arr, idx);
-			continue;
-		}
-		if arr[idx] == ".." {
-			array_ordered_remove_by_index(*arr, idx);
-			if idx > 0 {
-				array_ordered_remove_by_index(*arr, idx-1);
-				idx -= 1;
-			}
-			continue;
-		}
-		idx += 1;
-	}
-	if arr.count == 0
-		return "/";
-	b: String_Builder;
-	for arr {
-		print(*b, "/%", it);
-	}
-	return builder_to_string(*b);
+	 visit_files(path, recursive, *files, visitor,
+			follow_directory_symlinks=follow_directory_symlinks, visit_directories=true);
+	return files;
 }
 
 #scope_file
 
 #import "Math";
 #import "File";
+#import "Hash_Table";
 #import "File_Utilities";
 #import "System";

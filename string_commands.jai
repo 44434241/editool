@@ -39,7 +39,8 @@ string_commands_start :: (state: *String_Command_State, start_text: string) {
 			y = window.lines.count,
 			count = 1,
 			lines = .[ "" ],
-		}, even_if_no_caps = true, no_callback = true);
+			flags = .IGNORE_CAPS | .NO_CALLBACK,
+		});
 	}
 	// Insert start text in new line
 	execute_buffer_operation(window, .{
@@ -48,7 +49,8 @@ string_commands_start :: (state: *String_Command_State, start_text: string) {
 		x = 0,
 		count = start_text.count,
 		chars = cast([]u8)start_text,
-	}, even_if_no_caps = true, no_callback = true);
+		flags = .IGNORE_CAPS | .NO_CALLBACK,
+	});
 	//
 	select_window(window);
 	change_edit_mode(.INSERT);
@@ -73,7 +75,8 @@ string_commands_execute :: (state: *String_Command_State) {
 				y = window.lines.count,
 				count = 1,
 				lines = .[ "" ],
-			}, even_if_no_caps = true, no_callback = true);
+				flags = .IGNORE_CAPS | .NO_CALLBACK,
+			});
 		}
 		execute_buffer_operation(window, .{
 			kind = .INSERT_CHARS,
@@ -81,13 +84,15 @@ string_commands_execute :: (state: *String_Command_State) {
 			x = 0,
 			count = window.lines[window.cursor.y].count,
 			chars = window.lines[window.cursor.y].chars, // should be fine to pass this reference
-		}, even_if_no_caps = true, no_callback = true);
+			flags = .IGNORE_CAPS | .NO_CALLBACK,
+		});
 		//array_ordered_remove_by_index(*window.lines, window.cursor.y); // @Leak
 		execute_buffer_operation(window, .{
 			kind = .ERASE_LINES,
 			y = window.cursor.y,
 			count = 1,
-		}, even_if_no_caps = true, no_callback = true);
+			flags = .IGNORE_CAPS | .NO_CALLBACK,
+		});
 		move_cursor_y(window, window.lines.count - 1);
 	} else if window.cursor.y > 0 {
 		// if last command was the same as the second-last, remove it from history
@@ -96,7 +101,8 @@ string_commands_execute :: (state: *String_Command_State) {
 				kind = .ERASE_LINES,
 				y = window.cursor.y,
 				count = 1,
-			}, even_if_no_caps = true, no_callback = true);
+				flags = .IGNORE_CAPS | .NO_CALLBACK,
+			});
 		}
 	}
 	_ensure_window_held(state);
@@ -142,7 +148,8 @@ string_commands_cancel :: (state: *String_Command_State) {
 				kind = .ERASE_CHARS,
 				y = y,
 				count = window.lines[y].count,
-			}, even_if_no_caps = true, no_callback = true);
+				flags = .IGNORE_CAPS | .NO_CALLBACK,
+			});
 		}
 	}
 	_ensure_window_held(state);
@@ -186,7 +193,8 @@ string_commands_init :: (state: *String_Command_State, title: string) {
 					y = win.lines.count - 1,
 					x = 0,
 					count = line.count,
-				}, even_if_no_caps = true, no_callback = true);
+					flags = .IGNORE_CAPS | .NO_CALLBACK,
+				});
 			}
 			execute_buffer_operation(win, .{
 				kind = .INSERT_CHARS,
@@ -194,7 +202,8 @@ string_commands_init :: (state: *String_Command_State, title: string) {
 				x = 0,
 				chars = win.lines[win.cursor.y].chars,
 				count = win.lines[win.cursor.y].count,
-			}, even_if_no_caps = true, no_callback = true);
+				flags = .IGNORE_CAPS | .NO_CALLBACK,
+			});
 			move_cursor_y(win, win.lines.count - 1);
 			op.y = win.cursor.y;
 		}

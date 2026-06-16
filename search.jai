@@ -59,13 +59,10 @@ editool_search_init :: () {
 		proc = (in: Command_In) -> Command_Result {
 			// Update search
 			string_commands_ensure_up_to_date(*context.search);
-			if context.search.status != .SEARCH {
+			if context.search.status != .SEARCH && context.search.status != .SEARCH_REPLACE {
 				return command_error("Bad search");
 			}
-			str := copy_string(context.search.search_string,, allocator=temp);
-			// messy control flow.. this should just change to window and not execute..
-			string_commands_execute(*context.search);
-			// Would be cool if through this fzf window i could search replace !!
+			str := copy_string(context.search.search_string,, allocator=temp); // not sure if i need to copy this
 			fzf_win := make_fzf_window((res: *Fzf_Result, s: string, data: *void) {
 				buf := data.(*Buffer);
 				do_rg(res, s, ".");
@@ -95,10 +92,10 @@ _execute_search :: (__: *String_Command_State, win: *Window) {
 				using win.buffer.search_matches;
 				if matches.count > 0
 					move_cursor(win, matches[0].position);
-				ask_for_char("Do u wanna confirm (y/n)", (ch: s32, _win: *void) -> bool {
+				ask_for_char("Do u wanna confirm (y/n)", (ch: s32, _win: *void) -> bool, string {
 					win := _win.(*Window);
 					maybe_update_search_matches(win);
-					ret: bool;
+					ret: bool = false;
 					using win.buffer.search_matches;
 					if matches.count > 0 && context.search.status == .SEARCH_REPLACE {
 						if ch == {
@@ -117,12 +114,10 @@ _execute_search :: (__: *String_Command_State, win: *Window) {
 								edit_alert("Invalid char");
 								ret = true;
 						}
-					} else {
-						ret = false;
-					}
+					} 
 					if !ret
 						release(win);
-					return ret;
+					return ret, "";
 				}, win);
 			}
 		} else {

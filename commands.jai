@@ -207,7 +207,7 @@ command_undo :: (in: Command_In) -> Command_Result {
 		prev_ok, prev_op := peek_last_operation(win.buffer);
 		if !prev_ok
 			break;
-		ok1, _ := buffer_undo(win);
+		ok1 := buffer_undo(win);
 		if !ok1
 			break;
 		iter_count += 1;
@@ -217,7 +217,7 @@ command_undo :: (in: Command_In) -> Command_Result {
 				break iter;
 			if !_buffer_operations_can_be_merged(prev_op, next_op)
 				break;
-			ok2, _ := buffer_undo(win);
+			ok2 := buffer_undo(win);
 			if !ok2
 				break iter;
 			prev_op = next_op;
@@ -236,7 +236,7 @@ command_redo :: (in: Command_In) -> Command_Result {
 		prev_ok, prev_op := peek_next_operation(win.buffer);
 		if !prev_ok
 			break;
-		ok1, _ := buffer_redo(win);
+		ok1 := buffer_redo(win);
 		if !ok1
 			break;
 		iter_count += 1;
@@ -246,7 +246,7 @@ command_redo :: (in: Command_In) -> Command_Result {
 				break iter;
 			if !_buffer_operations_can_be_merged(prev_op, next_op)
 				break;
-			ok2, _ := buffer_redo(win);
+			ok2 := buffer_redo(win);
 			if !ok2
 				break iter;
 			prev_op = next_op;
@@ -833,6 +833,7 @@ _copy_range :: (using win: *Window, clipboard: *Clipboard, start: Position, end:
 	return true;
 }
 
+// TODO: could use .INSERT_LINES for some of this stuff
 _paste :: (using win: *Window, on_next_char: bool) -> bool {
 	clipboard := context.edit.clipboard;
 	// TODO: jai linux clipboard is not working
