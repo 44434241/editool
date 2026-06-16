@@ -1073,7 +1073,7 @@ get_title :: (using buf: *Buffer) -> string {
 			}
 			if kind == .DIRECTORY {
 				if s == ""
-					s = "./";
+					s = ".";
 				else if peek(s) != #char "/"
 					s = tprint("%/", s);
 				s = tprint("[D] %", s);

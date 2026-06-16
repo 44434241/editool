@@ -678,6 +678,11 @@ add_all_execs :: () {
 		edit_alert("%", s);
 		return true;
 	});
+	_quit :: () -> bool {
+		return editool_quit();
+	}
+	add_exec("quit", _quit);
+	add_exec("q", _quit);
 }
 
 #scope_file

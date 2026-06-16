@@ -95,12 +95,6 @@ _create_buffer_from_file :: (filename: string, flags: Buffer.Flags, file_flags: 
 	return buf;
 }
 
-// also need:
-// - more info for files (size, is dir, permissions..)
-// - creating multiple/nested directories?
-// - ^ could have a different syntax for that.. actually think about directories more.
-// - press enter to visit
-// - rename files/dirs loaded in editool !
 // path must be normalized
 _create_buffer_from_directory :: (path: string) -> *Buffer {
 	buf := _new_buffer(.DIRECTORY);

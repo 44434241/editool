@@ -60,6 +60,7 @@ make_command_alias :: ($chars: $T/.[ []s32, string ]) -> Command.Proc {
 	return inner_proc;
 }
 
+// not used ..
 command_quit :: (_: Command_In) -> Command_Result {
 	editool_quit();
 	return .{};
@@ -537,10 +538,10 @@ add_all_commands :: () {
 		proc = command_motion,
 		motion_proc = command_motion_motion,
 	);
-	add_global_command(
-		keybind = "q",
-		proc = command_quit,
-	);
+	//add_global_command(
+		//keybind = "q",
+		//proc = command_quit,
+	//);
 	add_global_command(
 		keybind = "i",
 		proc = #bake_arguments command_change_edit_mode(mode = .INSERT),

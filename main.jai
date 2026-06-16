@@ -23,6 +23,12 @@
 // - buffers/windows
 // - jump/undo history 
 //
+// dir stuff:
+// - more info for files (size, is dir, permissions..)
+// - rename files/dirs loaded in editool !
+// - creating multiple/nested directories?
+// - ^ could have a different syntax for that.. actually think about directories more.
+//
 // thinking...:
 // - i need to have multiple previous-jump lists, for short and long jumps..
 // - should i rename command_delete* -> command_erase* ?
@@ -455,7 +461,7 @@ editool_assertion_failed :: (loc: Source_Code_Location, message: string) -> bool
 	return runtime_support_assertion_failed(loc, message);
 }
 
-editool_quit :: (force: bool = false) {
+editool_quit :: (force: bool = false) -> bool {
 	can_quit := true;
 	if !force {
 		for context.edit.buffers {
@@ -473,6 +479,7 @@ editool_quit :: (force: bool = false) {
 	}
 	if can_quit
 		context.edit.should_quit = true;
+	return can_quit;
 }
 
 // doesn't init any buffers!!
