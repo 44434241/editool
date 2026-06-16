@@ -373,8 +373,7 @@ command_indent_motion :: (in: Command_In, motion: Motion_Result, step: int) -> C
 	};
 }
 
-// TODO: doesn't have any logic for interpreting tabs as spaces!!
-// count can be negative?
+// TODO: if count > 0, doesn't have any logic for interpreting tabs as spaces!!
 _do_indent :: (using win: *Window, ly: int, ry: int, count: int) {
 	TABS :: #run -> string {
 		chars: [..]u8;
@@ -383,7 +382,7 @@ _do_indent :: (using win: *Window, ly: int, ry: int, count: int) {
 		return cast(string)chars; // jai copies this, right??
 	};
 	if count > TABS.count {
-		log_error("why are you indenting so much???");
+		edit_warn("why are you indenting so much???");
 		count = TABS.count;
 	}
 	ly = clamp(ly, 0, win.lines.count-1);
@@ -829,7 +828,6 @@ _copy_range :: (using win: *Window, clipboard: *Clipboard, start: Position, end:
 		return false;
 	}
 	clipboard.lines = copied_lines; // @Leak leaks old lines
-	// TODO: jai linux clipboard is not working
 	edit_set_os_clipboard(join(.. clipboard.lines, separator = "\n"));
 	return true;
 }

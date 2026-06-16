@@ -22,10 +22,7 @@ find_or_create_file_buffer :: (_filename: string, flags: Buffer.Flags = .NONE, f
 	filename := _filename;
 	if filename {
 		filename = normalize_path(filename,, allocator=temp);
-		if is_directory(filename) {
-			// TODO: idk fix shit
-			assert(false, "Trying to open directory (% -> %)...", _filename, filename);
-		}
+		assert(!is_directory(filename));
 		for context.edit.buffers {
 			if it.kind == .FILE && it.path == filename {
 				if it.file_flags != file_flags

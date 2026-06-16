@@ -203,14 +203,17 @@ restore_checkpoint :: (win: *Window, checkpoint: Buffer_Checkpoint) {
 save_buffer :: (buf: *Buffer) -> bool, string {
 	if buf.kind == {
 		case .FILE;
-			if buf.file_flags & (.NO_FILE | .READ_ONLY) {
-				return false, tprint("Bad flags: %", buf.file_flags);
-			}
+			if !buf.path
+				return false, "Can't save without filename";
+			if buf.file_flags & .READ_ONLY
+				return false, "Can't save a read only file";
 			s := buffer_as_string_for_saving(buf,, allocator=temp);
 			edit_alert("Writing % bytes to '%'", s.count, buf.path);
 			ok := write_entire_file(buf.path, s);
-			if ok
+			if ok {
+				buf.file_flags &= ~.NO_FILE; 
 				clear_dirty(buf);
+			}
 			if !ok
 				return false, "Failed to modify file";
 			return true, "";
@@ -525,7 +528,7 @@ for_expansion :: (using buffer: *Buffer, body: Code, for_flags: For_Flags) #expa
 
 Buffer_Op :: struct {
 	Flags :: enum_flags {
-		NO_UNDO; // cannot be undone (when opening a file, tbh not used)
+		NO_UNDO; // cannot be undone (rn just used by directory)
 		NO_CALLBACK; // 
 		IGNORE_CAPS; // (handled by _) execute even if capabilities disallow it
 		IS_UNDO; // this is info for callbacks

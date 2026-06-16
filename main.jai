@@ -2,26 +2,30 @@
 // Thinking: some kind of enter-insert-mode command that doesn't reset running dot command
 // ^ makes dot function as a macro 
 // ^ didn't find myself think about it too much
+// ^ i need more flags to define what commands support (eg .NUMBER | .DOT | .MULTICURSOR)
 // ...
 // 
-// OTHER TODO: (i need a list for this) pwn library for jai?
+// OTHER TODO: (i need a list for this) pwn library for jai? 
+// ^ honestly..
+//
 // - multiple clipboards ? idk
 // ^ should i?
 //
 // - multiline searching?
-// - directories (and a buffer thing for renaming directories)
 // - keybinds to undo/redo ff & fr (as in, see history??) (just make it proper !)
 // - breaks clipboard image, when open ...
 // - here string syntax (need multiline shit)
 // - hook for moving cursor in window (or could have a last time for cursor change, could be cleaner)
 // - maybe n/N should scroll a bit differently?
 // - scroll still not working with jumps (need to look into them)
-// - need to store buffer filename in mark?
 // - for search replace, could mark the last search differently for readability !!
+// - named marks should be global? <- priority maybe
+// - embedded buffer stuff? (fzf command, shell, whatever else...)
+// - search probably supporting 'no' confirm
 //
 // Things for ff (mostly for debugging idk)
-// - buffers/windows
-// - jump/undo history 
+// - windows
+// - jump & undo history 
 //
 // dir stuff:
 // - more info for files (size, is dir, permissions..)
@@ -29,15 +33,13 @@
 // - creating multiple/nested directories?
 // - ^ could have a different syntax for that.. actually think about directories more.
 //
+// Try implementing language server
+// Try implementing multiple cursors
+//
 // thinking...:
 // - i need to have multiple previous-jump lists, for short and long jumps..
 // - should i rename command_delete* -> command_erase* ?
-//
-// Thinking: user confirmations? <- for search/replace && directory files
-// - callbacks? (confirm mode? that would mean that no nonsense must happen during draw)
-// - freezee and just wait...
-//
-//
+// - Markdown?
 
 Keybind :: struct {
 	chars: []s32;
@@ -71,6 +73,9 @@ keybind_to_string :: (kb: $T/.[Keybind, []s32, [..]s32]) -> string {
 	return cast(string)ret;
 }
 
+_1984_logger :: (message: string, data: *void, info: Log_Info) {
+}
+
 file_logger :: (message: string, data: *void, info: Log_Info) {
 	assert(data != null);
 	f: *File = data;
@@ -81,10 +86,9 @@ file_logger :: (message: string, data: *void, info: Log_Info) {
 	file_flush(f);
 }
 
-init_logger :: () {
-	LOGFILE :: "/dev/pts/2";
+init_file_logger :: (filename: string) {
 	f := New(File); // leak
-	f.* = file_open(LOGFILE, for_writing = true);
+	f.* = file_open(filename, for_writing = true);
 	assert(is_valid(f));
 	context.logger = file_logger;
 	context.logger_data = f;
@@ -483,9 +487,12 @@ editool_quit :: (force: bool = false) -> bool {
 }
 
 // doesn't init any buffers!!
-editool_init :: () {
+editool_init :: (logfile := "") {
 	// logger
-	init_logger();
+	if logfile
+		init_file_logger(logfile);
+	else
+		context.logger = _1984_logger;
 	time_this("Editool init");
 	// ncurses
 	initscr();
@@ -546,27 +553,41 @@ editool_deinit :: () {
 }
 
 main :: () {
-	editool_init();
+	filenames: [..]string;
+	filenames.allocator = temp;
+	logfile := "";
 	{
-		// init buffer
-		filename: string = "."; // current dir
 		args := get_command_line_arguments();
-		assert(args.count <= 2);
-		if args.count > 1
-			filename = args[1];
-		//parent := create_container_window(context.edit.root);
-		parent := context.edit.root;
-		buf: *Buffer = get_path_buffer(filename);
-		assert(buf != null);
-		//
-		win1 := create_buffer_window(parent, buf, flags = .BUFFER_LINE_NO);
-		select_window(win1);
-		change_container_mode(win1.parent, .TABBED);
-		{
-			//p := FLOATING_PADDING;
-			//context.edit.floating_nwindow =
-					//derwin(stdscr, LINES - xx (p.y * 2), xx(COLS - p.x * 2), xx p.y, xx p.x);
+		idx := 1;
+		while idx < args.count {
+			if args[idx] == {
+				case "--logfile";
+					idx += 1;
+					if idx >= args.count {
+						print("Missing --logfile argument\n", to_standard_error = true);
+						exit(1);
+					}
+					logfile = args[idx];
+					idx += 1;
+				case;
+					array_add(*filenames, args[idx]);
+					idx += 1;
+			}
 		}
+		if !filenames
+			array_add(*filenames, ".");
+	}
+	editool_init(logfile = logfile);
+	{
+		log("filenames: %", filenames);
+		parent := context.edit.root;
+		for filenames {
+			buf: *Buffer = get_path_buffer(it);
+			win := create_buffer_window(parent, buf, flags = .BUFFER_LINE_NO);
+			select_window(win);
+		}
+		select_window(parent.children[0]);
+		change_container_mode(parent, .TABBED);
 	}
 	//
 	while true {

@@ -136,7 +136,6 @@ find_char_in_window :: (win: *Window, ch: u8, opposite_ch: u8, step: int, count:
 motion_inner :: (in: Motion_In, $ch: u8, $inclusive: bool) -> Motion_Result {
 	left_x, right_x: int = ---;
 	win := in.window;
-	// TODO: weird bug with deleting exclusive inner ()[], deletes ()[] too..
 	#if ch == "(" || ch == ")" {
 		left_x = find_char_in_line(win, "(", ")", -1, in.number);
 		right_x = find_char_in_line(win, ")", "(", 1, in.number);
@@ -190,7 +189,7 @@ motion_word :: (in: Motion_In, $step: int = 1, $flags: Motion_Word_Flags = 0) ->
 	using,except(flags) win := in.window;
 	assert(step == 1 || step == -1);
 	line := *win.lines[cursor.y];
-	// TODO: early returns don't support number (though it doesn't matter that much, maybe its better?)
+	// early returns don't support number (though it doesn't matter that much, maybe its better?)
 	if step > 0 && cursor.x >= line.count {
 		return .{
 			start = cursor.position,
