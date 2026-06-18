@@ -99,6 +99,8 @@ array_reverse :: (arr: *[]$T) {
 	}
 }
 
+string_copy :: copy_string;
+
 #scope_file
 
 #import "Math";

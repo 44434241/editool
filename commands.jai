@@ -4,7 +4,8 @@ Command :: struct {
 	Motion_Proc :: #type (Command_In, Motion_Result) -> Command_Result;
 	Char_Proc :: #type (Command_In, s32) -> Command_Result;
 	Flags :: enum_flags {
-		EXPECT_NORMALIZED_MOTION,
+		EXPECT_NORMALIZED_MOTION;
+		CURSOR; // this commands acts on cursors (supports multicursor)
 		NONE :: 0;
 	}
 	name: string;

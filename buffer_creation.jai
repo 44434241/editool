@@ -40,6 +40,8 @@ get_file_buffer :: find_or_create_file_buffer;
 
 find_or_create_directory_buffer :: (_path: string) -> *Buffer {
 	path := normalize_path(_path,, allocator=temp);
+	if peek(path) != #char "/"
+		path = tprint("%/", path);
 	assert(is_directory(path), "'%' is not directory", path);
 	for context.edit.buffers {
 		if it.kind == .DIRECTORY && it.path == path
@@ -111,9 +113,7 @@ _create_buffer_from_directory :: (path: string) -> *Buffer {
 		if is_directory(s)
 			s = sprint("%/", s,, allocator=allocator_of(buf));
 		assert(starts_with(s, path));
-		s = advance(s, path.count + 1);
-		//if peek(path) != #char "/"
-			//s = advance(s, 1);
+		s = advance(s, path.count+1);
 		array_add(*directory_files, .{
 			last_name = s,
 		});
@@ -250,6 +250,7 @@ destroy_buffer :: (buffer: *Buffer) {
 }
 
 can_destroy_buffer :: (buf: *Buffer) -> bool {
+	assert(buf != null);
 	if buf.ref_count > 0
 		return false;
 	if buf.windows.count > 0

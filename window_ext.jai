@@ -83,10 +83,15 @@ create_mark :: (using win: *Window) -> Mark {
 	return mark;
 }
 
-go_to_mark :: (win: *Window, mark: Mark, is_jump := true) -> bool {
+get_mark_buffer :: (mark: Mark) -> *Buffer {
 	buf := find_buffer(mark.buffer_id);
 	if !buf && mark.path
 		buf = get_path_buffer(mark.path);
+	return buf;
+}
+
+go_to_mark :: (win: *Window, mark: Mark, is_jump := true) -> bool {
+	buf := get_mark_buffer(mark);
 	if !buf
 		return false;
 	change_buffer(win, buf);
@@ -153,7 +158,7 @@ normalize_scroll :: (using win: *Window) {
 		scroll = cursor.y;
 	}
 	// TODO: doesn't work properly
-	// _update_cursor_mark(win, false);
+	//_update_cursor_mark(win, false);
 }
 
 offset_scroll :: (using win: *Window, val: int) {
@@ -206,6 +211,8 @@ _update_cursor_mark :: (using win: *Window, create: bool) {
 			create = true;
 		}
 	}
+	log("update cursor mark % %", get_title(win), create);
+	log_stack_trace(context.stack_trace);
 	if create {
 		if cursor_mark_index >= 0 {
 			cursor_marks.count = cursor_mark_index + 1; 

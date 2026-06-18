@@ -239,6 +239,8 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 					array_add(*new_lines, "");
 				replace_buffer_lines_without_caps(state.match_win, new_lines);
 			}
+			if force
+				move_cursor(state.match_win, .{0, state.res.start_line});
 		}
 		if state.match_win.cursor.y < state.res.items.count {
 			item := state.res.items[state.match_win.cursor.y];
@@ -293,7 +295,8 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 	}
 	parent.on_destroy = (win: *Window) {
 		state := win.user_data.(*Fzf_State);
-		state.res.release(*state.res);
+		if state.res.release
+			state.res.release(*state.res);
 		edit_alert("release...");
 		free(state);
 	};
@@ -319,11 +322,13 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 				break;
 			item := state.res.items[y];
 			prefix_count := item.line_prefix.count;
-			if it.dirty_flags & .USER1 && ends_with(item.filename, ".jai") {
-				syntax := get_syntax_for_filename(item.filename);
-				apply_syntax_mods(it, syntax, first_x = prefix_count);
-				it.user_mods = it.mods;
-				it.dirty_flags &= ~.USER1;
+			if item.flags & .SYNTAX {
+				if it.dirty_flags & .USER1 && ends_with(item.filename, ".jai") {
+					syntax := get_syntax_for_filename(item.filename);
+					apply_syntax_mods(it, syntax, first_x = prefix_count);
+					it.user_mods = it.mods;
+					it.dirty_flags &= ~.USER1;
+				}
 			}
 			if win.cursor.y == y {
 				for * it.user_mods {
@@ -358,14 +363,9 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 					continue;
 				if x >= Line.user_mods.count
 					continue;
+				// these create a yellow color
 				it.user_mods[x].attributes |= A_BOLD;
-				if y == win.cursor.y || true {
-					//it.user_mods[x].bg = 7;
-					//it.user_mods[x].fg = 1;
-				} else {
-					//it.user_mods[x].fg = 6;
-					//it.user_mods[x].bg = 1; // same as initial
-				}
+				it.user_mods[x].fg = 0; 
 			}
 		}
 	};
@@ -596,6 +596,19 @@ add_all_execs :: () {
 		}, start_search = start);
 		return win != null;
 	}, ""));
+	add_exec("fj", #run make_exec_proc((start: string) -> bool {
+		win := make_fzf_window((res: *Fzf_Result, s: string, data: *void) {
+			window_id := cast(WinId)data;
+			win := find_window(window_id);
+			if !win
+				return;
+			if win {
+				edit_alert("do fj '%'", s);
+				do_fzf_jumps(win, res, s);
+			}
+		}, cast(*void)context.buffer_window.id, start_search = start);
+		return win != null;
+	}, ""));
 	add_exec("search", () -> bool {
 		buf := context.search.buffer;
 		win := create_buffer_window(null, buf, flags = .TEMP_FLOATING | .BUFFER_LINE_NO | .BORDER, is_hidden = true, select = false);
@@ -676,6 +689,12 @@ add_all_execs :: () {
 	});
 	add_exec("echo", (s: string) -> bool {
 		edit_alert("%", s);
+		return true;
+	});
+	add_exec("clip_path", () -> bool {
+		path := context.buffer_window.buffer.path;
+		edit_set_os_clipboard(path);
+		edit_alert("Clip: '%'", path);
 		return true;
 	});
 	_quit :: () -> bool {

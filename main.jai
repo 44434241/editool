@@ -13,15 +13,18 @@
 //
 // - multiline searching?
 // - keybinds to undo/redo ff & fr (as in, see history??) (just make it proper !)
-// - breaks clipboard image, when open ...
+// - breaks clipboard image, when open ... <- ALSO NEED TO SAVE PATH ..
 // - here string syntax (need multiline shit)
 // - hook for moving cursor in window (or could have a last time for cursor change, could be cleaner)
 // - maybe n/N should scroll a bit differently?
 // - scroll still not working with jumps (need to look into them)
 // - for search replace, could mark the last search differently for readability !!
-// - named marks should be global? <- priority maybe
 // - embedded buffer stuff? (fzf command, shell, whatever else...)
 // - search probably supporting 'no' confirm
+// - UPDATE HOW CURSOR MARKS WORK
+//
+// - named marks should be global? <- priority maybe
+// ^ also for compilation, i could mark the lines in the error output
 //
 // Things for ff (mostly for debugging idk)
 // - windows
@@ -40,6 +43,7 @@
 // - i need to have multiple previous-jump lists, for short and long jumps..
 // - should i rename command_delete* -> command_erase* ?
 // - Markdown?
+// - MAN PAGES...
 
 Keybind :: struct {
 	chars: []s32;
@@ -160,6 +164,8 @@ Editool :: struct {
 	x11_window: X11.Window;
 	syntaxes: [..]*Syntax;
 	ask: Ask_State;
+	should_print_path: bool;
+	tty_file: *FILE;
 }
 
 edit_get_os_clipboard :: () -> string {
@@ -495,7 +501,18 @@ editool_init :: (logfile := "") {
 		context.logger = _1984_logger;
 	time_this("Editool init");
 	// ncurses
-	initscr();
+	#if 0 {
+		initscr();
+		context.edit.tty_file = stdout;
+	} else {
+		tty_name := ttyname(STDIN_FILENO);
+		f := fopen(tty_name, "r+b");
+		context.edit.tty_file = f;
+		assert(f != null);
+		term := newterm(null, f, f);
+		assert(term != null);
+		set_term(term);
+	}
 	noecho(); 
 	nodelay(stdscr, true);
 	keypad(stdscr, true); // use all keys
@@ -547,9 +564,21 @@ editool_init :: (logfile := "") {
 	context.print_style.default_format_struct.use_newlines_if_long_form = true;
 }
 
+// ...
+update_cursor_thing :: (normal: bool) {
+	s := ifx normal then "\x1b[2 q" else "\x1b[6 q";
+	//print(s);
+	cnt := fwrite(s.data, 1, xx s.count, context.edit.tty_file);
+	fflush(context.edit.tty_file); // looks like i need to do this..
+	log("cnt = %\n", cnt);
+}
+
 editool_deinit :: () {
-	print("\x1b[2 q"); 
+	update_cursor_thing(true);
 	endwin();
+	if context.edit.should_print_path {
+		print("%\n", context.edit.buffer_window.buffer.path);
+	}
 }
 
 main :: () {
@@ -561,10 +590,13 @@ main :: () {
 		idx := 1;
 		while idx < args.count {
 			if args[idx] == {
-				case "--logfile";
+				case "--print-path";
+					context.edit.should_print_path = true;
+					idx += 1;
+				case "--log-file";
 					idx += 1;
 					if idx >= args.count {
-						print("Missing --logfile argument\n", to_standard_error = true);
+						print("Missing --log-file argument\n", to_standard_error = true);
 						exit(1);
 					}
 					logfile = args[idx];
@@ -575,7 +607,7 @@ main :: () {
 			}
 		}
 		if !filenames
-			array_add(*filenames, ".");
+			array_add(*filenames, "./");
 	}
 	editool_init(logfile = logfile);
 	{
@@ -648,9 +680,9 @@ main :: () {
 			//refresh();
 			#if 1 {
 				if edit.mode == .INSERT
-					print("\x1b[6 q"); // thin
+					update_cursor_thing(false); // thin
 				else
-					print("\x1b[2 q"); // normal
+					update_cursor_thing(true); // normal
 			}
 			while true {
 				update_window_events();
@@ -699,6 +731,7 @@ main :: () {
 #import "fson";
 X11 :: #import "X11";
 #import "Input";
+#import "POSIX";
 Uniform :: #import "uniform";
 
 #import "Clipboard";

@@ -2,15 +2,20 @@
 // it's not actually fuzzy lol
 
 Fzf_Item :: struct {
+	Flags :: enum_flags {
+		SYNTAX;
+		NONE :: 0;
+	}
+	flags: Flags = .SYNTAX;
 	filename: string; // file to open when selected
 	line_number: int; // file line to go to
 	line: string; // line as text
 	start: int = -1;
 	end: int = -1;
-	// modified by window thing
+	user_data: *void;
+	// modified by `create_fzf_window` thing
 	line_prefix: string;
 	filename_start: int = 0; // where in line prefix filename starts
-	user_data: *void;
 }
 
 Fzf_Result :: struct {
@@ -18,11 +23,13 @@ Fzf_Result :: struct {
 	items: [..]Fzf_Item;
 	ok: bool;
 	search: string;
+	start_line: int; // when getting fzf for the first time, start at this line
 	// poll might add to the end of items, but it will never remove anything !!
 	poll: #type(*Fzf_Result) -> (); 
 	release: #type(*Fzf_Result) -> (); 
 	thread_group: Thread_Group;
 	get_buffer: #type (Fzf_Item) -> *Buffer;
+	user_data: *void;
 }
 
 allocator_of :: (res: *Fzf_Result) -> Allocator {
@@ -33,6 +40,7 @@ allocator_of :: (pool: *Pool) -> Allocator {
 	return .{pool_allocator_proc, pool};
 }
 
+// from `rg --json`
 Rg_Match :: struct {
 	Submatch :: struct {
 		match: struct { text: string; };
@@ -61,9 +69,7 @@ do_fd :: (res: *Fzf_Result, search: string, dir: string = ".") {
 	push_context,defer_pop ctx;
 	context.allocator = .{ pool_allocator_proc, *res.pool};
 	//
-	res.release = (res: *Fzf_Result) {
-		release(*res.pool);
-	};
+	res.release = _default_release;
 	res.get_buffer = _default_get_buffer;
 	res.search = copy_string(search);
 	res.items.allocator = context.allocator;
@@ -137,7 +143,7 @@ do_rg :: (res: *Fzf_Result, _search: string, paths: .. string) {
 		};
 		array_add(*res.items, item);
 	}
-	if lines.count >= 200 && false {
+	if lines.count >= 200 {
 		// There are a lot of lines, we use threads
 		Work :: struct {
 			json_string: string;
@@ -192,9 +198,7 @@ do_fzf_buffers :: (res: *Fzf_Result, search: string) {
 	context.allocator = allocator_of(*res.pool);
 	res.items.allocator = allocator_of(res);
 	//
-	res.release = (res: *Fzf_Result) {
-		release(*res.pool);
-	};
+	res.release = _default_release;
 	res.get_buffer = (item: Fzf_Item) -> *Buffer {
 		id := cast(BufId)item.user_data;
 		buf := find_buffer(id);
@@ -209,6 +213,39 @@ do_fzf_buffers :: (res: *Fzf_Result, search: string) {
 			user_data = cast(*void)it.id,
 		});
 	}
+}
+
+do_fzf_jumps :: (win: *Window, res: *Fzf_Result, search: string) {
+	time_this("Do fzf_jumps");
+	//
+	set_allocators(*res.pool);
+	old_allocator := context.allocator;
+	//ctx: #Context = context;
+	//push_context,defer_pop ctx;
+	//context.allocator = allocator_of(*res.pool);
+	res.items.allocator = allocator_of(res);
+	//
+	res.release = _default_release;
+	res.get_buffer = _default_get_buffer;
+	if !win
+		return;
+	res.start_line = max(0, win.cursor_mark_index);
+	//
+	for win.cursor_marks {
+		buf := get_mark_buffer(it);
+		y := it.position.y;
+		array_add(*res.items, .{
+			filename = it.path,
+			line = ifx y < buf.lines.count then string_copy(buf.lines[y].as_string,, allocator=allocator_of(res)) else "",
+			line_number = y,
+		});
+	}
+}
+
+#scope_file
+
+_default_release :: (res: *Fzf_Result) {
+	release(*res.pool);
 }
 
 _default_get_buffer :: (item: Fzf_Item) -> *Buffer {
