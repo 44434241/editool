@@ -51,6 +51,30 @@ find_or_create_directory_buffer :: (_path: string) -> *Buffer {
 	return buf;
 }
 
+_insert_string_into_buffer_as_from_file :: (buf: *Buffer, file_str: string) {
+	string_lines: []string = split(file_str, #char "\n",, allocator=temp);
+	for * string_lines {
+		// maybe should have some flag for clrf endings ?
+		if it.count && peek(it.*) == #char "\r" {
+			it.count -= 1;
+			buf.file_flags |= .CLRF;
+		}
+	}
+	// Doing this because a line is added on buffer creation
+	if string_lines.count > 0 && peek(string_lines) == ""
+		string_lines.count -= 1;
+	array_reserve(*buf.lines, string_lines.count + 10);
+	for string_lines {
+		// Only place left where lines/chars are directly added/removed.
+		array_adds(*peek_pointer(buf.lines).chars, it);
+		if it_index + 1 != string_lines.count {
+			array_add(*buf.lines, .{
+				chars.allocator = .{pool_allocator_proc, *buf.pool},
+			});
+		}
+	}
+}
+
 // filename must be normalized
 _create_buffer_from_file :: (filename: string, flags: Buffer.Flags, file_flags: Buffer.File_Flags) -> *Buffer {
 	time_this("Create buffer");
@@ -67,27 +91,7 @@ _create_buffer_from_file :: (filename: string, flags: Buffer.Flags, file_flags: 
 		file_str, file_ok = read_entire_file(filename,, allocator=temp);
 	}
 	if file_ok {
-		string_lines: []string = split(file_str, #char "\n",, allocator=temp);
-		for * string_lines {
-			// maybe should have some flag for clrf endings ?
-			if it.count && peek(it.*) == #char "\r" {
-				it.count -= 1;
-				buf.file_flags |= .CLRF;
-			}
-		}
-		// Doing this because a line is added on buffer creation
-		if string_lines.count > 0 && peek(string_lines) == ""
-			string_lines.count -= 1;
-		array_reserve(*buf.lines, string_lines.count + 10);
-		for string_lines {
-			// Only place left where lines/chars are directly added/removed.
-			array_adds(*peek_pointer(buf.lines).chars, it);
-			if it_index + 1 != string_lines.count {
-				array_add(*buf.lines, .{
-					chars.allocator = .{pool_allocator_proc, *buf.pool},
-				});
-			}
-		}
+		_insert_string_into_buffer_as_from_file(buf, file_str);
 	} else {
 		buf.file_flags |= .NO_FILE;
 	}

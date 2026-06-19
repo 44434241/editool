@@ -464,11 +464,11 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 		ly = .{ .BEGIN, 5 },
 		ry = .{ .END, -5 },
 	}, border = false);
+	change_edit_mode(.INSERT);
+	_write_normal_string(state.input_win, {0, 0}, start_search);
 	maybe_update_state(state, force = true);
 	select_window(input_win);
-	change_edit_mode(.INSERT);
 	// start search
-	_write_normal_string(state.input_win, {0, 0}, start_search);
 	return parent;
 }
 

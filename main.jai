@@ -11,10 +11,11 @@
 // - multiple clipboards ? idk
 // ^ should i?
 //
+// - multiline syntax is supported, but nested syntax isn't. need to do more stuff.
+// - ^ how would i do jai here string syntax? need to capture and re-match it?
 // - multiline searching?
 // - keybinds to undo/redo ff & fr (as in, see history??) (just make it proper !)
 // - breaks clipboard image, when open ... <- ALSO NEED TO SAVE PATH ..
-// - here string syntax (need multiline shit)
 // - hook for moving cursor in window (or could have a last time for cursor change, could be cleaner)
 // - maybe n/N should scroll a bit differently?
 // - scroll still not working with jumps (need to look into them)
@@ -22,6 +23,10 @@
 // - embedded buffer stuff? (fzf command, shell, whatever else...)
 // - search probably supporting 'no' confirm
 // - UPDATE HOW CURSOR MARKS WORK
+// - Stuff with long lines, there's often an unnecessary new line...
+// - When opening a file buffer from a directory buffer, the flags don't get re-updated.
+// - ^ should have separate "should show line numbers/status bar/etc" flags for buffers, and windows can have the option to override them???
+// - for a quick 'ff' fix, could choose to include directories or not if '/' is present in the search query..
 //
 // - named marks should be global? <- priority maybe
 // ^ also for compilation, i could mark the lines in the error output
@@ -35,6 +40,8 @@
 // - rename files/dirs loaded in editool !
 // - creating multiple/nested directories?
 // - ^ could have a different syntax for that.. actually think about directories more.
+// - should be able to big-confirm to delete directories recursively
+// - ^ [y]es/[n]no/[f]ull or some shit
 //
 // Try implementing language server
 // Try implementing multiple cursors
@@ -44,6 +51,17 @@
 // - should i rename command_delete* -> command_erase* ?
 // - Markdown?
 // - MAN PAGES...
+//
+// NEEDS OF THE MIRROR
+//
+// - FR IS SLOW 
+// - ^ 1. blacklist certain directories for 'fr' based on where i am? 
+// - ^ 2. make rg search also not-waiting
+//
+// - find (ff) is not prioritising the files correctly
+// - ^ 1. write my own find? 
+// - ^ 2. ??? look into the options
+//
 
 Keybind :: struct {
 	chars: []s32;
@@ -164,8 +182,10 @@ Editool :: struct {
 	x11_window: X11.Window;
 	syntaxes: [..]*Syntax;
 	ask: Ask_State;
-	should_print_path: bool;
+	// arg related stuff
+	should_print_path: bool = false;
 	tty_file: *FILE;
+	use_stdout_as_tty_fd: bool = false;
 }
 
 edit_get_os_clipboard :: () -> string {
@@ -505,7 +525,8 @@ editool_init :: (logfile := "") {
 		initscr();
 		context.edit.tty_file = stdout;
 	} else {
-		tty_name := ttyname(STDIN_FILENO);
+		fd := ifx !context.edit.use_stdout_as_tty_fd then STDIN_FILENO else STDOUT_FILENO;
+		tty_name := ttyname(xx fd);
 		f := fopen(tty_name, "r+b");
 		context.edit.tty_file = f;
 		assert(f != null);
@@ -590,6 +611,10 @@ main :: () {
 		idx := 1;
 		while idx < args.count {
 			if args[idx] == {
+				case "-";
+					context.edit.use_stdout_as_tty_fd = true;
+					array_add(*filenames, "-");
+					idx += 1;
 				case "--print-path";
 					context.edit.should_print_path = true;
 					idx += 1;
@@ -614,9 +639,24 @@ main :: () {
 		log("filenames: %", filenames);
 		parent := context.edit.root;
 		for filenames {
-			buf: *Buffer = get_path_buffer(it);
-			win := create_buffer_window(parent, buf, flags = .BUFFER_LINE_NO);
-			select_window(win);
+			if it != "-" {
+				buf: *Buffer = get_path_buffer(it);
+				win := create_buffer_window(parent, buf, flags = .BUFFER_LINE_NO);
+			} else {
+				buf: *Buffer = get_path_buffer("");
+				all_chars: [..]u8;
+				all_chars.allocator = temp;
+				while true {
+					bytes: [1024]u8 = ---;
+					cnt := fread(bytes.data, 1, bytes.count, stdin);
+					if !cnt
+						break;
+					array_adds(*all_chars, slice(cast(string)bytes, 0, xx cnt));
+				}
+				_insert_string_into_buffer_as_from_file(buf, cast(string)all_chars);
+				log("chars: %\n", cast(string)all_chars);
+				win := create_buffer_window(parent, buf, flags = .BUFFER_LINE_NO);
+			}
 		}
 		select_window(parent.children[0]);
 		change_container_mode(parent, .TABBED);

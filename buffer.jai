@@ -23,7 +23,11 @@ Line :: struct {
 	}
 	dirty_flags: Dirty_Flags = .ALL;
 	// size in x, considering tab characters and all that
-	real_size: int = - 1; 
+	real_size: int = - 1;
+	// If this line contains multiline syntax that doesnt end (e.g. '/*'),
+	// then this is its index
+	multiline_syntax_index: int = -1;
+	start_multiline_syntax_index: int = -1; // the syntax was evaluated using this index ! 
 }
 
 // this should be fast since line size is cached..
@@ -978,12 +982,17 @@ is_position_in_buffer :: (using buf: *Buffer, pos: Position) -> bool {
 	return true;
 }
 
-apply_syntax_mods :: (line: *Line, syntax: *Syntax, line_no_hint := -1, first_x := 0) {
+apply_syntax_mods :: (line: *Line, syntax: *Syntax, line_no_hint := -1, first_x := 0,
+			multiline_syntax_index := -1) {
+	#if 1 {
+		apply_syntax_mods_differently(line, syntax, line_no_hint, first_x, multiline_syntax_index);
+		return;
+	}
 	using,only(mods) line;
 	idx := first_x;
 	for 1..20 {
 		string_to_match := advance(line.as_string, idx);
-		matched, captures := Uniform.match(string_to_match, syntax.regex, .ANCHOR_START,, allocator=temp);
+		matched, captures := Uniform.match(string_to_match, syntax.regex, .UNANCHORED,, allocator=temp);
 		//matched, captures := Uniform.match(string_to_match, syntax.regex, .AN,, allocator=temp);
 		if !matched
 			break;
@@ -1027,22 +1036,127 @@ apply_syntax_mods :: (line: *Line, syntax: *Syntax, line_no_hint := -1, first_x 
 	}
 }
 
+apply_syntax_mods_differently :: (line: *Line, syntax: *Syntax, line_no_hint := -1, first_x := 0,
+			multiline_syntax_index := -1) {
+	using,only(mods) line;
+	Here_Match :: struct {
+		position: int; // start of the actual match
+		start: int;
+		end: int;
+		tried_match: bool = false;
+	}
+	matches: [Syntax_Element.COUNT]Here_Match;
+	idx := first_x;
+	line.start_multiline_syntax_index = multiline_syntax_index;
+	defer {
+		line.multiline_syntax_index = multiline_syntax_index;
+	}
+	for 1..20 {
+		if idx >= line.count
+			break;
+		string_to_match := advance(line.as_string, idx);
+		best_position := line.count;
+		match_index: int = -1;
+		if multiline_syntax_index >= 0 {
+			elem := *syntax.elements[multiline_syntax_index];
+			ok, captures := Uniform.match(string_to_match, elem.multiline_end_regex, .UNANCHORED,, allocator=temp);
+			next_idx := line.count;
+			if ok {
+				next_idx = (captures[0].data - line.chars.data) + captures[0].count;
+			}
+			for idx..next_idx-1 {
+				if it >= line.mods.count
+					break;
+				mod := *mods[it];
+				mod.fg = elem.color;
+			}
+			if ok {
+				multiline_syntax_index = -1;
+				idx = next_idx;
+				continue;
+			} else {
+				break;
+			}
+		}
+		for syntax.elements {
+			if !it.is_compiled
+				continue;
+			// super specific thing optimization:
+			if best_position == idx
+				break;
+			match := *matches[it_index];
+			if !match.tried_match || match.position < idx {
+				match.tried_match = true;
+				if it.match_kind == .NORMAL {
+					ok, captures := Uniform.match(string_to_match, it.regex, .UNANCHORED,, allocator=temp);
+					if ok {
+						match.position = captures[0].data - line.chars.data;
+						match.start = captures[1].data - line.chars.data;
+						match.end = match.start + captures[1].count - 1;
+					} else {
+						match.position = line.count;
+					}
+				} else if it.match_kind == .MULTILINE_START_END {
+					ok, captures := Uniform.match(string_to_match, it.multiline_start_regex, .UNANCHORED,, allocator=temp);
+					if ok {
+						// multiline doesn't have any prefix/suffix shit
+						match.position = captures[0].data - line.chars.data;
+						match.start = captures[0].data - line.chars.data;
+						match.end = match.start + captures[0].count - 1;
+					} else {
+						match.position = line.count;
+					}
+				}
+			}
+			if match.position < best_position {
+				best_position = match.position;
+				match_index = it_index;
+			}
+		}
+		if best_position >= line.count
+			break;
+		m := *matches[match_index];
+		elem := *syntax.elements[match_index];
+		for m.start..m.end {
+			if it >= line.mods.count
+				break;
+			mod := *mods[it];
+			mod.fg = elem.color;
+		}
+		idx = m.end + 1;
+		if elem.match_kind == .MULTILINE_START_END {
+			multiline_syntax_index = match_index;
+		}
+		if it > 15 {
+			log_error("(2) kept matching at line % (%)\n", line_no_hint, idx);
+		}
+	}
+}
+
 // It takes a window on which the buffer will be drawn to.
 // Maybe should organize this better (user_mods should belong to window?? that seems too much).
 _refresh_buffer_modifiers :: (win: *Window, using buf: *Buffer, ly: int, ry: int) {
 	time_this("Refresh buffer modifiers");
-	lines_to_refresh := []Line.{ data = lines.data + ly, count = ry - ly };
+	#if 0 {
+		lines_to_refresh := []Line.{ data = lines.data + ly, count = ry - ly };
+	} else {
+		// Since we're using multiline syntax stuff, we need to refresh all lines up to this one
+		lines_to_refresh := []Line.{ data = lines.data, count = ry };
+	}
 	maybe_update_search_matches(win); // makes sure search replace is ok
 	for * lines_to_refresh {
 		true_line_no := it_index + ly;
 		//assert (it.count <= mods.count, "%", it.count);
+		multiline_syntax_index := ifx it_index == 0 then -1 else lines_to_refresh[it_index-1].multiline_syntax_index;
+		if it.start_multiline_syntax_index != multiline_syntax_index
+			it.dirty_flags |= .MODS;
 		if (it.dirty_flags & .MODS) {
 			for * it.mods {
 				it.* = .{};
 				it.fg = syntax.normal_color;
 			}
 			if syntax.is_compiled
-				apply_syntax_mods(it, syntax, line_no_hint = true_line_no, first_x = 0);
+				apply_syntax_mods(it, syntax, line_no_hint = true_line_no, first_x = 0, multiline_syntax_index = multiline_syntax_index);
 			it.dirty_flags &= ~.MODS;
 		}
 		it.user_mods = it.mods;

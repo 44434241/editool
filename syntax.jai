@@ -1,10 +1,15 @@
 
 Syntax_Element :: struct {
+	// kind is an index..
 	Kind :: enum {
 		// in order of priority ?
 		DEFAULT;
+		COMMENT;
+		MULTILINE_COMMENT;
 		TAB;
-		STRING;
+		NOTE;
+		STRING1;
+		STRING2;
 		DIRECTIVE; 
 		KEYWORD1;
 		KEYWORD2;
@@ -15,42 +20,35 @@ Syntax_Element :: struct {
 		CONSTANT2;
 		CONSTANT3;
 		NUMBER;
-		COMMENT;
 		EOL_SPACE;
-		NOTE;
 		DECLARATION;
+		OTHER1;
 		COUNT;
 	}
+	COUNT :: Kind.COUNT;
 	Flags :: enum_flags {
-		IS_NOT_WORD; // between 
+		IS_WORD;
 		NONE :: 0;
 	}
+	Match_Kind :: enum {
+		NORMAL;
+		MULTILINE_START_END;
+	}
+	match_kind: Match_Kind = .NORMAL;
 	flags: Flags = .NONE;
-	COUNT :: Kind.COUNT;
+	color: s8 = -1; // 
+	// .NORMAL
 	match: string;
 	match_suffix: string; // not captured
-	color: s8 = -1; // 
+	// .START_END_MULTILINE
+	multiline_start: string;
+	multiline_end: string;
+	multiline_start_regex: Uniform.Regexp;
+	multiline_end_regex: Uniform.Regexp;
+	// replace is unused ..
 	replace: string; // ** this isn't a direct replace, but it keeps length ** 
-}
-
-get_syntax_for_filename :: (filename: string) -> *Syntax {
-	if context.edit.syntaxes.count == 0 {
-		{
-			// Empty
-			syntax := New(Syntax);
-			array_add(*context.edit.syntaxes, syntax);
-		}
-		{
-			// Jai
-			syntax := New(Syntax);
-			syntax.* = create_jai_syntax();
-			array_add(*context.edit.syntaxes, syntax);
-		}
-	}
-	if filename == ""
-		return context.edit.syntaxes[0];
-	else
-		return context.edit.syntaxes[1];
+	is_compiled: bool = false;
+	regex: Uniform.Regexp;
 }
 
 // has reasonable defaults  ?
@@ -58,24 +56,150 @@ Syntax :: struct {
 	elements: [Syntax_Element.COUNT]Syntax_Element;
 	using Syntax_Element.Kind;
 	elements[KEYWORD1].color = 13; // orange
-	elements[KEYWORD2].color = 0;
+	elements[KEYWORD2].color = 14; // 14 - dark green.. this is for less special keywords?
 	elements[KEYWORD3].color = 13; // 13 - orange, 14 - (it/it_index) dark green
 	elements[TYPE1].color = 3; // cyan
 	elements[TYPE2].color = 3; // cyan
 	elements[CONSTANT1].color = 12; // white
 	elements[CONSTANT2].color = 12; // white
 	elements[CONSTANT3].color = 12; // white
-	elements[STRING].color = 12; // white
+	elements[STRING1].color = 12; // white
+	elements[STRING2].color = 12; // white
 	elements[DIRECTIVE].color = 5; // purple 
 	elements[NUMBER].color = 12; // white
 	elements[TAB].color = 12; // white
 	elements[COMMENT].color = 4; // grey
+	elements[MULTILINE_COMMENT].color = 4; // grey
 	elements[DECLARATION].color = 14; // dark green (24 or 30 or 6?)
 	elements[NOTE].color = 6; // dark green (24 or 30 or 6?)
 	elements[EOL_SPACE].color = 4; // grey, same as comment
+	elements[OTHER1].color = 5; // dark purple - this is for bash `ls`
+	//
+	elements[KEYWORD1].flags = .IS_WORD;
+	elements[KEYWORD2].flags = .IS_WORD;
+	elements[KEYWORD3].flags = .IS_WORD;
+	elements[TYPE1].flags = .IS_WORD;
+	elements[TYPE2].flags = .IS_WORD;
+	elements[CONSTANT1].flags = .IS_WORD;
+	elements[CONSTANT2].flags = .IS_WORD;
+	elements[CONSTANT3].flags = .IS_WORD;
+	elements[NUMBER].flags = .IS_WORD;
 	normal_color: s8 = 0;
 	is_compiled: bool = false;
 	regex: Uniform.Regexp;
+	extension: string;
+}
+
+get_syntax_for_filename :: (filename: string) -> *Syntax {
+	if context.edit.syntaxes.count == 0 {
+		{
+			// Empty
+			syntax := New(Syntax);
+			syntax.extension = "";
+			array_add(*context.edit.syntaxes, syntax);
+		}
+		{
+			// Jai
+			syntax := New(Syntax);
+			syntax.* = create_jai_syntax();
+			syntax.extension = "jai";
+			array_add(*context.edit.syntaxes, syntax);
+		}
+		{
+			// Bash
+			syntax := New(Syntax);
+			syntax.* = create_bash_syntax();
+			syntax.extension = "sh";
+			array_add(*context.edit.syntaxes, syntax);
+		}
+		{
+			// Mike
+			syntax := New(Syntax);
+			syntax.* = create_mike_syntax();
+			syntax.extension = "mike";
+			array_add(*context.edit.syntaxes, syntax);
+		}
+	}
+	ext := path_to_extension(filename);
+	for context.edit.syntaxes {
+		if it.extension == ext
+			return it;
+	}
+	return context.edit.syntaxes[0];
+}
+
+path_to_extension :: (_path: string) -> string {
+	path := _path;
+	idx1 := find_index_from_right(path, #char "/");
+	if idx1 >= 0
+		path = advance(path, idx1+1);
+	if path == {
+		case ".bashrc";
+			return "sh";
+	}
+	idx2 := find_index_from_right(path, #char ".");
+	if idx2 >= 0
+		return advance(path, idx2+1);
+	else
+		return "";
+}
+
+create_mike_syntax :: () -> Syntax {
+	using syntax: Syntax;
+	syntax.elements[STRING1].match = "\"(?:[^\"\\\\]|\\\\.)*(?:\"|$)";
+	syntax.elements[NUMBER].match = "\\d+(?:\\.\\d+)?";
+	syntax.elements[TAB].match = "\\t++";
+	syntax.elements[CONSTANT1].match = #run join(.. .[
+		"true",
+		"false",
+	], "|");
+	//syntax.elements[COMMENT].match = "#.*?$";
+	//
+	syntax.elements[CONSTANT1].flags |= .IS_WORD;
+	syntax.elements[NUMBER].flags |= .IS_WORD;
+	compile_syntax(*syntax);
+	return syntax;
+}
+
+create_bash_syntax :: () -> Syntax {
+	using syntax: Syntax;
+	elements[KEYWORD1].match = #run join(.. .[
+		"alias",
+		"export",
+		"set",
+		"unset",
+		"function",
+		"if",
+		"then",
+		"fi",
+		"return",
+		"for",
+		"while",
+		"do",
+		"done",
+		"else",
+		"in",
+	], "|");
+	// these are bash builtins?
+	elements[KEYWORD2].match = #run join(.. .[
+		"trap",
+		"eval",
+		"ulimit",
+		"cd",
+		"shopt",
+		"echo",
+		"true",
+		"false",
+	], "|");
+	syntax.elements[STRING1].match = "\"(?:[^\"\\\\]|\\\\.)*(?:\"|$)";
+	syntax.elements[STRING2].match = "'(?:[^'\\\\]|\\\\.)*(?:'|$)";
+	syntax.elements[OTHER1].match = "`(?:[^`\\\\]|\\\\.)*(?:`|$)";
+	//syntax.elements[NUMBER].match = "\\d+(?:\\.\\d+)?";
+	syntax.elements[TAB].match = "\\t++";
+	syntax.elements[COMMENT].match = "#.*?$";
+	//
+	compile_syntax(*syntax);
+	return syntax;
 }
 
 create_jai_syntax :: () -> Syntax {
@@ -141,10 +265,14 @@ create_jai_syntax :: () -> Syntax {
 	elements[DECLARATION].match_suffix = "(?:\\s*\\,\\s*\\w+)*\\s*:";
 	syntax.elements[TYPE2].match = "[A-Z]\\w*[a-z]\\w*+";
 	syntax.elements[DIRECTIVE].match = "#\\w*(?:\\,\\w*+)*+";
-	syntax.elements[STRING].match = "\"(?:[^\"\\\\]|\\\\.)*(?:\"|$)";
+	syntax.elements[STRING1].match = "\"(?:[^\"\\\\]|\\\\.)*(?:\"|$)";
 	syntax.elements[NUMBER].match = "\\d+(?:\\.\\d+)?";
 	syntax.elements[TAB].match = "\\t++";
 	syntax.elements[COMMENT].match = "//.*?$";
+	// doesn't support nested multiline comments ...
+	syntax.elements[MULTILINE_COMMENT].match_kind = .MULTILINE_START_END;
+	syntax.elements[MULTILINE_COMMENT].multiline_start = "/\\*";
+	syntax.elements[MULTILINE_COMMENT].multiline_end = "\\*/";
 	syntax.elements[CONSTANT2].match = "(?:\\$?[A-Z_][A-Z_\\d]*+|\\$\\w++)";
 	elements[CONSTANT3].match_suffix = #run sprint("\\s*:\\s*(?:%)?\\w*:", decl_type);
 	syntax.elements[CONSTANT3].match = elements[DECLARATION].match;
@@ -153,15 +281,6 @@ create_jai_syntax :: () -> Syntax {
 	//syntax.elements[EOL_SPACE].match = " +$";
 	//syntax.elements[EOL_SPACE].replace = "-";
 	//
-	elements[STRING].flags |= .IS_NOT_WORD;
-	elements[DECLARATION].flags |= .IS_NOT_WORD; // fixes a, b := 3;
-	//elements[NUMBER].flags |= .IS_NOT_WORD;
-	elements[TAB].flags |= .IS_NOT_WORD;
-	elements[COMMENT].flags |= .IS_NOT_WORD;
-	//elements[TYPE2].flags |= .IS_NOT_WORD;
-	//elements[CONSTANT2].flags |= .IS_NOT_WORD;
-	//elements[CONSTANT3].flags |= .IS_NOT_WORD;
-	elements[EOL_SPACE].flags |= .IS_NOT_WORD;
 	compile_syntax(*syntax);
 	return syntax;
 }
@@ -173,7 +292,7 @@ compile_syntax :: (using syntax: *Syntax) {
 		builder.allocator = temp;
 		// match anything (lazy) + 1 or more non word character or start of line
 		//print(*builder, "(.*?(?:^|\\W))"); // CAN'T DO THIS
-		print(*builder, "(.*?)"); 
+		print(*builder, "()"); 
 		print(*builder, "(");
 		for * syntax.elements {
 			defer {
@@ -188,7 +307,7 @@ compile_syntax :: (using syntax: *Syntax) {
 			extra_end := "";
 			extra_start := "";
 			//log("% % %", it_index, it.flags, extra);
-			if it.flags & .IS_NOT_WORD == 0 {
+			if it.flags & .IS_WORD {
 				// is word
 				extra_end = "(?:\\W|$)"; 
 				extra_start = "(?:^|\\W)"; // CAN'T DO WITH THIS
@@ -203,4 +322,32 @@ compile_syntax :: (using syntax: *Syntax) {
 		}
 	}
 	regex, is_compiled = Uniform.compile(regex_str);
+	// now, compile each element seperately...
+	for * syntax.elements {
+		if it.match_kind == .NORMAL {
+			if !it.match
+				continue;
+			extra_start := "";
+			extra_end := "";
+			if it.flags & .IS_WORD {
+				// is word
+				extra_start = "(?:^|\\W)"; 
+				extra_end = "(?:\\W|$)"; 
+			}
+			regex_str := tprint("%(%)%0%", extra_start, it.match, it.match_suffix, extra_end);
+			it.regex, it.is_compiled = Uniform.compile(regex_str);
+		} else if it.match_kind == .MULTILINE_START_END {
+			if !it.multiline_start || !it.multiline_end
+				continue;
+			re_start, ok_start := Uniform.compile(tprint("%", it.multiline_start));
+			re_end, ok_end := Uniform.compile(tprint("%", it.multiline_end));
+			if ok_start && ok_end { // @Leak if only half compiles
+				it.is_compiled = true;
+				it.multiline_start_regex = re_start;
+				it.multiline_end_regex = re_end;
+			} else {
+				assert(false, "error thing..");
+			}
+		}
+	}
 }
