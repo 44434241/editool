@@ -73,8 +73,24 @@ do_fd :: (res: *Fzf_Result, search: string, dir: string = ".") {
 	res.get_buffer = _default_get_buffer;
 	res.search = copy_string(search);
 	res.items.allocator = context.allocator;
-	_, output := run_command("fd", "-p", "--no-ignore", "--type", "file", "--", search, dir, "/home/user/jai/latest", capture_and_return_output = true);
-	for < split(output, #char "\n",, allocator=temp) {
+	args: [..]string;
+	args.allocator = temp;
+	array_add(*args, "fd", "--no-ignore", "--type", "file");
+	if array_find(cast([]u8)search, #char "/") {
+		array_add(*args, "--full-path");
+	}
+	array_add(*args, "--", search, dir, "/home/user/jai/latest");
+	_, output := run_command(.. args, capture_and_return_output = true);
+	count_slashes :: (s: string) -> int {
+		ret: int = 0;
+		for s
+			if it == #char "/"
+				ret += 1;
+		return ret;
+	}
+	lines := split(output, #char "\n",, allocator=temp);
+	quick_sort(lines, count_slashes);
+	for lines {
 		if !it
 			continue;
 		array_add(*res.items, .{
