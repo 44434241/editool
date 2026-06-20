@@ -691,15 +691,25 @@ add_all_execs :: () {
 		edit_alert("%", s);
 		return true;
 	});
+	_quit :: () -> bool {
+		return editool_quit();
+	}
 	add_exec("clip_path", () -> bool {
 		path := context.buffer_window.buffer.path;
 		edit_set_os_clipboard(path);
 		edit_alert("Clip: '%'", path);
 		return true;
 	});
-	_quit :: () -> bool {
-		return editool_quit();
-	}
+	add_exec("cd", (s: string) -> bool {
+		path := normalize_path(s);
+		ok := set_working_directory(path);
+		return ok;
+	});
+	add_exec("pwd", () -> bool {
+		dir := get_working_directory();
+		edit_alert("pwd: %", dir);
+		return true;
+	});
 	add_exec("quit", _quit);
 	add_exec("q", _quit);
 }

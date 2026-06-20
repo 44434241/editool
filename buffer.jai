@@ -34,13 +34,19 @@ Line :: struct {
 get_line_real_size_as_y :: (win: *Window, line: *Line) -> int {
 	if win.size.x <= 0
 		return 1;
-	sz := get_real_size(line);
+	sz := get_real_size(line) + 1;
+	sz_x := win.size.x;
 	if win.flags & .BUFFER_LINE_NO {
 		sz += BUFFER_LINE_NO_SIZE_X;
+		sz_x += BUFFER_LINE_NO_SIZE_X;
+	}
+	if win.flags & .BUFFER_MARKS {
+		sz += BUFFER_MARKS_SIZE_X;
+		sz_x += BUFFER_MARKS_SIZE_X;
 	}
 	if sz <= 1 
 		return 1;
-	ret := (sz + win.size.x - 1) / win.size.x;
+	ret := (sz + sz_x - 1) / sz_x;
 	// floor dif
 	return ret;
 }
@@ -747,7 +753,6 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 			//
 			//normalize_marks(it);
 			normalize_cursor(it, with_scroll = true); 
-			recalculate_window_real_size_y(win);
 		}
 	}
 	//normalize_buffer_operation(buf, op);
@@ -1193,16 +1198,6 @@ _get_char_info :: (ch: u8) -> Buffer_Char_Info {
 	}
 	// defaults:
 	return .{};
-}
-
-file_list_including_directories :: (path: string, recursive := false, follow_directory_symlinks := true) -> [] string {
-	files : [..] string;
-	visitor :: (info: *File_Visit_Info, user_data: *[..] string) {
-		array_add(user_data, copy_string(info.full_name));
-	}
-	 visit_files(path, recursive, *files, visitor,
-			follow_directory_symlinks=follow_directory_symlinks, visit_directories=true);
-	return files;
 }
 
 #scope_file

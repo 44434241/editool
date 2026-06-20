@@ -179,6 +179,7 @@ create_bash_syntax :: () -> Syntax {
 		"done",
 		"else",
 		"in",
+		"break",
 	], "|");
 	// these are bash builtins?
 	elements[KEYWORD2].match = #run join(.. .[

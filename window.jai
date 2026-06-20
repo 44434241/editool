@@ -163,27 +163,7 @@ Window :: struct {
 
 // not used as a constant everywhere
 BUFFER_LINE_NO_SIZE_X :: 5;
-
-recalculate_window_real_size_y :: (using win: *Window) {
-	/*
-	if size.x <= 0 {
-		real_size_y = 0;
-		return;
-	}
-	real_size_y = 0;
-	y_count := 0;
-	for y: scroll..min(lines.count, scroll+size.y)-1 {
-		if y_count >= size.y
-			break;
-		real_size_y += 1;
-		sz := _get_real_x_in_line(*lines[y], lines[y].count);
-		if win.flags & .BUFFER_LINE_NO
-			sz += BUFFER_LINE_NO_SIZE_X;
-		sz = max(sz, 1);
-		cnt := (sz + size.x - 1) / size.x;
-		y_count += cnt;
-	}*/
-}
+BUFFER_MARKS_SIZE_X :: 2;
 /// DRAWING
 
 // this is this only drawing proc allowed to be call rn
@@ -515,7 +495,7 @@ create_buffer_window :: (parent: *Window, buf: *Buffer, flags: Window.Flags = .N
 	array_add(*context.edit.windows, win);
 	win.is_hidden = is_hidden;
 	win.flags = flags;
-	if buf.kind == .FILE {
+	if buf.kind == .FILE || buf.kind == .DIRECTORY {
 		win.flags |= .BUFFER_MARKS;
 		win.flags |= .BUFFER_LINE_NO;
 		win.flags |= .BUFFER_STATUS_LINE;
@@ -761,13 +741,13 @@ refresh_window_size :: (using win: *Window, force := false) {
 	}
 	if win.flags & .BUFFER_MARKS {
 		buffer_mark_position = begin.x;
-		begin.x += 2;
-		size.x -= 2;
+		begin.x += BUFFER_MARKS_SIZE_X;
+		size.x -= BUFFER_MARKS_SIZE_X;
 	}
 	if win.flags & .BUFFER_LINE_NO {
 		buffer_line_no_position = begin.x;
-		begin.x += 5;
-		size.x -= 5;
+		begin.x += BUFFER_LINE_NO_SIZE_X;
+		size.x -= BUFFER_LINE_NO_SIZE_X;
 	}
 	if win.flags & .CONTAINER_TABS && win.container_mode == .TABBED {
 		// tabbed window has a info thing at the top
@@ -779,7 +759,6 @@ refresh_window_size :: (using win: *Window, force := false) {
 	log("win % is now of size %\n", win, size);
 	if win.kind == {
 		case .BUFFER;
-			recalculate_window_real_size_y(win);
 			normalize_scroll(win);
 		case .CONTAINER;
 			if container_mode == .TABBED {

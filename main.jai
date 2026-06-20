@@ -23,13 +23,12 @@
 // - embedded buffer stuff? (fzf command, shell, whatever else...)
 // - search probably supporting 'no' confirm
 // - UPDATE HOW CURSOR MARKS WORK
-// - Stuff with long lines, there's often an unnecessary new line...
-// - When opening a file buffer from a directory buffer, the flags don't get re-updated.
-// - ^ should have separate "should show line numbers/status bar/etc" flags for buffers, and windows can have the option to override them???
-// - for a quick 'ff' fix, could choose to include directories or not if '/' is present in the search query..
+// - should have separate "should show line numbers/status bar/etc" flags for buffers, and windows can have the option to override them???
+// - do 'ci/' command
 //
 // - named marks should be global? <- priority maybe
 // ^ also for compilation, i could mark the lines in the error output
+// - cd exec
 //
 // Things for ff (mostly for debugging idk)
 // - windows
@@ -62,6 +61,8 @@
 // - ^ 1. write my own find? 
 // - ^ 2. ??? look into the options
 //
+
+X11_CLIPBOARD :: true;
 
 Keybind :: struct {
 	chars: []s32;
@@ -179,21 +180,36 @@ Editool :: struct {
 	next_dot_command: [..]s32;
 	clipboard: Clipboard;
 	//
-	x11_window: X11.Window;
+	#if X11_CLIPBOARD {
+		x11_window: X11.Window;
+	} else {
+		not_os_clipboard: string;
+	}
 	syntaxes: [..]*Syntax;
 	ask: Ask_State;
 	// arg related stuff
 	should_print_path: bool = false;
 	tty_file: *FILE;
 	use_stdout_as_tty_fd: bool = false;
+	dont_mess_with_tty: bool = false;
 }
 
-edit_get_os_clipboard :: () -> string {
-	return os_clipboard_get_text(context.edit.x11_window,, allocator=temp);
-}
-
-edit_set_os_clipboard :: (s: string) {
-	os_clipboard_set_text(context.edit.x11_window, s);
+#if X11_CLIPBOARD {
+	edit_get_os_clipboard :: () -> string {
+		return os_clipboard_get_text(context.edit.x11_window,, allocator=temp);
+	}
+	
+	edit_set_os_clipboard :: (s: string) {
+		os_clipboard_set_text(context.edit.x11_window, s);
+	}
+} else {
+	edit_get_os_clipboard :: () -> string {
+		return context.edit.not_os_clipboard;
+	}
+	
+	edit_set_os_clipboard :: (s: string) {
+		context.edit.not_os_clipboard = string_copy(s); // leak
+	}
 }
 
 // internal ! and very bad
@@ -521,7 +537,7 @@ editool_init :: (logfile := "") {
 		context.logger = _1984_logger;
 	time_this("Editool init");
 	// ncurses
-	#if 0 {
+	if context.edit.dont_mess_with_tty {
 		initscr();
 		context.edit.tty_file = stdout;
 	} else {
@@ -574,7 +590,7 @@ editool_init :: (logfile := "") {
 	context.edit.time = 1;
 	context.assertion_failed = editool_assertion_failed;
 	// x11
-	{
+	#if X11_CLIPBOARD {
 		X11.init_global_display();
 		// invisible window for clipboard ..
 		context.edit.x11_window = X11.XCreateSimpleWindow(
@@ -617,6 +633,9 @@ main :: () {
 					idx += 1;
 				case "--print-path";
 					context.edit.should_print_path = true;
+					idx += 1;
+				case "--std-tty";
+					context.edit.dont_mess_with_tty = true;
 					idx += 1;
 				case "--log-file";
 					idx += 1;
@@ -725,7 +744,8 @@ main :: () {
 					update_cursor_thing(true); // normal
 			}
 			while true {
-				update_window_events();
+				#if X11_CLIPBOARD
+					update_window_events();
 				ch = getch();
 				if ch != ERR {
 					break;
@@ -769,9 +789,11 @@ main :: () {
 #import "String";
 #import "ncurses";
 #import "fson";
-X11 :: #import "X11";
-#import "Input";
 #import "POSIX";
 Uniform :: #import "uniform";
 
-#import "Clipboard";
+#if X11_CLIPBOARD {
+	X11 :: #import "X11";
+	#import "Input";
+	#import "Clipboard";
+}

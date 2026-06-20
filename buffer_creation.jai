@@ -368,3 +368,16 @@ _new_buffer :: (kind: Buffer.Kind) -> *Buffer {
 	});
 	return buf;
 }
+
+file_list_including_directories :: (path: string, recursive := false, follow_directory_symlinks := true) -> [] string {
+	files : [..] string;
+	visitor :: (info: *File_Visit_Info, user_data: *[..] string) {
+		array_add(user_data, copy_string(info.full_name));
+	}
+	 visit_files(path, recursive, *files, visitor,
+			follow_directory_symlinks=follow_directory_symlinks, visit_directories=true);
+	quick_sort(files, compare);
+	return files;
+}
+
+#import "Sort";
