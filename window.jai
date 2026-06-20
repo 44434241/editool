@@ -1180,3 +1180,5 @@ _ncurses_remake :: (using win: *Window) {
 	delwin(nwindow);
 	nwindow = derwin(parent.nwindow, 1, 1, 0, 0);
 }
+
+// test
