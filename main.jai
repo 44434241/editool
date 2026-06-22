@@ -26,6 +26,7 @@
 // - should have separate "should show line numbers/status bar/etc" flags for buffers, and windows can have the option to override them???
 // - named marks should be global? <- priority maybe
 // - ^ also for compilation, i could mark the lines in the error output
+// - using '{' to copy/delete backwards kinda cuts some shit off
 //
 // Things for ff (mostly for debugging idk)
 // - windows

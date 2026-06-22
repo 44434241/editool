@@ -134,7 +134,7 @@ get_mark_at_y :: (using buf: *Buffer, y: int) -> bool, Mark {
 }
 
 // this returns a normalized y..
-get_relative_y :: (using buf: *Buffer, y: int, rel: int) -> int {
+get_relative_y :: (using buf: *Buffer, y: int, rel: int, inclusive := false) -> int {
 	y = clamp(y, 0, buf.lines.count-1);
 	while rel > 0 && y < buf.lines.count {
 		fold := get_fold(buf, y);
@@ -154,7 +154,7 @@ get_relative_y :: (using buf: *Buffer, y: int, rel: int) -> int {
 		}
 		rel += 1;
 	}
-	y = clamp(y, 0, buf.lines.count-1);
+	y = clamp(y, 0, ifx inclusive then buf.lines.count else buf.lines.count-1);
 	return y;
 }
 

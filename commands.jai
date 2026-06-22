@@ -134,7 +134,7 @@ command_delete_motion :: (in: Command_In, motion: Motion_Result, enter_insert_mo
 
 command_delete_line :: (in: Command_In) -> Command_Result {
 	using win := in.window;
-	ry := get_relative_y(buffer, cursor.y, in.number) - 1;
+	ry := get_relative_y(buffer, cursor.y, in.number, inclusive = true) - 1;
 	copy_line_range(win, cursor.y, ry); // assumed to not fail?
 	erase_lines(win, cursor.y, ry - cursor.y + 1);
 	return .{
