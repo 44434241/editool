@@ -106,11 +106,15 @@ do_fd :: (res: *Fzf_Result, search: string, dir: string = ".") {
 do_rg :: (res: *Fzf_Result, _search: string, paths: .. string) {
 	time_this("Do ripgrep");
 	set_allocators(*res.pool);
+	#if 0 {
+		// this still leaks.. ? maybe the problem is somwhere else?
+		ctx: #Context = context;
+		ctx.allocator = allocator_of(res);
+		push_context,defer_pop ctx;
+	}
+	
 	//
-	ctx: #Context = context;
-	push_context,defer_pop ctx;
-	context.allocator = allocator_of(*res.pool);
-	res.items.allocator = context.allocator;
+	res.items.allocator = allocator_of(res);
 	//
 	res.get_buffer = _default_get_buffer;
 	//
@@ -122,7 +126,7 @@ do_rg :: (res: *Fzf_Result, _search: string, paths: .. string) {
 		array_add(*extra_paths, "/home/user/jai/latest");
 	}
 	//
-	res.search = copy_string(search);
+	res.search = copy_string(search,, allocator=allocator_of(res));
 	res.release = (res: *Fzf_Result) {
 		if res.thread_group.initted {
 			edit_alert("release thread group");
@@ -142,9 +146,15 @@ do_rg :: (res: *Fzf_Result, _search: string, paths: .. string) {
 	array_add(*args, .. extra_paths);
 	if !paths
 		array_add(*args, ".");
-	_, output := run_command(.. args, capture_and_return_output = true);
+	#if 1 {
+		_, output := run_command(.. args, capture_and_return_output = true,, allocator=allocator_of(res));
+	} else {
+		// TODO: run the process in background and read lines as needed...
+		process: Process;
+		success := create_process(*process, .. args, capture_and_return_output = true);
+	}
 	//res, output := run_command("rg", search, dir, "--json", "-m", "10", "-S", capture_and_return_output = true,, allocator=temp);
-	lines := split(output, #char "\n");
+	lines := split(output, #char "\n",, allocator=temp);
 	maybe_add :: (res: *Fzf_Result, val: Rg_Match) {
 		if val.type != "match" 
 			return;
@@ -170,12 +180,15 @@ do_rg :: (res: *Fzf_Result, _search: string, paths: .. string) {
 		// I DON'T KNOW WHY THIS HAPPENS @@:
 		// if num_threads > 6 and using pool allocator, it randomly crashes...
 		// (but otherwise, this shit leaks..)
-		init(*res.thread_group, num_threads = 5, (group: *Thread_Group, thread: *Thread, _work: *void) -> Thread_Continue_Status {
+		num_threads := get_number_of_processors();
+		num_threads = clamp(num_threads / 2, 1, 32);
+		edit_alert("num threads: %", num_threads);
+		init(*res.thread_group, num_threads = num_threads, (group: *Thread_Group, thread: *Thread, _work: *void) -> Thread_Continue_Status {
 			work := _work.(*Work);
 			// looks like using the temp thread allocator works..
 			work.parse_ok, work.match = fson_parse_string(work.json_string, Rg_Match,, allocator=temp);
 			return .CONTINUE;
-		});
+		},, allocator=allocator_of(res));
 		res.poll = (res: *Fzf_Result) {
 			time_this("Poll");
 			results := get_completed_work(*res.thread_group,, allocator=temp);
@@ -188,7 +201,7 @@ do_rg :: (res: *Fzf_Result, _search: string, paths: .. string) {
 		};
 		start(*res.thread_group,, allocator=temp);
 		for lines {
-			work := New(Work);
+			work := New(Work,, allocator=allocator_of(res));
 			work.* = .{ json_string = it };
 			add_work(*res.thread_group, work,, allocator=temp);
 			//log("MATCH %", val);
@@ -199,7 +212,7 @@ do_rg :: (res: *Fzf_Result, _search: string, paths: .. string) {
 		//}
 	} else {
 		for lines {
-			ok, match := fson_parse_string(it, Rg_Match);
+			ok, match := fson_parse_string(it, Rg_Match,, allocator=allocator_of(res));
 			maybe_add(res, match);
 		}
 	}
@@ -235,10 +248,6 @@ do_fzf_jumps :: (win: *Window, res: *Fzf_Result, search: string) {
 	time_this("Do fzf_jumps");
 	//
 	set_allocators(*res.pool);
-	old_allocator := context.allocator;
-	//ctx: #Context = context;
-	//push_context,defer_pop ctx;
-	//context.allocator = allocator_of(*res.pool);
 	res.items.allocator = allocator_of(res);
 	//
 	res.release = _default_release;
@@ -265,10 +274,22 @@ _default_release :: (res: *Fzf_Result) {
 }
 
 _default_get_buffer :: (item: Fzf_Item) -> *Buffer {
+	cnt := file_length(item.filename);
+	if cnt > 1024 * 1024 {
+		edit_alert("Refusing to preview > 1mb file");
+		return null;
+	}
 	return get_path_buffer(item.filename);
 }
 
-#scope_file 
+file_length :: (filename: string) -> int {
+	f, ok := file_open(filename);
+	if !ok
+		return -1;
+	len := file_length(f);
+	file_close(*f);
+	return len;
+}
 
 #import "Process";
 #import "jaison";

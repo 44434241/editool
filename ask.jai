@@ -1,6 +1,4 @@
 
-
-
 Ask_State :: struct {
 	// returns true if it should ask gain?
 	// callback with (0) is a special thing saying that it is done !

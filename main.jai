@@ -24,11 +24,8 @@
 // - search probably supporting 'no' confirm
 // - UPDATE HOW CURSOR MARKS WORK
 // - should have separate "should show line numbers/status bar/etc" flags for buffers, and windows can have the option to override them???
-// - do 'ci/' command
-//
 // - named marks should be global? <- priority maybe
-// ^ also for compilation, i could mark the lines in the error output
-// - cd exec
+// - ^ also for compilation, i could mark the lines in the error output
 //
 // Things for ff (mostly for debugging idk)
 // - windows
@@ -55,12 +52,13 @@
 //
 // - FR IS SLOW 
 // - ^ 1. blacklist certain directories for 'fr' based on where i am? 
-// - ^ 2. make rg search also not-waiting
+// - ^ 2. make rg search also not-waiting <- working on it..
 //
-// - find (ff) is not prioritising the files correctly
-// - ^ 1. write my own find? 
-// - ^ 2. ??? look into the options
-//
+// Folds
+// - Not all motions supports folds, need fo fix them up...
+// - Need a better way to visualize them.. maybe mark the line number differently?
+// - Nested ones not supported rn
+// - 'qq' marking all messes up with top level #if's 
 
 X11_CLIPBOARD :: true;
 
@@ -484,10 +482,10 @@ COLOR_FG_COUNT :: COLOR_FG_LAST + 2;
 
 // returns pair index, still need to call COLOR_PAIR
 color_fg_bg :: (fg: int, bg: int) -> (pair: s32) {
-	assert(-1 <= fg);
-	assert(-1 <= bg);
-	assert(fg <= COLOR_FG_LAST, "%", fg);
-	assert(bg <= COLOR_BG_LAST, "%", bg);
+	//assert(-1 <= fg);
+	//assert(-1 <= bg);
+	//assert(fg <= COLOR_FG_LAST, "%", fg);
+	//assert(bg <= COLOR_BG_LAST, "%", bg);
 	idx := (fg + 1) + (bg + 1) * (COLOR_FG_COUNT);
 	return xx idx;
 }
@@ -619,6 +617,8 @@ editool_deinit :: () {
 }
 
 main :: () {
+	//here_edit: Editool;
+	//context.edit = *here_edit;
 	filenames: [..]string;
 	filenames.allocator = temp;
 	logfile := "";
@@ -682,7 +682,7 @@ main :: () {
 	}
 	//
 	while true {
-		edit := *context.edit;
+		using,only(edit) context;
 		{
 			// housekeeping here + before drawing
 			if edit.should_reset_edit_mode {
@@ -733,9 +733,6 @@ main :: () {
 				}
 			}*/
 			draw_windows_recursive(context.edit.root);
-			for context.edit.alerts
-				free(it);
-			array_reset(*context.edit.alerts);
 			//refresh();
 			#if 1 {
 				if edit.mode == .INSERT

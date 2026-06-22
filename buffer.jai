@@ -15,11 +15,11 @@ Line :: struct {
 	mods: [CONST_MOD_COUNT]Char_Mod = ---; // A LOT !
 	user_mods: [CONST_MOD_COUNT]Char_Mod = ---;
 	Dirty_Flags :: enum_flags {
-		MODS; 
+		MODS; // when text is updated, or when fold is updated? 
 		USER1; // something the user sets
 		REAL_SIZE;
 		NONE :: 0;
-		ALL :: MODS | USER1;
+		ALL :: MODS | USER1 | REAL_SIZE;
 	}
 	dirty_flags: Dirty_Flags = .ALL;
 	// size in x, considering tab characters and all that
@@ -144,15 +144,16 @@ Buffer :: struct {
 	commands: [..]Command; // can only be added to after buffer creation
 	search_matches: Search_Matches; // touched by search..
 	marks: [..]Mark;
+	folds: [..]Fold;
 	// file
 	path: string; // for .FILE or .DIRECTORY
 	file_flags: File_Flags;
 	syntax: *Syntax;
 	// extra stuff
 	user_data: *void; // has to be explicitly
-	modify_buffer_operation: #type (*Window, *Buffer_Op) -> bool;
+	modify_buffer_operation: #type (*Window, *Buffer, *Buffer_Op) -> bool;
 	// both buffer and window have apply_mods
-	apply_mods: #type (*Window, []Line) -> ();
+	apply_mods: #type (*Window, []*Line) -> ();
 	active_checkpoint: Buffer_Checkpoint = BUFFER_CHECKPOINT_NULL;
 	user_title: string;
 	ref_count: int;
@@ -160,6 +161,38 @@ Buffer :: struct {
 	directory_files: [..]Directory_File;
 	directory_files_confirm_index := -1;
 	//is_in_directory_confirm_thing := false;
+}
+
+Fold :: struct {
+	// inclusive
+	start: int = -1;
+	end: int = -1;
+}
+
+get_fold_exact :: (buf: *Buffer, y: int) -> *Fold {
+	for * buf.folds {
+		if it.start == y
+			return it;
+	}
+	return null;
+}
+
+get_fold :: (buf: *Buffer, y: int) -> *Fold {
+	for * buf.folds {
+		if it.start <= y && y <= it.end
+			return it;
+	}
+	return null;
+}
+
+add_fold :: (buf: *Buffer, fold: Fold) {
+	buf.lines[fold.start].dirty_flags |= .MODS;
+	array_add(*buf.folds, fold);
+}
+
+remove_fold :: (buf: *Buffer, fold: *Fold) {
+	buf.lines[fold.start].dirty_flags |= .MODS;
+	array_ordered_remove_by_index(*buf.folds, fold - buf.folds.data);
 }
 
 Directory_File :: struct {
@@ -208,6 +241,24 @@ restore_checkpoint :: (win: *Window, checkpoint: Buffer_Checkpoint) {
 		assert(ok);
 	}
 	active_checkpoint = BUFFER_CHECKPOINT_NULL;
+}
+
+refresh_buffer :: (win: *Window) -> bool, string {
+	buf := win.buffer;
+	if is_dirty(buf)
+		return false, "Can't refresh dirty";
+	if buf.kind == {
+		case .FILE;
+			if !buf.path
+				return false, "Can't refresh without filename";
+			refresh_file_buffer(buf);
+			return true, "";
+		case .DIRECTORY;
+			refresh_directory_buffer(buf);
+			return true, "";
+		case;
+			return false, "Not a file (%)";
+	}
 }
 
 save_buffer :: (buf: *Buffer) -> bool, string {
@@ -633,7 +684,7 @@ buffer_undo :: (win: *Window) -> bool {
 	ok := true;
 	if ok && (op.flags & .NO_CALLBACK == 0) && (op.flags &.CALLBACK_BEFORE_UNDO_AND_REDO) {
 		if win.buffer.modify_buffer_operation
-			ok = win.buffer.modify_buffer_operation(win, *op);
+			ok = win.buffer.modify_buffer_operation(win, buf, *op);
 	}
 	if ok
 		ok = _execute_buffer_operation(win, buf, *op, update_cursor = true);
@@ -652,7 +703,7 @@ buffer_redo :: (win: *Window) -> bool {
 	ok := true;
 	if ok && (op.flags & .NO_CALLBACK == 0) && (op.flags &.CALLBACK_BEFORE_UNDO_AND_REDO) {
 		if win.buffer.modify_buffer_operation
-			ok = win.buffer.modify_buffer_operation(win, *op);
+			ok = win.buffer.modify_buffer_operation(win, buf, *op);
 	}
 	if ok
 		ok = _execute_buffer_operation(win, buf, *op, update_cursor = true);
@@ -662,19 +713,24 @@ buffer_redo :: (win: *Window) -> bool {
 	return ok;
 }
 
+execute_buffer_operation :: (win: *Window, op: Buffer_Op) -> bool {
+	assert(win != null);
+	return execute_buffer_operation(win, win.buffer, op);
+}
+
 // buffer operation THROUGH window
 // This is the only one that respects the callback?
-execute_buffer_operation :: (win: *Window, _op: Buffer_Op) -> bool {
-	allocator := Allocator.{pool_allocator_proc, *win.buffer.pool};
+// window could be null here
+execute_buffer_operation :: (win: *Window, using buf: *Buffer, _op: Buffer_Op) -> bool {
+	allocator := Allocator.{pool_allocator_proc, *buf.pool};
 	op := _op;
-	using buf: *Buffer = win.buffer;
 	ok: bool = true;
 	if ok {
 		if op.kind == .INSERT_CHARS {
 			op.chars = array_copy(op.chars,, allocator);
 		} else if op.kind == .INSERT_LINES {
 			lines: [..]string;
-			lines.allocator = allocator_of(win.buffer);
+			lines.allocator = allocator_of(buf);
 			//array_reserve(*lines, op.lines.count);
 			for op.lines {
 				log("looking for error in op lines (%/%)", it_index, op.lines.count);
@@ -687,7 +743,7 @@ execute_buffer_operation :: (win: *Window, _op: Buffer_Op) -> bool {
 	if ok && (op.flags & .NO_CALLBACK == 0) {
 		// this doesn't have to return a bool, instead it could modify it to a nop !
 		if buf.modify_buffer_operation
-			ok = buf.modify_buffer_operation(win, *op);
+			ok = buf.modify_buffer_operation(win, buf, *op);
 	}
 	if ok {
 		// it's actually scary to pass the allocator here, incase some callback happens?
@@ -731,17 +787,21 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 				log_error("whoops, forgor %\n", op.kind);
 		}
 	}
-	using,only(cursor) win;
-	allocator := Allocator.{pool_allocator_proc, *win.buffer.pool};
 	if fill_for_undo {
 		// only place where cursor is used..
-		op.begin_cursor_position = cursor.position;
+		if win != null {
+			op.begin_cursor_position = win.cursor.position;
+		} else {
+			op.begin_cursor_position = .{0, 0}; // should mark this as none or something??
+		}
 		op.begin_mode = context.edit.mode;
 		op.begin_time = context.edit.time;
 	}
 	defer {
-		if update_cursor {
-			move_cursor(win, op.begin_cursor_position);
+		if win != null {
+			if update_cursor {
+				move_cursor(win, op.begin_cursor_position);
+			}
 		}
 		buf.modify_time = context.edit.time;
 		for buf.windows {
@@ -834,6 +894,14 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 			return;
 		for * buf.marks {
 			_shift_y(*it.position, pos, count, null);
+		}
+		for * buf.folds {
+			if it.start > pos.y {
+				it.start += count;
+			}
+			if it.end > pos.y {
+				it.end += count;
+			}
 		}
 		for buf.windows {
 			moved_line_y: bool = false;
@@ -936,31 +1004,40 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 	return true;
 }
 
-replace_buffer_lines_without_caps :: (using win: *Window, new_lines: []string) {
-	cursor_pos := win.cursor.position;
-	execute_buffer_operation(win, .{
+replace_buffer_lines_without_caps :: (win: *Window, new_lines: []string, extra_flags: Buffer_Op.Flags = .NONE) {
+	assert(win != null);
+	replace_buffer_lines_without_caps(win, win.buffer, new_lines, extra_flags);
+}
+
+replace_buffer_lines_without_caps :: (win: *Window, using,except(flags) buf: *Buffer, new_lines: []string, extra_flags: Buffer_Op.Flags = .NONE) {
+	cursor_pos: Position;
+	if win != null
+		cursor_pos = win.cursor.position;
+	flags := extra_flags | .IGNORE_CAPS;
+	execute_buffer_operation(win, buf, .{
 		kind = .INSERT_LINES,
 		y = lines.count,
 		count = new_lines.count,
 		lines = new_lines,
-		flags = .IGNORE_CAPS,
+		flags = flags,
 	});
 	if new_lines.count == 0 {
-		execute_buffer_operation(win, .{
+		execute_buffer_operation(win, buf, .{
 			kind = .INSERT_LINES,
 			y = lines.count,
 			count = 1,
 			lines = .[ "" ],
-			flags = .IGNORE_CAPS,
+			flags = flags,
 		});
 	}
-	execute_buffer_operation(win, .{
+	execute_buffer_operation(win, buf, .{
 		kind = .ERASE_LINES,
 		y = 0,
 		count = lines.count - max(new_lines.count, 1),
-		flags = .IGNORE_CAPS,
+		flags = flags,
 	});
-	move_cursor(win, cursor_pos); // this normalizes it too
+	if win != null
+		move_cursor(win, cursor_pos); // this normalizes it too
 }
 
 peek_last_operation :: (using buf: *Buffer) -> bool, Buffer_Op {
@@ -1140,17 +1217,23 @@ apply_syntax_mods_differently :: (line: *Line, syntax: *Syntax, line_no_hint := 
 
 // It takes a window on which the buffer will be drawn to.
 // Maybe should organize this better (user_mods should belong to window?? that seems too much).
+// [ly, ry)
 _refresh_buffer_modifiers :: (win: *Window, using buf: *Buffer, ly: int, ry: int) {
 	time_this("Refresh buffer modifiers");
+	assert(ry <= lines.count);
 	#if 0 {
 		lines_to_refresh := []Line.{ data = lines.data + ly, count = ry - ly };
 	} else {
 		// Since we're using multiline syntax stuff, we need to refresh all lines up to this one
-		lines_to_refresh := []Line.{ data = lines.data, count = ry };
+		//lines_to_refresh := []Line.{ data = lines.data, count = ry };
+		// But let's not be too slow.
+		actual_ly := max(0, ry - 100);
+		actual_ly = clamp(ry - 100, 0, ly);
+		lines_to_refresh := []Line.{ data = lines.data + actual_ly, count = ry - actual_ly };
 	}
 	maybe_update_search_matches(win); // makes sure search replace is ok
 	for * lines_to_refresh {
-		true_line_no := it_index + ly;
+		y := it - buf.lines.data;
 		//assert (it.count <= mods.count, "%", it.count);
 		multiline_syntax_index := ifx it_index == 0 then -1 else lines_to_refresh[it_index-1].multiline_syntax_index;
 		if it.start_multiline_syntax_index != multiline_syntax_index
@@ -1161,7 +1244,15 @@ _refresh_buffer_modifiers :: (win: *Window, using buf: *Buffer, ly: int, ry: int
 				it.fg = syntax.normal_color;
 			}
 			if syntax.is_compiled
-				apply_syntax_mods(it, syntax, line_no_hint = true_line_no, first_x = 0, multiline_syntax_index = multiline_syntax_index);
+				apply_syntax_mods(it, syntax, line_no_hint = y, first_x = 0, multiline_syntax_index = multiline_syntax_index);
+			{
+				fold := get_fold_exact(buf, y);
+				if fold {
+					for * it.mods {
+						it.bg = 4;
+					}
+				}
+			}
 			it.dirty_flags &= ~.MODS;
 		}
 		it.user_mods = it.mods;

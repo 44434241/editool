@@ -98,13 +98,19 @@ _create_buffer_from_file :: (filename: string, flags: Buffer.Flags, file_flags: 
 	return buf;
 }
 
-// path must be normalized
-_create_buffer_from_directory :: (path: string) -> *Buffer {
-	buf := _new_buffer(.DIRECTORY);
-	buf.caps |= .ALL;
-	buf.syntax = get_syntax_for_filename("");
-	buf.path = copy_string(path,, allocator=allocator_of(buf));
-	using,only(directory_files) buf;
+refresh_file_buffer :: (buf: *Buffer) {
+	assert(buf.kind == .FILE);
+	assert(buf.path != "");
+	file_str, file_ok := read_entire_file(buf.path,, allocator=temp);
+	replace_buffer_lines_without_caps(null, buf, .[ "" ], .NO_UNDO);
+	_insert_string_into_buffer_as_from_file(buf, file_str);
+	clear_dirty(buf);
+}
+
+refresh_directory_buffer :: (buf: *Buffer) {
+	assert(buf.kind == .DIRECTORY);
+	using,only(directory_files, path) buf;
+	array_reset(*directory_files);
 	for s: string.[ "./", "../" ] {
 		array_add(*directory_files, .{
 			last_name = s,
@@ -122,6 +128,7 @@ _create_buffer_from_directory :: (path: string) -> *Buffer {
 			last_name = s,
 		});
 	}
+	replace_buffer_lines_without_caps(null, buf, .[ "" ], .NO_UNDO | .NO_CALLBACK);
 	for * directory_files {
 		array_adds(*peek_pointer(buf.lines).chars, it.last_name);
 		if it_index + 1 != directory_files.count {
@@ -130,6 +137,16 @@ _create_buffer_from_directory :: (path: string) -> *Buffer {
 			});
 		}
 	}
+	clear_dirty(buf);
+}
+
+// path must be normalized
+_create_buffer_from_directory :: (path: string) -> *Buffer {
+	buf := _new_buffer(.DIRECTORY);
+	buf.caps |= .ALL;
+	buf.syntax = get_syntax_for_filename("");
+	buf.path = copy_string(path,, allocator=allocator_of(buf));
+	refresh_directory_buffer(buf);
 	add_command(*buf.commands, 
 		keybind = "\n",
 		mode = .COMMAND,
@@ -145,15 +162,15 @@ _create_buffer_from_directory :: (path: string) -> *Buffer {
 			return .{};
 		}
 	);
-	buf.modify_buffer_operation = (win: *Window, op: *Buffer_Op) -> bool {
-		using win.buffer;
+	buf.modify_buffer_operation = (win: *Window, buf: *Buffer, op: *Buffer_Op) -> bool {
+		using buf;
 		op.flags |= .CALLBACK_BEFORE_UNDO_AND_REDO;
 		if op.kind == {
 			case .INSERT_CHARS; #through;
 			case .ERASE_CHARS;
 				return !directory_files[op.y].is_marked_for_delete && directory_files[op.y].flags & .IMMUTABLE == 0;
 			case .SPLIT_LINE;
-				if op.x != win.lines[op.y].count
+				if op.x != lines[op.y].count
 					return false;
 				assert(op.flags & .IS_UNDO == 0);
 				array_insert_at(*directory_files, .{
@@ -215,10 +232,12 @@ _create_buffer_from_directory :: (path: string) -> *Buffer {
 		}
 		return false;
 	}
-	buf.apply_mods = (win: *Window, line: []Line) {
-		using win.buffer;
-		for * lines {
+	buf.apply_mods = (win: *Window, lines: []*Line) {
+		for lines {
+			using,only(directory_files, directory_files_confirm_index) win.buffer;
 			y := it - win.lines.data;
+			if y >= directory_files.count
+				return;
 			f := *directory_files[y];
 			col: s8;
 			attrs: s32 = 0;
@@ -362,6 +381,7 @@ _new_buffer :: (kind: Buffer.Kind) -> *Buffer {
 	buf.commands.allocator = allocator;
 	buf.search_matches.matches.allocator = allocator;
 	buf.marks.allocator = allocator;
+	buf.folds.allocator = allocator;
 	buf.directory_files.allocator = allocator;
 	array_add(*buf.lines, .{
 		chars.allocator = allocator,

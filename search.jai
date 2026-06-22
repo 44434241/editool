@@ -62,6 +62,7 @@ editool_search_init :: () {
 			if context.search.status != .SEARCH && context.search.status != .SEARCH_REPLACE {
 				return command_error("Bad search");
 			}
+			_ensure_window_released(*context.search);
 			str := copy_string(context.search.search_string,, allocator=temp); // not sure if i need to copy this
 			fzf_win := make_fzf_window((res: *Fzf_Result, s: string, data: *void) {
 				buf := data.(*Buffer);

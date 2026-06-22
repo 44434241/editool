@@ -40,6 +40,7 @@ Motion :: struct {
 		X_ONLY;
 		Y_ONLY;
 		SCROLL_ONLY;
+		RESPECTS_FOLD;
 		NONE :: 0;
 	}
 	flags: Flags; // not used..
@@ -144,7 +145,7 @@ motion_inner :: (in: Motion_In, $ch: u8, $inclusive: bool) -> Motion_Result {
 		left_x = find_char_in_line(win, "[", "]", -1, in.number);
 		right_x = find_char_in_line(win, "]", "[", 1, in.number);
 		//
-	} else #if ch == "\"" || ch == " " || ch == "'" || ch == "." || ch == "_" {
+	} else #if ch == "\"" || ch == " " || ch == "'" || ch == "." || ch == "_"  || ch == "/" {
 		left_x = find_char_in_line(win, ch, 0, -1, in.number);
 		right_x = find_char_in_line(win, ch, 0, 1, in.number);
 		//
@@ -297,11 +298,11 @@ motion_find_char_char :: (in: Motion_In, char: s32, $step: int, $inclusive: bool
 
 motion_page_step :: (in: Motion_In, step: int) -> Motion_Result {
 	assert(step == 1 || step == -1);
-	win := in.window;
+	using win := in.window;
 	return .{
 		is_jump = true,
-		start = win.cursor.position,
-		end = .{ x = win.cursor.x, y = win.cursor.y + step * (win.size.y-1) * in.number },
+		start = cursor.position,
+		end = .{ x = cursor.x, y = get_relative_y(buffer, cursor.y, step * (size.y-1) * in.number) },
 		flags = .Y_ONLY,
 	};
 }
@@ -310,12 +311,21 @@ motion_step :: (in: Motion_In, step: Position, is_jump: bool) -> Motion_Result {
 	assert(step.x == 0 || step.y == 0);
 	assert(step.x != 0 || step.y != 0);
 	win := in.window;
-	return .{
-		start = win.cursor.position,
-		end = win.cursor.position + step * in.number,
-		flags = ifx step.y == 0 then .X_ONLY else .Y_ONLY,
-		is_jump = is_jump,
-	};
+	if step.x != 0 || in.number != 1 {
+		return .{
+			start = win.cursor.position,
+			end = win.cursor.position + step * in.number,
+			flags = ifx step.x != 0 then .X_ONLY else .Y_ONLY,
+			is_jump = is_jump,
+		};
+	} else {
+		return .{
+			start = win.cursor.position,
+			end = .{ win.cursor.x, get_relative_y(in.window.buffer, win.cursor.y, step.y * in.number) },
+			flags = .Y_ONLY,
+			is_jump = is_jump,
+		};
+	}
 }
 
 // either start of line or end of line
@@ -410,18 +420,19 @@ motion_mark_char :: (in: Motion_In, char: s32) -> Motion_Result {
 
 motion_scroll_offset :: (in: Motion_In, $step: int) -> Motion_Result {
 	// i might feel like changing the step for this one
-	win := in.window;
+	using win := in.window;
 	return .{
 		start = win.cursor.position,
 		end = win.cursor.position,
 		flags = .SCROLL_ONLY,
-		scroll = max(win.scroll + step * in.number, 0),
+		//scroll = max(win.scroll + step * in.number, 0),
+		scroll = get_relative_y(buffer, scroll, step * in.number),
 	};
 }
 
 motion_scroll_center :: (in: Motion_In) -> Motion_Result {
 	win := in.window;
-	scroll := win.cursor.y - win.size.y / 2;
+	scroll := get_relative_y(win.buffer, win.cursor.y, -win.size.y / 2);
 	scroll = max(scroll, 0);
 	return .{
 		start = win.cursor.position,
@@ -492,6 +503,11 @@ add_all_motions :: () {
 		keybind = "i_",
 		flags = .X_ONLY,
 		proc = #bake_arguments(motion_inner(ch = #char "_", inclusive = false)),
+	);
+	add_motion(
+		keybind = "i/",
+		flags = .X_ONLY,
+		proc = #bake_arguments(motion_inner(ch = #char "/", inclusive = false)),
 	);
 	add_motion(
 		keybind = "i]",
@@ -704,12 +720,12 @@ add_all_motions :: () {
 	);
 	add_motion(
 		keybind = "gg",
-		flags = .Y_ONLY,
+		flags = .Y_ONLY | .RESPECTS_FOLD,
 		proc = #bake_arguments motion_end_of_file(step = -1),
 	);
 	add_motion(
 		keybind = "G",
-		flags = .Y_ONLY,
+		flags = .Y_ONLY | .RESPECTS_FOLD,
 		proc = #bake_arguments motion_end_of_file(step = 1),
 	);
 	add_motion(
@@ -725,10 +741,12 @@ add_all_motions :: () {
 	add_motion(
 		keybind = "{",
 		proc = #bake_arguments motion_empty_line(step = -1),
+		flags = .RESPECTS_FOLD,
 	);
 	add_motion(
 		keybind = "}",
 		proc = #bake_arguments motion_empty_line(step = 1),
+		flags = .RESPECTS_FOLD,
 	);
 	add_motion( // identity motion
 		keybind = "!",
@@ -743,6 +761,7 @@ add_all_motions :: () {
 		keybind = "m",
 		proc = motion_mark,
 		char_proc = motion_mark_char,
+		flags = .RESPECTS_FOLD,
 	);
 }
 

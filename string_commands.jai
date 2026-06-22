@@ -182,9 +182,9 @@ string_commands_init :: (state: *String_Command_State, title: string) {
 	buffer.caps |= .MODE_INSERT | .MODE_COMMAND;
 	buffer.caps |= .INSERT_CHARS | .ERASE_CHARS;
 	buffer.caps |= .MOVE;
-	buffer.modify_buffer_operation = (win: *Window, op: *Buffer_Op) -> bool {
+	buffer.modify_buffer_operation = (win: *Window, buf: *Buffer, op: *Buffer_Op) -> bool {
 		// this if should be only if insert/delete chars, i think...
-		if win.cursor.y != win.lines.count - 1 {
+		if win != null && win.cursor.y != win.lines.count - 1 {
 			line: *Line = *win.lines[win.lines.count-1];
 			if line.count > 0 {
 				//array_reset(*line.chars);

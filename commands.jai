@@ -47,7 +47,6 @@ Command_In :: Command_Input;
 // this could recurse, actually..
 make_command_alias :: ($chars: $T/.[ []s32, string ]) -> Command.Proc {
 	inner_proc :: (in: Command_In) -> Command_Result {
-		
 		inserted_input: [..]s32;
 		for tprint("%", in.number)
 			array_add(*inserted_input, it);
@@ -135,8 +134,9 @@ command_delete_motion :: (in: Command_In, motion: Motion_Result, enter_insert_mo
 
 command_delete_line :: (in: Command_In) -> Command_Result {
 	using win := in.window;
-	copy_line_range(win, cursor.y, cursor.y + in.number - 1); // assumed to not fail?
-	erase_lines(win, cursor.y, in.number);
+	ry := get_relative_y(buffer, cursor.y, in.number) - 1;
+	copy_line_range(win, cursor.y, ry); // assumed to not fail?
+	erase_lines(win, cursor.y, ry - cursor.y + 1);
 	return .{
 		modifies_dot = true,
 	};
@@ -530,6 +530,132 @@ command_move_relative_window :: (in: Command_In, step: int, mode: Window.Contain
 	return .{};
 }
 
+copy_motion :: (using win: *Window, motion: Motion_Result) -> bool {
+	if motion.status != .OK
+		return false;
+	clipboard: *Clipboard = *context.edit.clipboard;
+	start := normalize_position(win, motion.start, .INSERT);
+	end := normalize_position(win, motion.end, .INSERT);
+	if start >= end
+		start, end = end, start;
+	if motion.flags & .Y_ONLY {
+		start.x = 0;
+		end.x = lines[end.y].count;
+	}
+	ok := _copy_range(win, clipboard, start, end);
+	return ok;
+}
+
+copy_line_range :: (using win: *Window, ly: int, ry: int) -> bool {
+	if ly > ry
+		ly, ry = ry, ly;
+	ly = clamp(ly, 0, lines.count-1);
+	ry = clamp(ry, 0, lines.count-1);
+	clipboard: *Clipboard = *context.edit.clipboard;
+	ok := _copy_range(win, clipboard, .{0, ly}, .{lines[ry].count, ry});
+	return ok;
+}
+
+// doesn't validate if ranges are valid !
+_copy_range :: (using win: *Window, clipboard: *Clipboard, start: Position, end: Position) -> bool {
+	copied_lines: [..]string;
+	for y: start.y..end.y {
+		line := *lines[y];
+		lx := 0;
+		rx := line.count;
+		if y == start.y
+			lx = start.x;
+		if y == end.y
+			rx = end.x;
+		add_newline: bool = false;
+		if rx == line.count {
+			add_newline = true;
+			rx -= 1;
+		}
+		s := string.{ data = line.chars.data + lx, count = (rx - lx) + 1 };
+		array_add(*copied_lines, copy_string(s)); // alloc
+		if y == end.y {
+			if add_newline
+				array_add(*copied_lines, "");
+		}
+	}
+	if copied_lines.count == 0 {
+		return false;
+	}
+	clipboard.lines = copied_lines; // @Leak leaks old lines
+	edit_set_os_clipboard(join(.. clipboard.lines, separator = "\n"));
+	return true;
+}
+
+// TODO: could use .INSERT_LINES for some of this stuff
+_paste :: (using win: *Window, on_next_char: bool) -> bool {
+	clipboard := context.edit.clipboard;
+	// TODO: jai linux clipboard is not working
+	clipboard.lines = split(edit_get_os_clipboard(), #char "\n"); // @Leak leaks old lines, os_clipboard_get_text_allocates
+	if clipboard.lines.count == 0
+		return false;
+	//preserve_cursor :: true;
+	cursor_pos := cursor.position;
+	end_cursor_pos := cursor_pos;
+	here_lines := clipboard.lines;
+	pos := cursor.position;
+	//log("%", here_lines);
+	//is_line_wise := false;
+	if peek(here_lines).count == 0 {
+		//is_line_wise = true;
+		if on_next_char {
+			here_lines.count -= 1;
+			split_line(win, .{ lines[cursor_pos.y].count, cursor_pos.y }, indent=false);
+			pos = .{0, cursor_pos.y + 1};
+			end_cursor_pos.y += 1;
+		} else {
+			here_lines.count -= 1;
+			split_line(win, .{ 0, cursor_pos.y }, indent=false);
+			pos = .{0, cursor_pos.y};
+		}
+	} else {
+		if on_next_char {
+			offset_cursor(win, 1, 0);
+			pos.x += 1;
+			end_cursor_pos.x += 1;
+		}
+	}
+	pos = normalize_position(win, pos, .INSERT);
+	for here_lines {
+		_write_normal_string(win, pos, it); // these should be normal chars
+		pos.x += it.count;
+		if it_index + 1 != here_lines.count {
+			split_line(win, pos, indent=false);
+			pos = .{0, pos.y+1};
+		}
+	}
+	move_cursor(win, end_cursor_pos);
+	return true;
+}
+
+command_fold :: (in: Command_In) -> Command_Res {
+	return .{ status = .CONTINUE_MOTION };
+}
+
+command_fold_motion :: (in: Command_In, motion: Motion_Result) -> Command_Res {
+	normalize_motion_result(in.window, *motion);
+	old: *Fold = get_fold(in.window.buffer, motion.start.y);
+	using in.window.buffer;
+	if old {
+		remove_fold(in.window.buffer, old);
+	} else {
+		ly, ry := motion.start.y, motion.end.y;
+		if ly > ry
+			ly, ry = ry, ly;
+		if ly == ry
+			return command_error("i want real motion");
+		add_fold(in.window.buffer, .{
+			start = ly,
+			end = ry,
+		});
+	}
+	return .{};
+}
 
 add_all_commands :: () {
 	// COMMANDS
@@ -774,109 +900,60 @@ add_all_commands :: () {
 		proc = command_search,
 		motion_proc = command_search_motion,
 	);
-}
-
-copy_motion :: (using win: *Window, motion: Motion_Result) -> bool {
-	if motion.status != .OK
-		return false;
-	clipboard: *Clipboard = *context.edit.clipboard;
-	start := normalize_position(win, motion.start, .INSERT);
-	end := normalize_position(win, motion.end, .INSERT);
-	if start >= end
-		start, end = end, start;
-	if motion.flags & .Y_ONLY {
-		start.x = 0;
-		end.x = lines[end.y].count;
-	}
-	ok := _copy_range(win, clipboard, start, end);
-	return ok;
-}
-
-copy_line_range :: (using win: *Window, ly: int, ry: int) -> bool {
-	if ly > ry
-		ly, ry = ry, ly;
-	ly = clamp(ly, 0, lines.count-1);
-	ry = clamp(ry, 0, lines.count-1);
-	clipboard: *Clipboard = *context.edit.clipboard;
-	ok := _copy_range(win, clipboard, .{0, ly}, .{lines[ry].count, ry});
-	return ok;
-}
-
-// doesn't validate if ranges are valid !
-_copy_range :: (using win: *Window, clipboard: *Clipboard, start: Position, end: Position) -> bool {
-	copied_lines: [..]string;
-	for y: start.y..end.y {
-		line := *lines[y];
-		lx := 0;
-		rx := line.count;
-		if y == start.y
-			lx = start.x;
-		if y == end.y
-			rx = end.x;
-		add_newline: bool = false;
-		if rx == line.count {
-			add_newline = true;
-			rx -= 1;
+	add_global_command(
+		keybind = "q",
+		proc = command_fold,
+		motion_proc = command_fold_motion,
+	);
+	add_global_command(
+		keybind = .[ 12 ], // ctrl + l
+		proc = (in: Command_In) -> Command_Res {
+			for * in.window.lines
+				it.dirty_flags |= .ALL;
+			edit_alert("refreshed !");
+			return .{};
 		}
-		s := string.{ data = line.chars.data + lx, count = (rx - lx) + 1 };
-		array_add(*copied_lines, copy_string(s)); // alloc
-		if y == end.y {
-			if add_newline
-				array_add(*copied_lines, "");
+	);
+	add_global_command(
+		keybind = "qq",
+		proc = (in: Command_In) -> Command_Res {
+			win := in.window;
+			using win.buffer;
+			array_reset(*folds);
+			idx := 0;
+			while idx + 1 < lines.count {
+				line := *lines[idx];
+				found := false;
+				if !starts_with(lines[idx].as_string, "\t") && starts_with(lines[idx+1].as_string, "\t") {
+					start := idx;
+					idx += 2;
+					while idx < lines.count && starts_with(lines[idx].as_string, "\t")
+						idx += 1;
+					add_fold(win.buffer, .{
+						start = start,
+						end = idx,
+					});
+					idx += 1;
+				} else {
+					idx += 1;
+				}
+			}
+			for * lines
+				it.dirty_flags |= .MODS;
+			normalize_cursor(win, with_scroll = true);
+			return .{};
 		}
-	}
-	if copied_lines.count == 0 {
-		return false;
-	}
-	clipboard.lines = copied_lines; // @Leak leaks old lines
-	edit_set_os_clipboard(join(.. clipboard.lines, separator = "\n"));
-	return true;
-}
-
-// TODO: could use .INSERT_LINES for some of this stuff
-_paste :: (using win: *Window, on_next_char: bool) -> bool {
-	clipboard := context.edit.clipboard;
-	// TODO: jai linux clipboard is not working
-	clipboard.lines = split(edit_get_os_clipboard(), #char "\n"); // @Leak leaks old lines, os_clipboard_get_text_allocates
-	if clipboard.lines.count == 0
-		return false;
-	//preserve_cursor :: true;
-	cursor_pos := cursor.position;
-	end_cursor_pos := cursor_pos;
-	here_lines := clipboard.lines;
-	pos := cursor.position;
-	//log("%", here_lines);
-	//is_line_wise := false;
-	if peek(here_lines).count == 0 {
-		//is_line_wise = true;
-		if on_next_char {
-			here_lines.count -= 1;
-			split_line(win, .{ lines[cursor_pos.y].count, cursor_pos.y }, indent=false);
-			pos = .{0, cursor_pos.y + 1};
-			end_cursor_pos.y += 1;
-		} else {
-			here_lines.count -= 1;
-			split_line(win, .{ 0, cursor_pos.y }, indent=false);
-			pos = .{0, cursor_pos.y};
+	);
+	add_global_command(
+		keybind = "qQ",
+		proc = (in: Command_In) -> Command_Res {
+			array_reset(*in.window.buffer.folds);
+			for * in.window.lines
+				it.dirty_flags |= .MODS;
+			normalize_scroll(in.window);
+			return .{};
 		}
-	} else {
-		if on_next_char {
-			offset_cursor(win, 1, 0);
-			pos.x += 1;
-			end_cursor_pos.x += 1;
-		}
-	}
-	pos = normalize_position(win, pos, .INSERT);
-	for here_lines {
-		_write_normal_string(win, pos, it); // these should be normal chars
-		pos.x += it.count;
-		if it_index + 1 != here_lines.count {
-			split_line(win, pos, indent=false);
-			pos = .{0, pos.y+1};
-		}
-	}
-	move_cursor(win, end_cursor_pos);
-	return true;
+	);
 }
 
 add_global_command :: inline (name: string = "", keybind: $T/.[string, []s32],

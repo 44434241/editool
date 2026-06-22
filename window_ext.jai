@@ -133,6 +133,30 @@ get_mark_at_y :: (using buf: *Buffer, y: int) -> bool, Mark {
 	return false, .{};
 }
 
+// this returns a normalized y..
+get_relative_y :: (using buf: *Buffer, y: int, rel: int) -> int {
+	y = clamp(y, 0, buf.lines.count-1);
+	while rel > 0 && y < buf.lines.count {
+		fold := get_fold(buf, y);
+		if fold {
+			y = fold.end + 1;
+		} else {
+			y = y + 1;
+		}
+		rel -= 1;
+	}
+	while rel < 0 && y >= 0 {
+		fold := get_fold(buf, y-1);
+		if fold {
+			y = fold.start;
+		} else {
+			y = y - 1;
+		}
+		rel += 1;
+	}
+	y = clamp(y, 0, buf.lines.count-1);
+	return y;
+}
 
 /// SCROLL
 
@@ -146,13 +170,17 @@ normalize_scroll :: (using win: *Window) {
 	scroll = clamp(scroll, 0, win.lines.count-1);
 	if scroll < cursor.y {
 		count_left := size.y; // -1 because we only care about the first real_line of last line !
-		for < scroll..cursor.y {
-			size_y := get_line_real_size_as_y(win, *lines[it]);
+		y := cursor.y;
+		while y >= scroll {
+			size_y := get_line_real_size_as_y(win, *lines[y]);
 			count_left -= size_y;
 			if count_left < 0 {
-				scroll = min(it+1, cursor.y);
+				scroll = min(get_relative_y(buffer, y, +1), cursor.y);
 				break;
 			}
+			if y == 0
+				break;
+			y = get_relative_y(buffer, y, -1);
 		}
 	} else { // scroll > cursor.y
 		scroll = cursor.y;
@@ -212,7 +240,6 @@ _update_cursor_mark :: (using win: *Window, create: bool) {
 		}
 	}
 	log("update cursor mark % %", get_title(win), create);
-	log_stack_trace(context.stack_trace);
 	if create {
 		if cursor_mark_index >= 0 {
 			cursor_marks.count = cursor_mark_index + 1; 
@@ -439,6 +466,11 @@ erase_line_range :: (using win: *Window, l: int, r: int) {
 erase_lines :: (using win: *Window, y: int, count: int = 1) {
 	y = clamp(y, 0, lines.count-1);
 	count = min(count, lines.count - y);
+	for y..y+count-1 {
+		f := get_fold(buffer, y);
+		if f
+			remove_fold(buffer, f);
+	}
 	if y == 0 && count == lines.count {
 		execute_buffer_operation(win, .{
 			kind = .ERASE_LINES,

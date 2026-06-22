@@ -313,10 +313,10 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 		maybe_update_state(state);
 	}
 	// modifiers directly affect the window, not the buffer. is that what i want?
-	match_win.apply_mods = (win: *Window, lines: []Line) {
+	match_win.apply_mods = (win: *Window, lines: []*Line) {
 		state := win.user_data.(*Fzf_State);
-		for * lines {
-			y := it_index + (lines.data - win.lines.data);
+		for lines {
+			y := it - win.lines.data;
 		//for y: win.scroll..min(win.lines.count, win.scroll+win.size.y)-1 {
 			if y >= state.res.items.count
 				break;
@@ -649,8 +649,8 @@ add_all_execs :: () {
 		win.floating_position.ly.value -= 10;
 		win.floating_position.ry.value += 10;
 		refresh_window_size(win);
-		win.apply_mods = (win: *Window, lines: []Line) {
-			for * lines {
+		win.apply_mods = (win: *Window, lines: []*Line) {
+			for lines {
 				y := it - win.lines.data;
 				for x: 0..it.count-1 {
 					mod := *it.user_mods[x];
@@ -709,6 +709,12 @@ add_all_execs :: () {
 		dir := get_working_directory();
 		edit_alert("pwd: %", dir);
 		return true;
+	});
+	add_exec("refresh", () -> bool {
+		ok, msg := refresh_buffer(context.buffer_window);
+		if !ok
+			edit_alert("Failed refresh: %", msg);
+		return ok;
 	});
 	add_exec("quit", _quit);
 	add_exec("q", _quit);

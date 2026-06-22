@@ -149,7 +149,7 @@ Window :: struct {
 	// callbacks ... should be careful
 	// 
 	before_draw: #type (*Window) -> ();
-	apply_mods: #type (*Window, []Line) -> ();
+	apply_mods: #type (*Window, []*Line) -> ();
 	motion_proc: #type (*Window, Motion_Result) -> bool; // unused
 	on_destroy: #type (*Window) -> (); // must not do anything funny !
 	//
@@ -247,9 +247,39 @@ _draw_window :: (using win: *Window) {
 	}
 	if win.kind == .BUFFER {
 		time_this("Draw buffer");
-		lines_to_draw_count := min(lines.count - scroll, size.y);
-		lines_to_draw := []Line.{ data = lines.data + scroll, count = lines_to_draw_count };
-		_refresh_buffer_modifiers(win, buffer, scroll, scroll + lines_to_draw_count);
+		//lines_to_draw_count := min(lines.count - scroll, size.y);
+		//lines_to_draw := []Line.{ data = lines.data + scroll, count = lines_to_draw_count };
+		lines_to_draw: [..]*Line;
+		lines_to_draw.allocator = temp;
+		cursor_actual_position: Position = .{
+			0, 
+			begin.y,
+		};
+		{
+			y := scroll;
+			found_cursor := false;
+			while y < lines.count && lines_to_draw.count < size.y {
+				array_add(*lines_to_draw, *lines[y]);
+				fold := get_fold_exact(win.buffer, y);
+				//
+				if y < cursor.y
+					cursor_actual_position.y += get_line_real_size_as_y(win, *lines[y]);
+				if cursor.y == y || (fold && fold.start <= cursor.y && cursor.y <= fold.end) {
+					// this stuff (and line drawing) breaks with bordered windows i think
+					x := begin.x + _get_real_x_in_line(*lines[y], cursor.x);
+					cursor_actual_position.y += (x + begin.x + size.x) / (begin.x + size.x) - 1;
+					cursor_actual_position.x = x % (begin.x + size.x);
+				}
+				//
+				if fold {
+					assert(fold.start <= fold.end);
+					y = fold.end + 1;
+				} else {
+					y += 1;
+				}
+			}
+		}
+		_refresh_buffer_modifiers(win, buffer, scroll, peek(lines_to_draw) - lines.data + 1);
 		// buf apply mods takes priority
 		if buffer.apply_mods
 			buffer.apply_mods(win, lines_to_draw);
@@ -259,12 +289,8 @@ _draw_window :: (using win: *Window) {
 		wclear(nwindow); // ONLY CLEARING BUFFER WINDOWS !
 		y_offset := 0;
 		// cursor actual position might be overriden !
-		cursor_actual_position: Position = .{
-			_get_real_x_in_line(*lines[cursor.y], cursor.x) + begin.x,
-			cursor.y + begin.y - scroll,
-		};
-		for * lines_to_draw {
-			y := it_index + scroll;
+		for lines_to_draw {
+			y := it - lines.data;
 			ny := it_index + begin.y + y_offset; // ncurses y
 			if it_index + y_offset > size.y
 				break;
@@ -297,10 +323,6 @@ _draw_window :: (using win: *Window) {
 			using,only(mods, user_mods) it;
 			//assert (it.count <= mods.count);
 			for it.chars {
-				if cursor.position == Position.{it_index, y} {
-					cursor_actual_position.x = getcurx(nwindow);
-					cursor_actual_position.y = getcury(nwindow);
-				}
 				info := _get_char_info(it);
 				mod: Char_Mod = ---;
 				if it_index < user_mods.count {
@@ -321,10 +343,6 @@ _draw_window :: (using win: *Window) {
 					waddch(nwindow, it);
 				}
 				wattrset(nwindow, 0);
-			}
-			if cursor.position == Position.{it.chars.count, y} {
-				cursor_actual_position.x = getcurx(nwindow);
-				cursor_actual_position.y = getcury(nwindow);
 			}
 			if it.chars.count < user_mods.count {
 				attr := as_ncurses_attribute(user_mods[it.chars.count]);
@@ -379,7 +397,9 @@ _draw_window :: (using win: *Window) {
 		}
 		for context.edit.alerts {
 			mode_s = tprint("% | %", mode_s, it);
+			free(it);
 		}
+		array_reset(*context.edit.alerts);
 		wattrset(nwindow, A_BOLD);
 		wattrset(nwindow, COLOR_PAIR(color_fg_bg(2, -1)));
 		p := root_status_line_position;
@@ -566,7 +586,6 @@ destroy_window :: (win: *Window, force := false) {
 
 hold :: (thing: *$T/.[Window, Buffer]) {
 	log("holding %", get_title(thing));
-	log_stack_trace(context.stack_trace);
 	thing.ref_count += 1;
 }
 
