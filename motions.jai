@@ -145,6 +145,10 @@ motion_inner :: (in: Motion_In, $ch: u8, $inclusive: bool) -> Motion_Result {
 		left_x = find_char_in_line(win, "[", "]", -1, in.number);
 		right_x = find_char_in_line(win, "]", "[", 1, in.number);
 		//
+	} else #if ch == "<" || ch == ">" {
+		left_x = find_char_in_line(win, "<", ">", -1, in.number);
+		right_x = find_char_in_line(win, ">", "<", 1, in.number);
+		//
 	} else #if ch == "\"" || ch == " " || ch == "'" || ch == "." || ch == "_"  || ch == "/" {
 		left_x = find_char_in_line(win, ch, 0, -1, in.number);
 		right_x = find_char_in_line(win, ch, 0, 1, in.number);
@@ -513,6 +517,11 @@ add_all_motions :: () {
 		keybind = "i]",
 		flags = .X_ONLY,
 		proc = #bake_arguments(motion_inner(ch = #char "]", inclusive = false)),
+	);
+	add_motion(
+		keybind = "i>",
+		flags = .X_ONLY,
+		proc = #bake_arguments(motion_inner(ch = #char ">", inclusive = false)),
 	);
 	add_motion(
 		keybind = "i)",
