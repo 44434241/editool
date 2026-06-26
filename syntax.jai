@@ -231,6 +231,7 @@ create_jai_syntax :: () -> Syntax {
 		"type_info",
 		"push_context(?:\\,\\w+)?",
 		"ifx",
+		"union",
 	], "|");
 	syntax.elements[TYPE1].match = #run join(.. .[
 		"int",

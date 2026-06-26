@@ -24,9 +24,14 @@
 // - search probably supporting 'no' confirm
 // - UPDATE HOW CURSOR MARKS WORK
 // - should have separate "should show line numbers/status bar/etc" flags for buffers, and windows can have the option to override them???
-// - named marks should be global? <- priority maybe
+// - named marks should be global? <- priority maybe <- i need to learn to use them better
 // - ^ also for compilation, i could mark the lines in the error output
 // - using '{' to copy/delete backwards kinda cuts some shit off
+// - glsl syntax highlighting 
+// - ^ + generic "config" highlighting
+// - folds marker things, e.g '/// thing start' '/// thing end'
+// - Some way to save esc-ed search/exec?
+// - - maybe just remember the last esc-ed, and have a keybind to start from it ig..
 //
 // Things for ff (mostly for debugging idk)
 // - windows
@@ -60,6 +65,10 @@
 // - Need a better way to visualize them.. maybe mark the line number differently?
 // - Nested ones not supported rn
 // - 'qq' marking all messes up with top level #if's 
+//
+// Laptop shit
+// - push i3 status caps thing
+// - should either commit compile scripts or make a first for compiling it 
 
 X11_CLIPBOARD :: true;
 

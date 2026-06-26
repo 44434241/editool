@@ -538,6 +538,10 @@ add_all_execs :: () {
 			buf.caps &= ~caps;
 		return true;
 	});
+	add_exec("c", () -> bool {
+		destroy_window(context.buffer_window); // if it can't destroy, it will notify later?
+		return true;
+	});
 	add_exec("close", () -> bool {
 		destroy_window(context.buffer_window); // if it can't destroy, it will notify later?
 		return true;
