@@ -118,8 +118,6 @@ command_delete :: (_: Command_In) -> Command_Result {
 command_delete_motion :: (in: Command_In, motion: Motion_Result, enter_insert_mode: bool) -> Command_Result {
 	if enter_insert_mode
 		change_edit_mode(.INSERT);
-	if motion.start.x > motion.end.x
-		return command_error("Bad motion");
 	win := in.window;
 	copy_motion(win, motion);
 	if motion.start.y != motion.end.y {

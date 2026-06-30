@@ -17,6 +17,8 @@ Motion_Result :: struct {
 	flags: Flags = .NONE;
 	start: Position = .{ -1, -1 };
 	end: Position = .{ -1, -1 };
+	// if this motion is used to move the cursor and this is valid, use this instead
+	position_for_cursor: Position = .{ -1, -1 };
 	continue_no_number: bool = false;
 	error_message: string; // not printed rn
 	is_jump: bool = false;
@@ -40,7 +42,7 @@ Motion :: struct {
 		X_ONLY;
 		Y_ONLY;
 		SCROLL_ONLY;
-		RESPECTS_FOLD;
+		RESPECTS_FOLD; // ignored.. and not how it should work anyway !
 		NONE :: 0;
 	}
 	flags: Flags; // not used..
@@ -148,8 +150,11 @@ motion_inner :: (in: Motion_In, $ch: u8, $inclusive: bool) -> Motion_Result {
 	} else #if ch == "<" || ch == ">" {
 		left_x = find_char_in_line(win, "<", ">", -1, in.number);
 		right_x = find_char_in_line(win, ">", "<", 1, in.number);
-		//
-	} else #if ch == "\"" || ch == " " || ch == "'" || ch == "." || ch == "_"  || ch == "/" {
+	} else #if ch == "{" || ch == "}" {
+		left_x = find_char_in_line(win, "{", "}", -1, in.number);
+		right_x = find_char_in_line(win, "}", "{", 1, in.number);
+	} else #if ch == "\"" || ch == " " || ch == "'" || ch == "." || ch == "_" 
+			|| ch == "/" || ch == "`" {
 		left_x = find_char_in_line(win, ch, 0, -1, in.number);
 		right_x = find_char_in_line(win, ch, 0, 1, in.number);
 		//
@@ -368,13 +373,16 @@ motion_end_of_file  :: (in: Motion_In, step: int) -> Motion_Result {
 motion_empty_line  :: (in: Motion_In, step: int) -> Motion_Result {
 	assert(step == 1 || step == -1);
 	using win := in.window;
-	to_find := in.number;
+	count := in.number;
 	y := win.cursor.y;
 	start: Position = cursor.position;
 	is_jump := true;
 	if lines[start.y].count == 0 {
-		start.y += step;
 		is_jump = false;
+	}
+	if step < 0 && lines[start.y].count == 0 {
+		start.y -= 1;
+		start.x = lines[start.y].count;
 	}
 	seen_normal_line := false;
 	while true {
@@ -383,18 +391,24 @@ motion_empty_line  :: (in: Motion_In, step: int) -> Motion_Result {
 			seen_normal_line = true;
 		}
 		if seen_normal_line && (is_eof || win.lines[y].count == 0) {
-			to_find -= 1;
+			count -= 1;
 			seen_normal_line = false;
 		}
-		if to_find == 0
+		if count == 0
 			break;
 		if is_eof
 			return .{ status = .ERROR };
 		y += step;
 	}
+	end := Position.{ 0, y};
+	if step > 0 {
+		end.y -= 1;
+		end.x = lines[end.y].count;
+	}
 	return .{
 		start = start,
-		end = .{ 0, y },
+		end = end,
+		position_for_cursor = .{0, y},
 		is_jump = is_jump,
 		//flags = .Y_ONLY,
 	};
@@ -499,24 +513,34 @@ add_all_motions :: () {
 		proc = #bake_arguments(motion_word(step = -1, flags = .FULL)),
 	);
 	add_motion(
-		keybind = "i.",
-		flags = .X_ONLY,
-		proc = #bake_arguments(motion_inner(ch = #char ".", inclusive = false)),
-	);
-	add_motion(
-		keybind = "i_",
-		flags = .X_ONLY,
-		proc = #bake_arguments(motion_inner(ch = #char "_", inclusive = false)),
-	);
-	add_motion(
 		keybind = "i/",
 		flags = .X_ONLY,
 		proc = #bake_arguments(motion_inner(ch = #char "/", inclusive = false)),
 	);
 	add_motion(
+		keybind = "a/",
+		flags = .X_ONLY,
+		proc = #bake_arguments(motion_inner(ch = #char "/", inclusive = true)),
+	);
+	add_motion(
 		keybind = "i]",
 		flags = .X_ONLY,
 		proc = #bake_arguments(motion_inner(ch = #char "]", inclusive = false)),
+	);
+	add_motion(
+		keybind = "a]",
+		flags = .X_ONLY,
+		proc = #bake_arguments(motion_inner(ch = #char "]", inclusive = true)),
+	);
+	add_motion(
+		keybind = "i}",
+		flags = .X_ONLY,
+		proc = #bake_arguments(motion_inner(ch = #char "}", inclusive = false)),
+	);
+	add_motion(
+		keybind = "a}",
+		flags = .X_ONLY,
+		proc = #bake_arguments(motion_inner(ch = #char "}", inclusive = true)),
 	);
 	add_motion(
 		keybind = "i>",
@@ -524,29 +548,14 @@ add_all_motions :: () {
 		proc = #bake_arguments(motion_inner(ch = #char ">", inclusive = false)),
 	);
 	add_motion(
+		keybind = "a>",
+		flags = .X_ONLY,
+		proc = #bake_arguments(motion_inner(ch = #char ">", inclusive = true)),
+	);
+	add_motion(
 		keybind = "i)",
 		flags = .X_ONLY,
 		proc = #bake_arguments(motion_inner(ch = #char ")", inclusive = false)),
-	);
-	add_motion(
-		keybind = "i\"",
-		flags = .X_ONLY,
-		proc = #bake_arguments(motion_inner(ch = #char "\"", inclusive = false)),
-	);
-	add_motion(
-		keybind = "iw",
-		flags = .X_ONLY,
-		proc = #bake_arguments(motion_inner(ch = #char "w", inclusive = false)),
-	);
-	add_motion(
-		keybind = "iW",
-		flags = .X_ONLY,
-		proc = #bake_arguments(motion_inner(ch = #char "W", inclusive = false)),
-	);
-	add_motion(
-		keybind = "a]",
-		flags = .X_ONLY,
-		proc = #bake_arguments(motion_inner(ch = #char "]", inclusive = true)),
 	);
 	add_motion(
 		keybind = "a)",
@@ -554,39 +563,9 @@ add_all_motions :: () {
 		proc = #bake_arguments(motion_inner(ch = #char ")", inclusive = true)),
 	);
 	add_motion(
-		keybind = "a\"",
+		keybind = "i`",
 		flags = .X_ONLY,
-		proc = #bake_arguments(motion_inner(ch = #char "\"", inclusive = true)),
-	);
-	/*
-	add_motion(
-		keybind = "aw",
-		proc = #bake_arguments(motion_inner(ch = #char "w", inclusive = true)),
-	});
-	add_motion(
-		keybind = "aW",
-		proc = #bake_arguments(motion_inner(ch = #char "W", inclusive = true)),
-	);
-	*/
-	add_motion(
-		keybind = "w",
-		flags = .X_ONLY,
-		proc = #bake_arguments(motion_word(step = 1, flags = .NONE)),
-	);
-	add_motion(
-		keybind = "W",
-		flags = .X_ONLY,
-		proc = #bake_arguments(motion_word(step = 1, flags = .FULL)),
-	);
-	add_motion(
-		keybind = "b",
-		flags = .X_ONLY,
-		proc = #bake_arguments(motion_word(step = -1, flags = .NONE)),
-	);
-	add_motion(
-		keybind = "B",
-		flags = .X_ONLY,
-		proc = #bake_arguments(motion_word(step = -1, flags = .FULL)),
+		proc = #bake_arguments(motion_inner(ch = #char "`", inclusive = false)),
 	);
 	add_motion(
 		keybind = "i.",
@@ -599,19 +578,14 @@ add_all_motions :: () {
 		proc = #bake_arguments(motion_inner(ch = #char "_", inclusive = false)),
 	);
 	add_motion(
-		keybind = "i]",
-		flags = .X_ONLY,
-		proc = #bake_arguments(motion_inner(ch = #char "]", inclusive = false)),
-	);
-	add_motion(
-		keybind = "i)",
-		flags = .X_ONLY,
-		proc = #bake_arguments(motion_inner(ch = #char ")", inclusive = false)),
-	);
-	add_motion(
 		keybind = "i\"",
 		flags = .X_ONLY,
 		proc = #bake_arguments(motion_inner(ch = #char "\"", inclusive = false)),
+	);
+	add_motion(
+		keybind = "a\"",
+		flags = .X_ONLY,
+		proc = #bake_arguments(motion_inner(ch = #char "\"", inclusive = true)),
 	);
 	add_motion(
 		keybind = "iw",
@@ -623,31 +597,6 @@ add_all_motions :: () {
 		flags = .X_ONLY,
 		proc = #bake_arguments(motion_inner(ch = #char "W", inclusive = false)),
 	);
-	add_motion(
-		keybind = "a]",
-		flags = .X_ONLY,
-		proc = #bake_arguments(motion_inner(ch = #char "]", inclusive = true)),
-	);
-	add_motion(
-		keybind = "a)",
-		flags = .X_ONLY,
-		proc = #bake_arguments(motion_inner(ch = #char ")", inclusive = true)),
-	);
-	add_motion(
-		keybind = "a\"",
-		flags = .X_ONLY,
-		proc = #bake_arguments(motion_inner(ch = #char "\"", inclusive = true)),
-	);
-	/*
-	add_motion(
-		keybind = "aw",
-		proc = #bake_arguments(motion_inner(ch = #char "w", inclusive = true)),
-	});
-	add_motion(
-		keybind = "aW",
-		proc = #bake_arguments(motion_inner(ch = #char "W", inclusive = true)),
-	);
-	*/
 	add_motion(
 		keybind = "j",
 		flags = .Y_ONLY,

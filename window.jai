@@ -154,7 +154,6 @@ Window :: struct {
 	on_destroy: #type (*Window) -> (); // must not do anything funny !
 	//
 	map_window_for_motion: #type (*Window, *Motion) -> *Window;
-	//map_window_for_command: #type (*Command) -> *Window;
 	user_data: *void;
 	ref_count: int; // hold/release
 	//real_size_y: int = -1; // only valid for buffer windows

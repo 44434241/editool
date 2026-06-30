@@ -11,6 +11,7 @@ Line :: struct {
 	#overlay(chars.count) count: int;
 	#overlay(chars) as_string: string;
 	CONST_MOD_COUNT :: 128 + 64; // looks like the best for memory
+	// ^ for some lines it not enough... idk
 	//
 	mods: [CONST_MOD_COUNT]Char_Mod = ---; // A LOT !
 	user_mods: [CONST_MOD_COUNT]Char_Mod = ---;
@@ -19,6 +20,7 @@ Line :: struct {
 		USER1; // something the user sets
 		REAL_SIZE;
 		NONE :: 0;
+		USER_ALL :: USER1;
 		ALL :: MODS | USER1 | REAL_SIZE;
 	}
 	dirty_flags: Dirty_Flags = .ALL;
@@ -733,7 +735,7 @@ execute_buffer_operation :: (win: *Window, using buf: *Buffer, _op: Buffer_Op) -
 			lines.allocator = allocator_of(buf);
 			//array_reserve(*lines, op.lines.count);
 			for op.lines {
-				log("looking for error in op lines (%/%)", it_index, op.lines.count);
+				//log("looking for error in op lines (%/%)", it_index, op.lines.count);
 				array_add(*lines, copy_string(it));
 			}
 			op.lines = lines;
@@ -751,10 +753,10 @@ execute_buffer_operation :: (win: *Window, using buf: *Buffer, _op: Buffer_Op) -
 	}
 	if ok {
 		assert(buf.op_index <= ops.count);
-		log("looking for error in ops % %", buf.op_index, ops.count); // <- here
+		//log("looking for error in ops % %", buf.op_index, ops.count); // <- here
 		ops.count = buf.op_index; 
 		array_add(*ops, op);
-		log("done looking for error in ops"); // <- here
+		//log("done looking for error in ops"); // <- here
 		op_index += 1;
 		if save_op_index > ops.count
 			set_dirty(buf);
@@ -1213,6 +1215,14 @@ apply_syntax_mods_differently :: (line: *Line, syntax: *Syntax, line_no_hint := 
 			log_error("(2) kept matching at line % (%)\n", line_no_hint, idx);
 		}
 	}
+}
+
+change_syntax :: (buf: *Buffer, syntax: *Syntax) {
+	if buf.syntax == syntax
+		return;
+	buf.syntax = syntax;
+	for * buf.lines
+		it.dirty_flags |= .MODS | .USER_ALL;
 }
 
 // It takes a window on which the buffer will be drawn to.

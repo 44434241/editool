@@ -87,48 +87,65 @@ Syntax :: struct {
 	normal_color: s8 = 0;
 	is_compiled: bool = false;
 	regex: Uniform.Regexp;
-	extension: string;
+	filetype: string;
 }
 
-get_syntax_for_filename :: (filename: string) -> *Syntax {
+get_syntax_for_filetype :: (filetype: string) -> *Syntax {
 	if context.edit.syntaxes.count == 0 {
 		{
 			// Empty
 			syntax := New(Syntax);
-			syntax.extension = "";
+			syntax.filetype = "";
 			array_add(*context.edit.syntaxes, syntax);
 		}
 		{
 			// Jai
 			syntax := New(Syntax);
 			syntax.* = create_jai_syntax();
-			syntax.extension = "jai";
+			syntax.filetype = "jai";
 			array_add(*context.edit.syntaxes, syntax);
 		}
 		{
 			// Bash
 			syntax := New(Syntax);
 			syntax.* = create_bash_syntax();
-			syntax.extension = "sh";
+			syntax.filetype = "sh";
 			array_add(*context.edit.syntaxes, syntax);
 		}
 		{
 			// Mike
 			syntax := New(Syntax);
 			syntax.* = create_mike_syntax();
-			syntax.extension = "mike";
+			syntax.filetype = "mike";
+			array_add(*context.edit.syntaxes, syntax);
+		}
+		{
+			// Mike
+			syntax := New(Syntax);
+			syntax.* = create_config_syntax();
+			syntax.filetype = "config";
+			array_add(*context.edit.syntaxes, syntax);
+		}
+		{
+			// Glsl
+			syntax := New(Syntax);
+			syntax.* = create_glsl_syntax();
+			syntax.filetype = "glsl";
 			array_add(*context.edit.syntaxes, syntax);
 		}
 	}
-	ext := path_to_extension(filename);
 	for context.edit.syntaxes {
-		if it.extension == ext
+		if it.filetype == filetype
 			return it;
 	}
 	return context.edit.syntaxes[0];
 }
 
-path_to_extension :: (_path: string) -> string {
+get_syntax_for_filename :: (filename: string) -> *Syntax {
+	return get_syntax_for_filetype(path_to_filetype(filename));
+}
+
+path_to_filetype :: (_path: string) -> string {
 	path := _path;
 	idx1 := find_index_from_right(path, #char "/");
 	if idx1 >= 0
@@ -138,10 +155,17 @@ path_to_extension :: (_path: string) -> string {
 			return "sh";
 	}
 	idx2 := find_index_from_right(path, #char ".");
-	if idx2 >= 0
-		return advance(path, idx2+1);
-	else
-		return "";
+	if idx2 >= 0 {
+		ext := advance(path, idx2+1);
+		if ext == {
+			case "conf";
+				return "config"; 
+			case;
+				return ext;
+		}
+	} else {
+		return path; // we use full file name as the "file type"
+	}
 }
 
 create_mike_syntax :: () -> Syntax {
@@ -157,6 +181,16 @@ create_mike_syntax :: () -> Syntax {
 	//
 	syntax.elements[CONSTANT1].flags |= .IS_WORD;
 	syntax.elements[NUMBER].flags |= .IS_WORD;
+	compile_syntax(*syntax);
+	return syntax;
+}
+
+create_config_syntax :: () -> Syntax {
+	using syntax: Syntax;
+	syntax.elements[STRING2].match = "'(?:[^'\\\\]|\\\\.)*(?:'|$)";
+	syntax.elements[TAB].match = "\\t++";
+	syntax.elements[COMMENT].match = "#.*?$";
+	//
 	compile_syntax(*syntax);
 	return syntax;
 }
@@ -198,6 +232,95 @@ create_bash_syntax :: () -> Syntax {
 	//syntax.elements[NUMBER].match = "\\d+(?:\\.\\d+)?";
 	syntax.elements[TAB].match = "\\t++";
 	syntax.elements[COMMENT].match = "#.*?$";
+	//
+	compile_syntax(*syntax);
+	return syntax;
+}
+
+create_glsl_syntax :: () -> Syntax {
+	using syntax: Syntax;
+	elements[KEYWORD1].match = #run join(.. .[
+		"for",
+		"while",
+		"if",
+		"else",
+		"then",
+		"return",
+		"continue",
+		"break",
+		"struct",
+		//
+		"layout",
+		"location",
+		"uniform",
+		"core",
+		"set",
+		"binding",
+		"location",
+		"in",
+		"out",
+		"const",
+		"buffer",
+		"discard",
+		"flat",
+		"local_size_[xyz]",
+		"readonly",
+	], "|");
+	syntax.elements[TYPE1].match = #run join(.. .[
+		// int
+		"int",
+		"ivec2",
+		"ivec3",
+		"ivec4",
+		"uint",
+		"uvec2",
+		"uvec3",
+		"uvec4",
+		// these ints are not actually from glsl
+		"imat2",
+		"imat3",
+		"imat4",
+		// float
+		"float",
+		"vec2",
+		"vec3",
+		"vec4",
+		"mat2",
+		"mat3",
+		"mat4",
+		// bool
+		"bool",
+		"bvec2",
+		"bvec3",
+		"bvec4",
+		// other
+		"void",
+		"u?sampler2D",
+	], "|");
+	syntax.elements[CONSTANT1].match = #run join(.. .[
+		"true",
+		"false",
+	], "|");
+	syntax.elements[KEYWORD2].match = #run join(.. .[
+		"texture",
+		"length",
+		"inverse",
+		"atomicAdd",
+		"atomicCompSwap",
+		"mix",
+		// gl_Position
+		"gl_\\w*", // are we do i wanna use wildcard or hardcode things??
+	], "|");
+	syntax.elements[TYPE2].match = "_?[A-Z]\\w*[a-z]\\w*+";
+	syntax.elements[DIRECTIVE].match = "#\\w*(?:\\,\\w*+)*+";
+	syntax.elements[STRING1].match = "\"(?:[^\"\\\\]|\\\\.)*(?:\"|$)";
+	syntax.elements[NUMBER].match = "\\d+(?:\\.\\d+)?";
+	syntax.elements[TAB].match = "\\t++";
+	syntax.elements[COMMENT].match = "//.*?$";
+	syntax.elements[MULTILINE_COMMENT].match_kind = .MULTILINE_START_END;
+	syntax.elements[MULTILINE_COMMENT].multiline_start = "/\\*";
+	syntax.elements[MULTILINE_COMMENT].multiline_end = "\\*/";
+	syntax.elements[CONSTANT2].match = "(?:\\$?[A-Z_][A-Z_\\d]*+|\\$\\w++)";
 	//
 	compile_syntax(*syntax);
 	return syntax;
@@ -250,6 +373,7 @@ create_jai_syntax :: () -> Syntax {
 		"void",
 		"bool",
 		"string",
+		"big_float", // my thing !
 	], "|");
 	syntax.elements[CONSTANT1].match = #run join(.. .[
 		"true",
@@ -260,12 +384,10 @@ create_jai_syntax :: () -> Syntax {
 		"it",
 		"it_index"
 	], "|");
-	//elements[DECLARATION].match_suffix = "\\s*:\\s*(?:\\**[a-zA-Z_]\\w*+\\s*;|(?:\\**[a-zA-Z_]\\w*+)?=[^;]*;)";
-	//elements[DECLARATION].match_suffix = #run sprint("(?:\\s*\\,\\s*\\w+){0}\\s*:\\s*(?:%|\\=|#type)", decl_type);
 	elements[DECLARATION].match = "[a-zA-Z_]\\w*+";
 	decl_type :: "[\\[\\]\\w\\.\\*]+[^\\[\\]\\w\\.\\*]";
 	elements[DECLARATION].match_suffix = "(?:\\s*\\,\\s*\\w+)*\\s*:";
-	syntax.elements[TYPE2].match = "[A-Z]\\w*[a-z]\\w*+";
+	syntax.elements[TYPE2].match = "_?[A-Z]\\w*[a-z]\\w*+";
 	syntax.elements[DIRECTIVE].match = "#\\w*(?:\\,\\w*+)*+";
 	syntax.elements[STRING1].match = "\"(?:[^\"\\\\]|\\\\.)*(?:\"|$)";
 	syntax.elements[NUMBER].match = "\\d+(?:\\.\\d+)?";

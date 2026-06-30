@@ -334,17 +334,20 @@ move_cursor :: (res: Motion_Result, count: int = 1) {
 		if !ok
 			return;
 	} 
+	pos := res.end;
+	if res.position_for_cursor.x >= 0 && res.position_for_cursor.y >= 0
+		pos = res.position_for_cursor;
 	if res.is_jump {
-		move_cursor(win, res.end, jump = true);
-	} else if res.start.x == res.end.x || (res.flags & .Y_ONLY) {
-		y := win.cursor.y + (res.end.y - win.cursor.y) * count;
+		move_cursor(win, pos, jump = true);
+	} else if res.start.x == pos.x || (res.flags & .Y_ONLY) {
+		y := win.cursor.y + (pos.y - win.cursor.y) * count;
 		move_cursor_y(win, y);
-	} else if res.start.y == res.end.y {
-		x := win.cursor.x + (res.end.x - win.cursor.x) * count;
+	} else if res.start.y == pos.y {
+		x := win.cursor.x + (pos.x - win.cursor.x) * count;
 		move_cursor_x(win, x);
 	} else {
 		// count not supported
-		move_cursor(win, res.end);
+		move_cursor(win, pos);
 	}
 	if res.scroll >= 0
 		set_scroll(win, res.scroll); 

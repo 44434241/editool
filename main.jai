@@ -17,21 +17,19 @@
 // - keybinds to undo/redo ff & fr (as in, see history??) (just make it proper !)
 // - breaks clipboard image, when open ... <- ALSO NEED TO SAVE PATH ..
 // - hook for moving cursor in window (or could have a last time for cursor change, could be cleaner)
-// - maybe n/N should scroll a bit differently?
-// - scroll still not working with jumps (need to look into them)
 // - for search replace, could mark the last search differently for readability !!
 // - embedded buffer stuff? (fzf command, shell, whatever else...)
-// - search probably supporting 'no' confirm
+// - search probably supporting 'no' confirm <- maybe important
 // - UPDATE HOW CURSOR MARKS WORK
+// - ^ scroll still not working with jumps (need to look into them)
 // - should have separate "should show line numbers/status bar/etc" flags for buffers, and windows can have the option to override them???
 // - named marks should be global? <- priority maybe <- i need to learn to use them better
 // - ^ also for compilation, i could mark the lines in the error output
-// - using '{' to copy/delete backwards kinda cuts some shit off
-// - glsl syntax highlighting 
-// - ^ + generic "config" highlighting
-// - folds marker things, e.g '/// thing start' '/// thing end'
 // - Some way to save esc-ed search/exec?
 // - - maybe just remember the last esc-ed, and have a keybind to start from it ig..
+// - history files (search/exec/undo?) 
+// - it would be useful to have some way to say what undo happened...
+// - simple exec aliases..
 //
 // Things for ff (mostly for debugging idk)
 // - windows
@@ -65,6 +63,7 @@
 // - Need a better way to visualize them.. maybe mark the line number differently?
 // - Nested ones not supported rn
 // - 'qq' marking all messes up with top level #if's 
+// - folds marker things, e.g '/// thing start' '/// thing end'
 //
 // Laptop shit
 // - push i3 status caps thing
@@ -655,6 +654,15 @@ main :: () {
 					}
 					logfile = args[idx];
 					idx += 1;
+				case "--dir";
+					idx += 1;
+					if idx >= args.count {
+						print("Missing --dir argument\n", to_standard_error = true);
+						exit(1);
+					}
+					dir := args[idx];
+					idx += 1;
+					set_working_directory(dir);
 				case;
 					array_add(*filenames, args[idx]);
 					idx += 1;

@@ -722,6 +722,11 @@ add_all_execs :: () {
 	});
 	add_exec("quit", _quit);
 	add_exec("q", _quit);
+	add_exec("syntax", (filetype: string) -> bool {
+		syntax := get_syntax_for_filetype(filetype);
+		change_syntax(context.buffer_window.buffer, syntax);
+		return true;
+	});
 }
 
 #scope_file

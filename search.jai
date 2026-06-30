@@ -328,7 +328,14 @@ go_to_search_match_offset :: (offset: int, jump := true) -> bool {
 	log("selected match: %\n", selected_match);
 	selected_match = (selected_match + offset) % matches.count;
 	selected_match = (selected_match + matches.count) % matches.count;
-	move_cursor(win, matches[selected_match].position, jump = jump);
+	pos := matches[selected_match].position;
+	// we'll see if i like this scrolling thing
+	scroll := get_relative_y(win.buffer, pos.y, -win.size.y / 2);
+	should_scroll := !in_range_exclusive(pos.y, win.scroll, win.scroll + win.size.y);
+	move_cursor(win, pos, jump = jump);
+	if should_scroll
+		set_scroll(win, scroll);
+	// also, scroll
 	return true;
 }
 
