@@ -30,6 +30,7 @@
 // - history files (search/exec/undo?) 
 // - it would be useful to have some way to say what undo happened...
 // - simple exec aliases..
+// - when screen resolution is too small for floating windows, it crashes instead of just silently failing?..
 //
 // Things for ff (mostly for debugging idk)
 // - windows

@@ -867,10 +867,10 @@ set_floating :: (win: *Window, pos: Floating_Position, border := true) -> bool {
 
 set_floating :: (win: *Window) -> bool {
 	return set_floating(win, .{
-		lx = .{ .BEGIN, 20 },
-		rx = .{ .END, -20 },
-		ly = .{ .BEGIN, 10 },
-		ry = .{ .END, -10 },
+		lx = .{ .BEGIN, 10 },
+		rx = .{ .END, -10 },
+		ly = .{ .BEGIN, 5 },
+		ry = .{ .END, -5 },
 	});
 }
 
