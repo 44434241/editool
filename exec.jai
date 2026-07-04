@@ -482,13 +482,24 @@ add_all_execs :: () {
 		win.user_message = s;
 		return true;
 	});
-	add_exec("nest", #run make_exec_proc((count: int = 0) -> bool {
+	add_exec("nest", #run make_exec_proc(() -> bool {
 		win := context.buffer_window;
 		if win.parent == null
 			return false;
 		container := nest_window(win.parent, win);
 		return container != null;
-	}, 0));
+	}));
+	add_exec("unnest", #run make_exec_proc(() -> bool {
+		win := context.buffer_window;
+		found := false;
+		while win.parent != null && win.parent.parent != null && win.parent.children.count == 1 {
+			p := win.parent;
+			change_parent(win, win.parent.parent);
+			destroy_window(p);
+			found = true;
+		}
+		return found;
+	}));
 	add_exec("parent", #run make_exec_proc((count: int = 0) -> bool {
 		win := context.container_window;
 		if !win

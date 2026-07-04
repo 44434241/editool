@@ -1122,6 +1122,28 @@ find_relative_window :: (rel: int, wanted_mode := Window.Container_Mode.NONE) ->
 	return find_relative_window(context.buffer_window, rel, wanted_mode);
 }
 
+change_parent :: (win: *Window, new_parent: *Window) -> bool {
+	if win.parent == new_parent
+		return true;
+	if new_parent.kind != .CONTAINER
+		return false;
+	if win.parent == null
+		return false; // idk
+	{
+		idx := _child_index_of_window(win);
+		array_ordered_remove_by_index(*win.parent.children, idx);
+		if idx <= win.parent.active_child
+			win.active_child -= 1;
+	}
+	{
+		array_add(*new_parent.children, win);
+		win.parent = new_parent;
+	}
+	refresh_window_size(win.parent);
+	refresh_window_size(new_parent);
+	return true;
+}
+
 find_relative_window :: (win: *Window, rel: int, wanted_mode := Window.Container_Mode.NONE) -> *Window {
 	if !win 
 		return null;
