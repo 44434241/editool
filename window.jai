@@ -1059,7 +1059,7 @@ get_title :: (using buf: *Buffer) -> string {
 	if kind == {
 		case .DIRECTORY; #through;
 		case .FILE;
-			s := ifx path else "[EMPTY]";
+			s := ifx path else "[NONE]";
 			if path {
 				pwd := get_working_directory(,,allocator = temp);
 				if starts_with(s, pwd) {

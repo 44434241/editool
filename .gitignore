@@ -1,7 +1,6 @@
 .build/
 /run.sh
 /compile.sh
-/all_is_ok.sh
 /editool
 sqlite3.c
 /playground/

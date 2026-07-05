@@ -1,0 +1,1 @@
+jai-linux -optimized main.jai -exe editool.ok 
