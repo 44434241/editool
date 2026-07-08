@@ -31,6 +31,7 @@
 // - it would be useful to have some way to say what undo happened...
 // - simple exec aliases..
 // - when screen resolution is too small for floating windows, it crashes instead of just silently failing?..
+// - multiline comments dont work as expected (when scroll is far away from comment start, it forgets that its in a comment)
 //
 // Things for ff (mostly for debugging idk)
 // - windows

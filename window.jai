@@ -357,7 +357,7 @@ _draw_window :: (using win: *Window) {
 			// draw buffer status line at `buffer_status_line_position`
 			using,except(lines) win.buffer;
 			fn := get_title(win,, allocator=temp);
-			file_info := tprint(" %:%:%  FILE FLAGS: %, BUFFER CAPS: %", fn, cursor.y, cursor.x, file_flags, win.buffer.caps);
+			file_info := tprint(" %:%:%  FILE FLAGS: %", fn, cursor.y, cursor.x, file_flags);
 			if win.user_message != "" {
 				file_info = tprint("% | %\n", file_info, win.user_message);
 			}

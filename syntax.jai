@@ -340,6 +340,7 @@ create_jai_syntax :: () -> Syntax {
 		"return",
 		"continue",
 		"break",
+		"remove",
 		"case",
 		"struct",
 		"xx",
