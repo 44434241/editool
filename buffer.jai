@@ -308,7 +308,7 @@ save_buffer :: (buf: *Buffer) -> bool, string {
 			name_table.allocator = temp;
 			check_file_and_maybe_execute :: (f: *Directory_File, line: *Line,
 					name_table: *Table(string, void) = null, base_path := "",
-					$request := false, $execute: bool = false) -> Directory_Thing_Res {
+					$request := false, $execute: bool = false, recurse := false) -> Directory_Thing_Res {
 				if line.as_string == "" {
 					return .{
 						ok = false,
@@ -340,11 +340,11 @@ save_buffer :: (buf: *Buffer) -> bool, string {
 							error_message = tprint("Don't mess with with directories ('%')", line.as_string),
 						};
 					}
-					if name_table {
+					if name_table && !f.is_new {
 						if table_find(name_table, last_name) {
 							return .{
 								ok = false,
-								error_message = tprint("Dupe name (last_): '%'", last_name),
+								error_message = tprint("Dupe name (last): '%'", last_name),
 							};
 						}
 						table_add(name_table, last_name, default_of(void));
@@ -379,7 +379,7 @@ save_buffer :: (buf: *Buffer) -> bool, string {
 							};
 						} else {
 							ok := true;
-							if is_dir && false {
+							if is_dir && recurse {
 								// this is recursive
 								ok = delete_directory(last_full_path);
 							} else {
@@ -452,12 +452,12 @@ save_buffer :: (buf: *Buffer) -> bool, string {
 						idx += 1;
 						continue;
 					}
-					return idx, res.execute_request;
+					return idx, tprint("%: [y]es/[n]o/[r]ecurse", res.execute_request);
 				}
 				return directory_files.count, "";
 			}
-			execute_and_get_next_request :: (using buf: *Buffer, idx: int) -> int, string {
-				res := check_file_and_maybe_execute(*directory_files[idx], *lines[idx], base_path = path, execute = true);
+			execute_and_get_next_request :: (using buf: *Buffer, idx: int, recurse := false) -> int, string {
+				res := check_file_and_maybe_execute(*directory_files[idx], *lines[idx], base_path = path, execute = true, recurse = recurse);
 				if !res.ok {
 					edit_alert("File op for '%' failed: %", lines[idx].as_string, res.error_message);
 					return directory_files.count, "";
@@ -507,6 +507,16 @@ save_buffer :: (buf: *Buffer) -> bool, string {
 					case #char "n";
 						new_idx, new_msg := get_next_request(buf, buf.directory_files_confirm_index+1);
 						if new_idx >= buf.directory_files.count {
+							ret = false;
+						} else {
+							ret = true;
+							buf.directory_files_confirm_index = new_idx;
+							msg = new_msg;
+						}
+					case #char "r"; // recursive
+						new_idx, new_msg := execute_and_get_next_request(buf, buf.directory_files_confirm_index, recurse = true);
+						if new_idx >= buf.directory_files.count {
+							maybe_clear_dirty(buf);
 							ret = false;
 						} else {
 							ret = true;

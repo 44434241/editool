@@ -40,10 +40,9 @@
 // dir stuff:
 // - more info for files (size, is dir, permissions..)
 // - rename files/dirs loaded in editool !
+// - copying/cutting directories to move
 // - creating multiple/nested directories?
 // - ^ could have a different syntax for that.. actually think about directories more.
-// - should be able to big-confirm to delete directories recursively
-// - ^ [y]es/[n]no/[f]ull or some shit
 //
 // Try implementing language server
 // Try implementing multiple cursors
@@ -670,8 +669,12 @@ main :: () {
 					idx += 1;
 			}
 		}
-		if !filenames
-			array_add(*filenames, "./");
+		if !filenames {
+			if context.edit.should_print_path
+				array_add(*filenames, "./"); 
+			else
+				array_add(*filenames, ""); // default is empty buffer
+		}
 	}
 	editool_init(logfile = logfile);
 	{
