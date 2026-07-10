@@ -19,7 +19,8 @@ Syntax_Element :: struct {
 		CONSTANT1;
 		CONSTANT2;
 		CONSTANT3;
-		NUMBER;
+		NUMBER1;
+		NUMBER2;
 		EOL_SPACE;
 		DECLARATION;
 		OTHER1;
@@ -66,7 +67,8 @@ Syntax :: struct {
 	elements[STRING1].color = 12; // white
 	elements[STRING2].color = 12; // white
 	elements[DIRECTIVE].color = 5; // purple 
-	elements[NUMBER].color = 12; // white
+	elements[NUMBER1].color = 12; // white
+	elements[NUMBER2].color = 12; // white
 	elements[TAB].color = 12; // white
 	elements[COMMENT].color = 4; // grey
 	elements[MULTILINE_COMMENT].color = 4; // grey
@@ -83,7 +85,8 @@ Syntax :: struct {
 	elements[CONSTANT1].flags = .IS_WORD;
 	elements[CONSTANT2].flags = .IS_WORD;
 	elements[CONSTANT3].flags = .IS_WORD;
-	elements[NUMBER].flags = .IS_WORD;
+	elements[NUMBER1].flags = .IS_WORD;
+	elements[NUMBER2].flags = .IS_WORD;
 	normal_color: s8 = 0;
 	is_compiled: bool = false;
 	regex: Uniform.Regexp;
@@ -133,6 +136,13 @@ get_syntax_for_filetype :: (filetype: string) -> *Syntax {
 			syntax.filetype = "glsl";
 			array_add(*context.edit.syntaxes, syntax);
 		}
+		{
+			// Glsl
+			syntax := New(Syntax);
+			syntax.* = create_c_syntax();
+			syntax.filetype = "c";
+			array_add(*context.edit.syntaxes, syntax);
+		}
 	}
 	for context.edit.syntaxes {
 		if it.filetype == filetype
@@ -151,15 +161,24 @@ path_to_filetype :: (_path: string) -> string {
 	if idx1 >= 0
 		path = advance(path, idx1+1);
 	if path == {
-		case ".bashrc";
+		case ".bashrc"; #through;
+		case ".bashrc_local";
 			return "sh";
 	}
 	idx2 := find_index_from_right(path, #char ".");
 	if idx2 >= 0 {
 		ext := advance(path, idx2+1);
 		if ext == {
+			case "toml"; #through;
+			case "yaml"; #through;
 			case "conf";
 				return "config"; 
+			case "ino"; #through; // arduino
+			case "c"; #through;
+			case "cpp"; #through;
+			case "h"; #through;
+			case "hpp";
+				return "c"; 
 			case;
 				return ext;
 		}
@@ -171,7 +190,7 @@ path_to_filetype :: (_path: string) -> string {
 create_mike_syntax :: () -> Syntax {
 	using syntax: Syntax;
 	syntax.elements[STRING1].match = "\"(?:[^\"\\\\]|\\\\.)*(?:\"|$)";
-	syntax.elements[NUMBER].match = "\\d+(?:\\.\\d+)?";
+	syntax.elements[NUMBER1].match = "\\d+(?:\\.\\d+)?";
 	syntax.elements[TAB].match = "\\t++";
 	syntax.elements[CONSTANT1].match = #run join(.. .[
 		"true",
@@ -180,7 +199,7 @@ create_mike_syntax :: () -> Syntax {
 	//syntax.elements[COMMENT].match = "#.*?$";
 	//
 	syntax.elements[CONSTANT1].flags |= .IS_WORD;
-	syntax.elements[NUMBER].flags |= .IS_WORD;
+	syntax.elements[NUMBER1].flags |= .IS_WORD;
 	compile_syntax(*syntax);
 	return syntax;
 }
@@ -229,7 +248,7 @@ create_bash_syntax :: () -> Syntax {
 	syntax.elements[STRING1].match = "\"(?:[^\"\\\\]|\\\\.)*(?:\"|$)";
 	syntax.elements[STRING2].match = "'(?:[^'\\\\]|\\\\.)*(?:'|$)";
 	syntax.elements[OTHER1].match = "`(?:[^`\\\\]|\\\\.)*(?:`|$)";
-	//syntax.elements[NUMBER].match = "\\d+(?:\\.\\d+)?";
+	//syntax.elements[NUMBER1].match = "\\d+(?:\\.\\d+)?";
 	syntax.elements[TAB].match = "\\t++";
 	syntax.elements[COMMENT].match = "#.*?$";
 	//
@@ -250,6 +269,7 @@ create_glsl_syntax :: () -> Syntax {
 		"break",
 		"struct",
 		//
+		"const",
 		"layout",
 		"location",
 		"uniform",
@@ -268,32 +288,13 @@ create_glsl_syntax :: () -> Syntax {
 	], "|");
 	syntax.elements[TYPE1].match = #run join(.. .[
 		// int
-		"int",
-		"ivec2",
-		"ivec3",
-		"ivec4",
-		"uint",
-		"uvec2",
-		"uvec3",
-		"uvec4",
-		// these ints are not actually from glsl
-		"imat2",
-		"imat3",
-		"imat4",
-		// float
-		"float",
-		"vec2",
-		"vec3",
-		"vec4",
-		"mat2",
-		"mat3",
-		"mat4",
-		// bool
+		"u?int",
 		"bool",
-		"bvec2",
-		"bvec3",
-		"bvec4",
-		// other
+		"float",
+		"[iub]?vec[234]",
+		// these ints are not actually from glsl
+		"[i]?mat[234]",
+		//
 		"void",
 		"u?sampler2D",
 	], "|");
@@ -314,7 +315,73 @@ create_glsl_syntax :: () -> Syntax {
 	syntax.elements[TYPE2].match = "_?[A-Z]\\w*[a-z]\\w*+";
 	syntax.elements[DIRECTIVE].match = "#\\w*(?:\\,\\w*+)*+";
 	syntax.elements[STRING1].match = "\"(?:[^\"\\\\]|\\\\.)*(?:\"|$)";
-	syntax.elements[NUMBER].match = "\\d+(?:\\.\\d+)?";
+	syntax.elements[NUMBER1].match = "\\d+(?:\\.\\d+)?";
+	syntax.elements[TAB].match = "\\t++";
+	syntax.elements[COMMENT].match = "//.*?$";
+	syntax.elements[MULTILINE_COMMENT].match_kind = .MULTILINE_START_END;
+	syntax.elements[MULTILINE_COMMENT].multiline_start = "/\\*";
+	syntax.elements[MULTILINE_COMMENT].multiline_end = "\\*/";
+	syntax.elements[CONSTANT2].match = "(?:\\$?[A-Z_][A-Z_\\d]*+|\\$\\w++)";
+	//
+	compile_syntax(*syntax);
+	return syntax;
+}
+
+create_c_syntax :: () -> Syntax {
+	using syntax: Syntax;
+	elements[KEYWORD1].match = #run join(.. .[
+		"for",
+		"while",
+		"if",
+		"else",
+		"then",
+		"return",
+		"continue",
+		"break",
+		"struct",
+		//
+		"do",
+		"static",
+		"const",
+		"extern",
+		"typedef",
+		"case",
+		"switch",
+		"default",
+	], "|");
+	syntax.elements[TYPE1].match = #run join(.. .[
+		// int
+		"int",
+		"long",
+		"bool",
+		"void",
+		"unsigned",
+		"char",
+		"u?int8_t",
+		"u?int16_t",
+		"u?int32_t",
+		"u?int64_t",
+	], "|");
+	syntax.elements[CONSTANT1].match = #run join(.. .[
+		"true",
+		"false",
+	], "|");
+	syntax.elements[CONSTANT1].match = "__\\w+";
+	syntax.elements[KEYWORD2].match = #run join(.. .[
+		"texture",
+		"length",
+		"inverse",
+		"atomicAdd",
+		"atomicCompSwap",
+		"mix",
+		// gl_Position
+		"gl_\\w*", // are we do i wanna use wildcard or hardcode things??
+	], "|");
+	syntax.elements[DIRECTIVE].match = "#\\w*(?:\\,\\w*+)*+";
+	syntax.elements[STRING1].match = "\"(?:[^\"\\\\]|\\\\.)*(?:\"|$)";
+	syntax.elements[STRING2].match = "<(?:[^>\\\\]|\\\\.)*>\\w*$";
+	syntax.elements[NUMBER1].match = "\\d+(?:\\.\\d+)?";
+	syntax.elements[NUMBER2].match = "0[xbo][0-9a-fA-F_]*";
 	syntax.elements[TAB].match = "\\t++";
 	syntax.elements[COMMENT].match = "//.*?$";
 	syntax.elements[MULTILINE_COMMENT].match_kind = .MULTILINE_START_END;
@@ -391,7 +458,8 @@ create_jai_syntax :: () -> Syntax {
 	syntax.elements[TYPE2].match = "_?[A-Z]\\w*[a-z]\\w*+";
 	syntax.elements[DIRECTIVE].match = "#\\w*(?:\\,\\w*+)*+";
 	syntax.elements[STRING1].match = "\"(?:[^\"\\\\]|\\\\.)*(?:\"|$)";
-	syntax.elements[NUMBER].match = "\\d+(?:\\.\\d+)?";
+	syntax.elements[NUMBER1].match = "\\d+(?:\\.\\d+)?";
+	syntax.elements[NUMBER2].match = "0[xbo][0-9a-fA-F_]*";
 	syntax.elements[TAB].match = "\\t++";
 	syntax.elements[COMMENT].match = "//.*?$";
 	// doesn't support nested multiline comments ...

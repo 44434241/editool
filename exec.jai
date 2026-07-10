@@ -568,8 +568,30 @@ add_all_execs :: () {
 			edit_warn(msg);
 		return ok;
 	}
+	_save_all :: () -> bool {
+		count := 0;
+		ok := true;
+		for context.edit.buffers {
+			if it.kind != .FILE
+				continue; // ignore directory buffers
+			if !is_dirty(it)
+				continue;
+			if it.file_flags & (.NO_FILE | .READ_ONLY)
+				continue;
+			count += 1;
+			here_ok, msg := save_buffer(it);
+			if !here_ok {
+				ok = false;
+				edit_warn("Failed to save '%': %", it.path, msg);
+			}
+		}
+		edit_alert("Saved (%) % buffers", ok, count);
+		return ok;
+	}
 	add_exec("save", _save);
 	add_exec("s", _save);
+	add_exec("save_all", _save_all);
+	add_exec("sa", _save_all);
 	add_exec("size_fixed", (v: int) -> bool {
 		win := get_window(.NONE);
 		item := Container_Item.{ fixed_size = v };

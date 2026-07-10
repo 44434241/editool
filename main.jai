@@ -32,6 +32,9 @@
 // - simple exec aliases..
 // - when screen resolution is too small for floating windows, it crashes instead of just silently failing?..
 // - multiline comments dont work as expected (when scroll is far away from comment start, it forgets that its in a comment)
+// - kinda like "go to previous jump" thing, but instead go to latest jump that is in a different file!
+// - alert/warn/error history? could be just a buffer <- could name special buffers like "@search", "@exec"...
+// - cursor in long lines, in the second actual line is a bit off... (or not? seems like the problem is the border existing..)
 //
 // Things for ff (mostly for debugging idk)
 // - windows

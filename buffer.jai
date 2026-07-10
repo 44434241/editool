@@ -10,7 +10,7 @@ Line :: struct {
 	chars: [..]u8;
 	#overlay(chars.count) count: int;
 	#overlay(chars) as_string: string;
-	CONST_MOD_COUNT :: 128 + 64; // looks like the best for memory
+	CONST_MOD_COUNT :: 128 + 64 + 64; // looks like the best for memory
 	// ^ for some lines it not enough... idk
 	//
 	mods: [CONST_MOD_COUNT]Char_Mod = ---; // A LOT !
