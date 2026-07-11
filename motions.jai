@@ -287,7 +287,7 @@ motion_find_char :: (_: Motion_In) -> Motion_Result {
 
 motion_find_char_char :: (in: Motion_In, char: s32, $step: int, $inclusive: bool) -> Motion_Result {
 	assert(step == -1 || step == 1);
-	if !is_printable_char(char) {
+	if !is_printable_char(char) && char != #char "\t" {
 		return .{ status = .ERROR };
 	}
 	win := in.window;

@@ -27,14 +27,14 @@
 // - ^ also for compilation, i could mark the lines in the error output
 // - Some way to save esc-ed search/exec?
 // - - maybe just remember the last esc-ed, and have a keybind to start from it ig..
-// - history files (search/exec/undo?) 
-// - it would be useful to have some way to say what undo happened...
-// - simple exec aliases..
-// - when screen resolution is too small for floating windows, it crashes instead of just silently failing?..
-// - multiline comments dont work as expected (when scroll is far away from comment start, it forgets that its in a comment)
-// - kinda like "go to previous jump" thing, but instead go to latest jump that is in a different file!
+// - history files (search/exec/undo?), or some sort of session thing
+// - when screen resolution is too small for floating windows, it crashes instead of just silently failing?.. <- probably because 0 lines_to_draw
 // - alert/warn/error history? could be just a buffer <- could name special buffers like "@search", "@exec"...
 // - cursor in long lines, in the second actual line is a bit off... (or not? seems like the problem is the border existing..)
+//
+// I want these a lil more
+// - kinda like "go to previous jump" thing, but instead go to latest jump that is in a different file!
+// - it would be useful to have some way to say what undo happened...
 //
 // Things for ff (mostly for debugging idk)
 // - windows
@@ -73,7 +73,7 @@
 // - push i3 status caps thing
 // - should either commit compile scripts or make a first for compiling it 
 
-X11_CLIPBOARD :: true;
+X11_ENABLE :: true;
 
 Keybind :: struct {
 	chars: []s32;
@@ -191,7 +191,7 @@ Editool :: struct {
 	next_dot_command: [..]s32;
 	clipboard: Clipboard;
 	//
-	#if X11_CLIPBOARD {
+	#if X11_ENABLE {
 		x11_window: X11.Window;
 	} else {
 		not_os_clipboard: string;
@@ -205,13 +205,23 @@ Editool :: struct {
 	dont_mess_with_tty: bool = false;
 }
 
-#if X11_CLIPBOARD {
+#if X11_ENABLE {
 	edit_get_os_clipboard :: () -> string {
 		return os_clipboard_get_text(context.edit.x11_window,, allocator=temp);
 	}
 	
 	edit_set_os_clipboard :: (s: string) {
 		os_clipboard_set_text(context.edit.x11_window, s);
+	}
+	
+	is_caps_lock :: () -> bool {
+		state: u32;
+		status: X11.Status = XkbGetIndicatorState(X11.x_global_display, XkbUseCoreKbd, *state);
+		if status != X11.Success {
+			edit_alert("is_caps_lock() failed (%)", status);
+			return false;
+		}
+		return state & 1 != 0;
 	}
 } else {
 	edit_get_os_clipboard :: () -> string {
@@ -564,7 +574,7 @@ editool_init :: (logfile := "") {
 	noecho(); 
 	nodelay(stdscr, true);
 	keypad(stdscr, true); // use all keys
-	set_escdelay(10); // ms
+	set_escdelay(1); // ms
 	if !has_colors() || !can_change_color() {
 		log_error("no colors...");
 		editool_deinit();
@@ -601,7 +611,7 @@ editool_init :: (logfile := "") {
 	context.edit.time = 1;
 	context.assertion_failed = editool_assertion_failed;
 	// x11
-	#if X11_CLIPBOARD {
+	#if X11_ENABLE {
 		X11.init_global_display();
 		// invisible window for clipboard ..
 		context.edit.x11_window = X11.XCreateSimpleWindow(
@@ -748,7 +758,7 @@ main :: () {
 				}
 			}
 		}
-		ch: s32 = ---;
+		ch: s32 = ERR;
 		if context.edit.added_chars.count == 0 {
 			// Old: If a floating window exists, and the current buffer is not the floating window, then stop floating it.
 			// New: If the current buffer is not floating, unfloat all floating windows.
@@ -766,9 +776,16 @@ main :: () {
 				else
 					update_cursor_thing(true); // normal
 			}
+			#if X11_ENABLE {
+				last_is_caps := is_caps_lock();
+			}
 			while true {
-				#if X11_CLIPBOARD
+				#if X11_ENABLE {
 					update_window_events();
+					if last_is_caps != is_caps_lock() {
+						break;
+					}
+				}
 				ch = getch();
 				if ch != ERR {
 					break;
@@ -784,7 +801,8 @@ main :: () {
 			log("got ch: % (%)\n", ch, string.{ data = cast(*u8)*ch, count = 1 });
 		else
 			log("got ch: % ((%))\n", ch, to_string(keyname(ch)));
-		handle_char(ch);
+		if ch != ERR
+			handle_char(ch);
 		reset_temporary_storage();
 		if context.edit.should_quit
 			break;
@@ -815,8 +833,14 @@ main :: () {
 #import "POSIX";
 Uniform :: #import "uniform";
 
-#if X11_CLIPBOARD {
+#if X11_ENABLE {
 	X11 :: #import "X11";
 	#import "Input";
 	#import "Clipboard";
+	//XkbKeycodeToKeysym :: (dpy: *Display, kc: KeyCode, group: u32, level: u32) -> KeySym #foreign libX11;
+	libX11 :: #library,system "libX11";
+	XkbUseCoreKbd :: 0x0100;
+	XkbLockModifiers :: (dpy: *X11.Display, spec: u32, affect: u32, values: u32) -> X11.Bool #foreign libX11;
+	// retarded-shit man pages are wrong, state_return is a pointer!!
+	XkbGetIndicatorState :: (dpy: *X11.Display, spec: u32, state_return: *u32) -> X11.Status #foreign libX11;
 }

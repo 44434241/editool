@@ -9,6 +9,7 @@ Exec_Command :: struct {
 	name: string;
 	Proc :: #type ([]string) -> Exec_Result;
 	proc: Proc;
+	name_aliases: []string;
 }
 
 Exec_Result :: struct {
@@ -23,7 +24,6 @@ Exec_Result :: struct {
 start_exec :: () {
 	string_commands_start(*context.exec, "");
 }
-
 
 editool_exec_init :: () {
 	string_commands_init(*context.exec, "Exec");
@@ -59,7 +59,7 @@ _execute_exec :: (__: *String_Command_State, ___: *Window) {
 		return;
 	// exec commands should be part of Exec...
 	for context.edit.exec_commands {
-		if it.name == args[0] {
+		if it.name == args[0] || array_find(it.name_aliases, args[0]) {
 			res := it.proc(advance(args, 1));
 			if res.status != .OK {
 				edit_alert("Command '%' failed: %\n", args[0], res.error_message);
@@ -70,11 +70,12 @@ _execute_exec :: (__: *String_Command_State, ___: *Window) {
 	edit_alert("Command '%' not found", args[0]);
 }
 
-add_exec :: (name: string, $_proc: $T) {
+add_exec :: (name: string, $_proc: $T, aliases: []string = .[]) {
 	proc := #ifx type_of(_proc) == Exec_Command.Proc then _proc else make_exec_proc(_proc);
 	array_add(*context.edit.exec_commands, .{
 		name = name,
 		proc = proc,
+		name_aliases = array_copy(aliases),
 	});
 }
 
@@ -374,8 +375,10 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 		TAB;
 		VERTICAL;
 		FLOAT;
+		WINDOW; // ctrl + b
 	}
-	select_proc :: (in: Command_In, select_mode: Select_Mode) -> Command_Result {
+	select_proc :: (in: Command_In, _select_mode: Select_Mode) -> Command_Result {
+		select_mode := _select_mode;
 		win := context.buffer_window;
 		state := win.user_data.(*Fzf_State);
 		if state.items.count == 0 {
@@ -390,14 +393,25 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 		hold(buf);
 		defer release(buf);
 		//
-		new_win: *Window = ---;
+		new_win: *Window;
+		if select_mode == .WINDOW {
+			// reverse iterate, select the most recent one!
+			for < buf.windows {
+				if _root_of(it) == context.edit.root {
+					new_win = buf.windows[0];
+					break;
+				} 
+			}
+			if new_win == null
+				select_mode = .TAB;
+		}
 		if select_mode == .OPEN {
 			new_win = get_window(.BUFFER, not_floating = true, not_special = true);
 			change_buffer(new_win, buf);
 		} else if select_mode == .FLOAT {
 			new_win = create_buffer_window(null, buf, flags = .TEMP_FLOATING, is_hidden = true);
 			set_floating(new_win);
-		} else { // .TAB or .VERTICAL
+		} else if select_mode == .TAB || select_mode == .VERTICAL { 
 			parent := get_window(.CONTAINER, not_floating = true);
 			need_container: Window.Container_Mode = ifx select_mode == .TAB then .TABBED else .VERTICAL;
 			while parent != null {
@@ -419,9 +433,10 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 			}
 			new_win = create_buffer_window(parent, buf);
 		}
+		assert(new_win != null); // shouldnt fail, but logic here is kinda all over the place
 		destroy_window(state.parent, force = true);
 		//
-		edit_alert("new_win: %\n", new_win.*);
+		log("new_win: %\n", new_win.*);
 		move_cursor(new_win, .{ 0, item.line_number }, jump = true);
 		set_scroll(new_win, item.line_number - new_win.size.y / 2);
 		change_edit_mode(.COMMAND);
@@ -431,22 +446,27 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 	add_command(*input_win.commands, 
 		keybind = "\n",
 		mode = .COMMAND | .INSERT,
-		proc = #bake_arguments select_proc(select_mode = .OPEN),
+		proc = #bake_arguments select_proc(_select_mode = .OPEN),
 	);
 	add_command(*input_win.commands, 
 		keybind = .[ 20 ], // ctrl + t
 		mode = .COMMAND | .INSERT,
-		proc = #bake_arguments select_proc(select_mode = .TAB),
+		proc = #bake_arguments select_proc(_select_mode = .TAB),
 	);
 	add_command(*input_win.commands,
 		keybind = .[ 22 ], // ctrl + v
 		mode = .COMMAND | .INSERT,
-		proc = #bake_arguments select_proc(select_mode = .VERTICAL),
+		proc = #bake_arguments select_proc(_select_mode = .VERTICAL),
 	);
 	add_command(*input_win.commands,
 		keybind = .[ 6 ], // ctrl + f (not sure...)
 		mode = .COMMAND | .INSERT,
-		proc = #bake_arguments select_proc(select_mode = .FLOAT),
+		proc = #bake_arguments select_proc(_select_mode = .FLOAT),
+	);
+	add_command(*input_win.commands,
+		keybind = .[ 2 ], // ctrl + b
+		mode = .COMMAND | .INSERT,
+		proc = #bake_arguments select_proc(_select_mode = .WINDOW),
 	);
 	add_command(*input_win.commands, 
 		keybind = .[ KEY_ESCAPE ],
@@ -561,14 +581,14 @@ add_all_execs :: () {
 		destroy_window(context.buffer_window, force = true); // if it can't destroy, it will notify later?
 		return true;
 	});
-	_save :: () -> bool {
+	add_exec("save", () -> bool {
 		using win := context.buffer_window;
 		ok, msg := save_buffer(buffer);
 		if !ok
 			edit_warn(msg);
 		return ok;
-	}
-	_save_all :: () -> bool {
+	}, aliases = .[ "s" ]);
+	add_exec("save_all", () -> bool {
 		count := 0;
 		ok := true;
 		for context.edit.buffers {
@@ -587,11 +607,7 @@ add_all_execs :: () {
 		}
 		edit_alert("Saved (%) % buffers", ok, count);
 		return ok;
-	}
-	add_exec("save", _save);
-	add_exec("s", _save);
-	add_exec("save_all", _save_all);
-	add_exec("sa", _save_all);
+	}, aliases = .[ "sa" ]);
 	add_exec("size_fixed", (v: int) -> bool {
 		win := get_window(.NONE);
 		item := Container_Item.{ fixed_size = v };
@@ -683,8 +699,6 @@ add_all_execs :: () {
 		}
 		move_cursor(win, .{0, 0});
 		set_floating(win);
-		win.floating_position.ly.value -= 10;
-		win.floating_position.ry.value += 10;
 		refresh_window_size(win);
 		win.apply_mods = (win: *Window, lines: []*Line) {
 			for lines {
@@ -728,9 +742,6 @@ add_all_execs :: () {
 		edit_alert("%", s);
 		return true;
 	});
-	_quit :: () -> bool {
-		return editool_quit();
-	}
 	add_exec("clip_path", () -> bool {
 		path := context.buffer_window.buffer.path;
 		edit_set_os_clipboard(path);
@@ -753,8 +764,9 @@ add_all_execs :: () {
 			edit_alert("Failed refresh: %", msg);
 		return ok;
 	});
-	add_exec("quit", _quit);
-	add_exec("q", _quit);
+	add_exec("quit", () -> bool {
+		return editool_quit();
+	}, aliases = .[ "q" ]);
 	add_exec("syntax", (filetype: string) -> bool {
 		syntax := get_syntax_for_filetype(filetype);
 		change_syntax(context.buffer_window.buffer, syntax);

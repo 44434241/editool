@@ -1241,21 +1241,26 @@ change_syntax :: (buf: *Buffer, syntax: *Syntax) {
 _refresh_buffer_modifiers :: (win: *Window, using buf: *Buffer, ly: int, ry: int) {
 	time_this("Refresh buffer modifiers");
 	assert(ry <= lines.count);
-	#if 0 {
-		lines_to_refresh := []Line.{ data = lines.data + ly, count = ry - ly };
-	} else {
-		// Since we're using multiline syntax stuff, we need to refresh all lines up to this one
-		//lines_to_refresh := []Line.{ data = lines.data, count = ry };
-		// But let's not be too slow.
-		actual_ly := max(0, ry - 100);
-		actual_ly = clamp(ry - 100, 0, ly);
-		lines_to_refresh := []Line.{ data = lines.data + actual_ly, count = ry - actual_ly };
-	}
+	// Since we're using multiline syntax stuff, we need to refresh all lines up to this one
+	//lines_to_refresh := []Line.{ data = lines.data, count = ry };
+	// But let's not be too slow.
+	actual_ly := max(0, ry - 100);
+	actual_ly = clamp(ry - 100, 0, ly);
+	lines_to_refresh := []Line.{ data = lines.data + actual_ly, count = ry - actual_ly };
+	//
 	maybe_update_search_matches(win); // makes sure search replace is ok
 	for * lines_to_refresh {
 		y := it - buf.lines.data;
 		//assert (it.count <= mods.count, "%", it.count);
-		multiline_syntax_index := ifx it_index == 0 then -1 else lines_to_refresh[it_index-1].multiline_syntax_index;
+		multiline_syntax_index: int = ---;
+		if it_index != 0 {
+			multiline_syntax_index = lines_to_refresh[it_index-1].multiline_syntax_index;
+		} else {
+			if actual_ly != 0
+				multiline_syntax_index = lines[actual_ly-1].multiline_syntax_index;
+			else
+				multiline_syntax_index = -1;
+		}
 		if it.start_multiline_syntax_index != multiline_syntax_index
 			it.dirty_flags |= .MODS;
 		if (it.dirty_flags & .MODS) {

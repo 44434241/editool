@@ -245,9 +245,8 @@ _draw_window :: (using win: *Window) {
 		}
 	}
 	if win.kind == .BUFFER {
+		log("a");
 		time_this("Draw buffer");
-		//lines_to_draw_count := min(lines.count - scroll, size.y);
-		//lines_to_draw := []Line.{ data = lines.data + scroll, count = lines_to_draw_count };
 		lines_to_draw: [..]*Line;
 		lines_to_draw.allocator = temp;
 		cursor_actual_position: Position = .{
@@ -277,6 +276,7 @@ _draw_window :: (using win: *Window) {
 					y += 1;
 				}
 			}
+			assert(lines_to_draw.count > 0, "scroll: %, line.count: %, size: %", scroll, lines.count, size.y);
 		}
 		_refresh_buffer_modifiers(win, buffer, scroll, peek(lines_to_draw) - lines.data + 1);
 		// buf apply mods takes priority
@@ -399,10 +399,17 @@ _draw_window :: (using win: *Window) {
 			free(it);
 		}
 		array_reset(*context.edit.alerts);
+		p := root_status_line_position;
+		wmove(nwindow, xx p.y, xx p.x);
+		if is_caps_lock() {
+			wattrset(nwindow, A_BOLD);
+			wattrset(nwindow, COLOR_PAIR(color_fg_bg(8, -1)));
+			waddstr(nwindow, "CAPS ");
+			wattrset(nwindow, 0);
+		}
 		wattrset(nwindow, A_BOLD);
 		wattrset(nwindow, COLOR_PAIR(color_fg_bg(2, -1)));
-		p := root_status_line_position;
-		mvwaddnstr(nwindow, xx p.y, xx p.x, mode_s.data, xx mode_s.count);
+		waddnstr(nwindow, mode_s.data, xx mode_s.count);
 		wattrset(nwindow, 0);
 		for mode_s.count..size.x-1 {
 			waddch(nwindow, #char " ");
