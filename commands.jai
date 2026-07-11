@@ -803,7 +803,7 @@ add_all_commands :: () {
 					user_mod := line.user_mods[cursor.x];
 					char := line.chars[cursor.x];
 					//log("char: '%' (%), fg: %, bg: %\n", string.{ data = *char, count = 1 }, char, fg, bg);
-					log("char: '%', mod: %, user_mod: %\n", string.{ data = *char, count = 1 }, mod, user_mod);
+					log("char: '%' (%), mod: %, user_mod: %\n", string.{ data = *char, count = 1 }, char, mod, user_mod);
 				}
 				log("Cursor marks (idx: %):\n", cursor_mark_index);
 				for cursor_marks {

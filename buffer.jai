@@ -65,9 +65,6 @@ get_real_size :: (line: *Line) -> int {
 
 // hm...
 Char_Mod :: struct {
-	// there might be reasons why i'd want this as a strong..
-	// syntax real_x doesn't respect this !
-	//replaced: string; // count <= 1
 	attributes: s32;
 	fg: s8 = 0;
 	bg: s8 = -1;
@@ -1291,20 +1288,30 @@ _refresh_buffer_modifiers :: (win: *Window, using buf: *Buffer, ly: int, ry: int
 
 Buffer_Char_Info :: struct {
 	size: int = 1;
-	replaced: string; // 
+	replaced: string; //
+	override_color: s8 = -1;
 }
 
 _get_char_info :: (ch: u8) -> Buffer_Char_Info {
+	ESCAPE_COLOR :: 4; // grey
 	if ch == {
 		case "\r";
 			return .{
 				size = 2,
 				replaced = "@r",
+				override_color = ESCAPE_COLOR,
+			};
+		case "\e";
+			return .{
+				size = 2,
+				replaced = "@e",
+				override_color = ESCAPE_COLOR,
 			};
 		case 0;
 			return .{
 				size = 2,
 				replaced = "@n",
+				override_color = ESCAPE_COLOR,
 			};
 		case "\t";
 			return .{

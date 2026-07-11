@@ -329,6 +329,8 @@ _draw_window :: (using win: *Window) {
 				} else {
 					Initialize(*mod);
 				}
+				if info.override_color != -1
+					mod.fg = info.override_color;
 				// matches are color 2
 				attr := as_ncurses_attribute(mod);
 				wattrset(nwindow, attr);

@@ -18,7 +18,6 @@
 // - breaks clipboard image, when open ... <- ALSO NEED TO SAVE PATH ..
 // - hook for moving cursor in window (or could have a last time for cursor change, could be cleaner)
 // - for search replace, could mark the last search differently for readability !!
-// - embedded buffer stuff? (fzf command, shell, whatever else...)
 // - search probably supporting 'no' confirm <- maybe important
 // - UPDATE HOW CURSOR MARKS WORK
 // - ^ scroll still not working with jumps (need to look into them)
@@ -31,10 +30,16 @@
 // - when screen resolution is too small for floating windows, it crashes instead of just silently failing?.. <- probably because 0 lines_to_draw
 // - alert/warn/error history? could be just a buffer <- could name special buffers like "@search", "@exec"...
 // - cursor in long lines, in the second actual line is a bit off... (or not? seems like the problem is the border existing..)
+// - could highlight escape sequences in string with a lil different color/
 //
 // I want these a lil more
 // - kinda like "go to previous jump" thing, but instead go to latest jump that is in a different file!
 // - it would be useful to have some way to say what undo happened...
+// - man pager
+// - proper threading search...
+//
+// These seem really interesting
+// - embedded buffer stuff? (fzf command, shell, whatever else...)
 //
 // Things for ff (mostly for debugging idk)
 // - windows
@@ -708,7 +713,7 @@ main :: () {
 						break;
 					array_adds(*all_chars, slice(cast(string)bytes, 0, xx cnt));
 				}
-				_insert_string_into_buffer_as_from_file(buf, cast(string)all_chars);
+				_insert_string_into_buffer_as_from_file(buf, cast(string)all_chars, this_has_escape_sequences = true);
 				log("chars: %\n", cast(string)all_chars);
 				win := create_buffer_window(parent, buf, flags = .BUFFER_LINE_NO);
 			}

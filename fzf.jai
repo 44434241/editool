@@ -459,6 +459,42 @@ do_fzf_jumps :: (win: *Window, res: *Fzf_Result, search: string) {
 	}
 }
 
+do_fzf_apropos :: (res: *Fzf_Result, search: string) {
+	time_this("Do fzf_jumps");
+	//
+	set_allocators(*res.pool);
+	res.items.allocator = allocator_of(res);
+	//
+	res.release = _default_release;
+	res.get_buffer = (item: Fzf_Item) -> *Buffer {
+		str := item.line;
+		idx := find_index_from_left(str, #char " ");
+		number: string = "";
+		if idx >= 0 {
+			str.count = idx;
+			number = advance(item.line, idx+1);
+		}
+		idx2 := find_index_from_left(number, #char " ");
+		if idx2 >= 0 {
+			number.count = idx2;
+			if number.count >= 2
+				number = slice(number, 1, number.count - 2);
+		}
+		buf := create_man_buffer(str, number);
+		return buf;
+	}
+	status, output := run_command("apropos", search, capture_and_return_output = true,, allocator=allocator_of(*res.pool));
+	if status.exit_code != 0
+		return;
+	for split(output, #char "\n",, allocator=temp) {
+		if !it
+			continue;
+		array_add(*res.items, .{
+			line = it,
+		});
+	}
+}
+
 #scope_file
 
 _default_release :: (res: *Fzf_Result) {

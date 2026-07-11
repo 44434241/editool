@@ -649,6 +649,14 @@ add_all_execs :: () {
 		}, start_search = start);
 		return win != null;
 	}, ""));
+	// find man
+	add_exec("fm", #run make_exec_proc((start: string) -> bool {
+		win := make_fzf_window((res: *Fzf_Result, s: string, data: *void) {
+			edit_alert("do fm '%'", s);
+			do_fzf_apropos(res, s);
+		}, start_search = start);
+		return win != null;
+	}, ""));
 	add_exec("fj", #run make_exec_proc((start: string) -> bool {
 		win := make_fzf_window((res: *Fzf_Result, s: string, data: *void) {
 			window_id := cast(WinId)data;
@@ -770,6 +778,14 @@ add_all_execs :: () {
 	add_exec("syntax", (filetype: string) -> bool {
 		syntax := get_syntax_for_filetype(filetype);
 		change_syntax(context.buffer_window.buffer, syntax);
+		return true;
+	});
+	add_exec("man", (page: string) -> bool {
+		buf := create_man_buffer(page);
+		if !buf
+			return false;
+		win := get_window(.BUFFER, not_floating = true);
+		change_buffer(win, buf);
 		return true;
 	});
 }

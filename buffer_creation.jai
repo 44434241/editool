@@ -51,7 +51,7 @@ find_or_create_directory_buffer :: (_path: string) -> *Buffer {
 	return buf;
 }
 
-_insert_string_into_buffer_as_from_file :: (buf: *Buffer, file_str: string) {
+_insert_string_into_buffer_as_from_file :: (buf: *Buffer, file_str: string, this_has_escape_sequences := false) {
 	string_lines: []string = split(file_str, #char "\n",, allocator=temp);
 	for * string_lines {
 		// maybe should have some flag for clrf endings ?
@@ -64,13 +64,100 @@ _insert_string_into_buffer_as_from_file :: (buf: *Buffer, file_str: string) {
 	if string_lines.count > 0 && peek(string_lines) == ""
 		string_lines.count -= 1;
 	array_reserve(*buf.lines, string_lines.count + 10);
+	NO_ESCAPE_SEQUENCES :: false;
+	#if NO_ESCAPE_SEQUENCES
+		this_has_escape_sequences = false;
 	for string_lines {
+		line: *Line = peek_pointer(buf.lines);
+		defer {
+			if it_index + 1 != string_lines.count {
+				array_add(*buf.lines, .{
+					chars.allocator = .{pool_allocator_proc, *buf.pool},
+				});
+			}
+		}
 		// Only place left where lines/chars are directly added/removed.
-		array_adds(*peek_pointer(buf.lines).chars, it);
-		if it_index + 1 != string_lines.count {
-			array_add(*buf.lines, .{
-				chars.allocator = .{pool_allocator_proc, *buf.pool},
-			});
+		if !this_has_escape_sequences {
+			array_adds(*line.chars, it);
+		} else {
+			s := it;
+			current_mod: s32 = 0;
+			while s.count {
+				not_escape :: (ch: u8 = 0) #expand {
+					if line.count < line.mods.count {
+						Initialize(*line.mods[line.count]);
+						line.mods[line.count].attributes = current_mod;
+					}
+					if ch {
+						array_add(*line.chars, ch);
+					} else {
+						array_add(*line.chars, s[0]);
+						s = advance(s, 1);
+					}
+				}
+				{
+					// tbh this shit needs utf support...
+					// utf-8 dash (fucking retards)
+					if starts_with(s, "\xe2\x80\x90") {
+						not_escape("-");
+						s = advance(s, 3);
+						continue;
+					}
+					// utf-8 long dash (fucking retards)
+					if starts_with(s, "\xe2\x80\x94") {
+						not_escape("-");
+						not_escape("-");
+						s = advance(s, 3);
+						continue;
+					}
+					// utf-8 dot
+					if starts_with(s, "\xe2\x80\xa2") {
+						not_escape("-");
+						s = advance(s, 3);
+						continue;
+					}
+				}
+				if starts_with(s, "\e[") {
+					num, ok, remainder := string_to_int(advance(s, 2), T = s32);
+					//edit_alert("% '%'", ok, remainder);
+					if !(ok && remainder && remainder[0] == #char "m") {
+						not_escape();
+						continue;
+					}
+					// good
+					s = advance(remainder, 1);
+					if num == {
+						case 0;
+							current_mod = 0;
+						case 1; // probably bold?
+							current_mod = A_BOLD;
+						case 4; // underline
+							current_mod = A_UNDERLINE;
+						// these 2 seem like a reset..
+						case 22;
+							current_mod = 0;
+						case 24; 
+							current_mod = 0;
+						case;
+							edit_warn("Unknown escape sequence: %", num);
+					}
+				} else if starts_with(s, "\e]8;;") {
+					idx := find_index_from_left(s, "\e\\");
+					if idx < 0 {
+						not_escape();
+						continue;
+					}
+					// skipping this url thing
+					s = advance(s, idx + 2);
+				} else {
+					not_escape();
+					continue;
+				}
+			}
+			if line.count < line.mods.count
+				Initialize(*line.mods[line.count]);
+			line.dirty_flags &= ~.MODS;
+			line.user_mods = line.mods;
 		}
 	}
 }
@@ -354,6 +441,38 @@ create_custom_buffer :: (flags: Buffer.Flags = .NONE) -> *Buffer {
 	buf := _new_buffer(.CUSTOM);
 	buf.syntax = get_syntax_for_filename("");
 	buf.flags |= flags;
+	return buf;
+}
+
+create_man_buffer :: (page: string) -> *Buffer {
+	return create_man_buffer(page, -1);
+}
+
+// probably fine to have this in this file?
+create_man_buffer :: (page: string, number: $T/.[ string, int ]) -> *Buffer {
+	args: [..]string;
+	args.allocator = temp;
+	array_add(*args, "/usr/bin/man");
+	number_s := tprint("%", number);
+	if number_s == "-1"
+		number_s = "";
+	if number_s {
+		array_add(*args, number_s);
+	}
+	array_add(*args, page);
+	res, str, err_msg := run_command(.. args, capture_and_return_output = true, extra_env=.[ "MAN_KEEP_FORMATTING=1" ],, allocator=temp);
+	if res.exit_code != 0 {
+		edit_alert("Bad man page: '%' '%' (%): %", page, number_s, args, err_msg);
+		return null;
+	}
+	buf: *Buffer = create_custom_buffer();
+	if number_s {
+		buf.user_title = sprint("MAN % %", page, number_s,, allocator = allocator_of(buf));
+	} else {
+		buf.user_title = sprint("MAN %", page,, allocator = allocator_of(buf));
+	}
+	_insert_string_into_buffer_as_from_file(buf, str, this_has_escape_sequences = true);
+	buf.caps = .MOVE | .MODE_ALL;
 	return buf;
 }
 
