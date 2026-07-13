@@ -1315,8 +1315,8 @@ _get_char_info :: (ch: u8) -> Buffer_Char_Info {
 			};
 		case "\t";
 			return .{
-				size = 4,
-				replaced = ">---",
+				size = 3,
+				replaced = ">--",
 			};
 	}
 	// defaults:

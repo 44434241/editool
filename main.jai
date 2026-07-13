@@ -31,12 +31,16 @@
 // - alert/warn/error history? could be just a buffer <- could name special buffers like "@search", "@exec"...
 // - cursor in long lines, in the second actual line is a bit off... (or not? seems like the problem is the border existing..)
 // - could highlight escape sequences in string with a lil different color/
+// - my_const : Something(#this) : 123; // syntax is wrong!
+// - doing >> (or <<) with space indentation cuts of a character n shi
+// - CAPS thing seems to not work.. maybe change the cursor color instead?
 //
 // I want these a lil more
 // - kinda like "go to previous jump" thing, but instead go to latest jump that is in a different file!
 // - it would be useful to have some way to say what undo happened...
 // - man pager
 // - proper threading search...
+// - when closing the last copy if a buffer, the undo history is gone and that might sometimes be bad.... maybe normal buffers ar .PERM_ISH
 //
 // These seem really interesting
 // - embedded buffer stuff? (fzf command, shell, whatever else...)

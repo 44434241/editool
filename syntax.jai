@@ -348,6 +348,8 @@ create_c_syntax :: () -> Syntax {
 		"case",
 		"switch",
 		"default",
+		"inline",
+		"enum",
 	], "|");
 	syntax.elements[TYPE1].match = #run join(.. .[
 		// int
@@ -357,6 +359,8 @@ create_c_syntax :: () -> Syntax {
 		"void",
 		"unsigned",
 		"char",
+		"short",
+		"float",
 		"u?int8_t",
 		"u?int16_t",
 		"u?int32_t",
@@ -368,14 +372,7 @@ create_c_syntax :: () -> Syntax {
 	], "|");
 	syntax.elements[CONSTANT1].match = "__\\w+";
 	syntax.elements[KEYWORD2].match = #run join(.. .[
-		"texture",
-		"length",
-		"inverse",
-		"atomicAdd",
-		"atomicCompSwap",
-		"mix",
-		// gl_Position
-		"gl_\\w*", // are we do i wanna use wildcard or hardcode things??
+		"sizeof",
 	], "|");
 	syntax.elements[DIRECTIVE].match = "#\\w*(?:\\,\\w*+)*+";
 	syntax.elements[STRING1].match = "\"(?:[^\"\\\\]|\\\\.)*(?:\"|$)";

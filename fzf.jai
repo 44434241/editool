@@ -77,7 +77,7 @@ do_fd :: (res: *Fzf_Result, search: string, dir: string = ".") {
 	res.items.allocator = context.allocator;
 	args: [..]string;
 	args.allocator = temp;
-	array_add(*args, "fd", "--no-ignore", "--type", "file");
+	array_add(*args, "fd", "--no-ignore" /* , "--type", "file"*/ );
 	if array_find(cast([]u8)search, #char "/") {
 		array_add(*args, "--full-path");
 	}
