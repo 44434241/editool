@@ -1,7 +1,6 @@
 # Maintainer: bbbb-b <nullptr@inbox.lt>
 
 pkgname='editool-git'
-pkgver=r40.c9a05c8
 pkgrel=1
 pkgdesc="Tool for editing things"
 arch=(x86_64) 
@@ -30,5 +29,5 @@ package() {
 	bash all_is_ok.sh
 	mkdir -p "$pkgdir/opt/" "$pkgdir/usr/bin/"
 	install editool.ok "$pkgdir/opt/editool"
-	ln -s "$pkgdir/opt/editool" "$pkgdir/usr/bin/edit"
+	ln -s "/opt/editool" "$pkgdir/usr/bin/edit"
 }

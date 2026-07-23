@@ -182,7 +182,8 @@ path_to_filetype :: (_path: string) -> string {
 		case ".vimrc";
 			return "vim";
 		case "PKGBUILD"; #through;
-		case "fstab";
+		case "fstab"; #through;
+		case "sshd_config";
 			return "config";
 	} 
 	idx2 := find_index_from_right(path, #char ".");
