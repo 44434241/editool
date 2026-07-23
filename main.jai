@@ -202,9 +202,8 @@ Editool :: struct {
 	//
 	#if X11_ENABLE {
 		x11_window: X11.Window;
-	} else {
-		not_os_clipboard: string;
-	}
+	} 
+	not_os_clipboard: string; // for when x11 is disabled
 	syntaxes: [..]*Syntax;
 	ask: Ask_State;
 	// arg related stuff
@@ -212,18 +211,28 @@ Editool :: struct {
 	tty_file: *FILE;
 	use_stdout_as_tty_fd: bool = false;
 	dont_mess_with_tty: bool = false;
+	no_x11: bool = false;
 }
 
 #if X11_ENABLE {
 	edit_get_os_clipboard :: () -> string {
+		if context.edit.no_x11
+			return context.edit.not_os_clipboard;
 		return os_clipboard_get_text(context.edit.x11_window,, allocator=temp);
 	}
 	
 	edit_set_os_clipboard :: (s: string) {
+		if context.edit.no_x11 {
+			context.edit.not_os_clipboard = string_copy(s); // leak
+			return;
+		}
 		os_clipboard_set_text(context.edit.x11_window, s);
 	}
 	
 	is_caps_lock :: () -> bool {
+		if context.edit.no_x11 {
+			return false;
+		}
 		state: u32;
 		status: X11.Status = XkbGetIndicatorState(X11.x_global_display, XkbUseCoreKbd, *state);
 		if status != X11.Success {
@@ -624,12 +633,14 @@ editool_init :: (logfile := "") {
 	context.assertion_failed = editool_assertion_failed;
 	// x11
 	#if X11_ENABLE {
-		X11.init_global_display();
-		// invisible window for clipboard ..
-		context.edit.x11_window = X11.XCreateSimpleWindow(
-				X11.x_global_display, X11.DefaultRootWindow(X11.x_global_display),
-				0, 0, 1, 1, 0, 0, 0);
-		array_add(*X11.x_global_windows, context.edit.x11_window);
+		if !context.edit.no_x11 {
+			X11.init_global_display();
+			// invisible window for clipboard ..
+			context.edit.x11_window = X11.XCreateSimpleWindow(
+					X11.x_global_display, X11.DefaultRootWindow(X11.x_global_display),
+					0, 0, 1, 1, 0, 0, 0);
+			array_add(*X11.x_global_windows, context.edit.x11_window);
+		}
 	}
 	context.print_style.default_format_struct.use_newlines_if_long_form = true;
 }
@@ -668,6 +679,9 @@ main :: () {
 					idx += 1;
 				case "--print-path";
 					context.edit.should_print_path = true;
+					idx += 1;
+				case "--no-x11";
+					context.edit.no_x11 = true;
 					idx += 1;
 				case "--std-tty";
 					context.edit.dont_mess_with_tty = true;
@@ -793,7 +807,9 @@ main :: () {
 			}
 			while true {
 				#if X11_ENABLE {
-					update_window_events();
+					if !context.edit.no_x11 {
+						Input.update_window_events();
+					}
 					if last_is_caps != is_caps_lock() {
 						break;
 					}
@@ -847,7 +863,7 @@ Uniform :: #import "uniform";
 
 #if X11_ENABLE {
 	X11 :: #import "X11";
-	#import "Input";
+	Input :: #import "Input";
 	#import "Clipboard";
 	//XkbKeycodeToKeysym :: (dpy: *Display, kc: KeyCode, group: u32, level: u32) -> KeySym #foreign libX11;
 	libX11 :: #library,system "libX11";

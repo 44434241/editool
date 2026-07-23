@@ -1,7 +1,7 @@
 # Maintainer: bbbb-b <nullptr@inbox.lt>
 
 pkgname='editool-git'
-pkgver=r39.03bc2db
+pkgver=r40.c9a05c8
 pkgrel=1
 pkgdesc="Tool for editing things"
 arch=(x86_64) 
