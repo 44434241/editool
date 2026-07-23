@@ -196,6 +196,7 @@ refresh_file_buffer :: (buf: *Buffer) {
 
 refresh_directory_buffer :: (buf: *Buffer) {
 	assert(buf.kind == .DIRECTORY);
+	log("REFRESH '%'", buf.path);
 	using,only(directory_files, path) buf;
 	array_reset(*directory_files);
 	for s: string.[ "./", "../" ] {
@@ -205,6 +206,24 @@ refresh_directory_buffer :: (buf: *Buffer) {
 		});
 	}
 	names := file_list_including_directories(path,, allocator=allocator_of(buf));
+	#if 1 {
+		quick_sort(names, (lhs: string, rhs: string) -> int {
+			lhs_isdir := is_directory(lhs);
+			rhs_isdir := is_directory(rhs);
+			if lhs_isdir != rhs_isdir
+				return cast(int)rhs_isdir - cast(int)lhs_isdir;
+			return compare_strings(lhs, rhs);
+		});
+	}
+	#if 0 {
+		quick_sort(directory_files, (lhs: Directory_File, rhs: Directory_File) -> int {
+			//lhs_isdir := ends_with(lhs.last_name, "/");
+			//rhs_isdir := ends_with(rhs.last_name, "/");
+			//if lhs_isdir != rhs_isdir
+				//return cast(int)rhs_isdir - cast(int)lhs_isdir;
+			return compare_strings(lhs.last_name, rhs.last_name);
+		});
+	}
 	for names {
 		s := it;
 		if is_directory(s)
@@ -513,10 +532,10 @@ file_list_including_directories :: (path: string, recursive := false, follow_dir
 	visitor :: (info: *File_Visit_Info, user_data: *[..] string) {
 		array_add(user_data, copy_string(info.full_name));
 	}
-	 visit_files(path, recursive, *files, visitor,
+	visit_files(path, recursive, *files, visitor,
 			follow_directory_symlinks=follow_directory_symlinks, visit_directories=true);
-	quick_sort(files, compare);
 	return files;
 }
 
 #import "Sort";
+#import "String";

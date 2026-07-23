@@ -123,7 +123,7 @@ get_syntax_for_filetype :: (filetype: string) -> *Syntax {
 			array_add(*context.edit.syntaxes, syntax);
 		}
 		{
-			// Mike
+			// Config
 			syntax := New(Syntax);
 			syntax.* = create_config_syntax();
 			syntax.filetype = "config";
@@ -137,10 +137,24 @@ get_syntax_for_filetype :: (filetype: string) -> *Syntax {
 			array_add(*context.edit.syntaxes, syntax);
 		}
 		{
-			// Glsl
+			// C
 			syntax := New(Syntax);
 			syntax.* = create_c_syntax();
 			syntax.filetype = "c";
+			array_add(*context.edit.syntaxes, syntax);
+		}
+		{
+			// Lua
+			syntax := New(Syntax);
+			syntax.* = create_lua_syntax();
+			syntax.filetype = "lua";
+			array_add(*context.edit.syntaxes, syntax);
+		}
+		{
+			// Vim
+			syntax := New(Syntax);
+			syntax.* = create_vim_syntax();
+			syntax.filetype = "vim";
 			array_add(*context.edit.syntaxes, syntax);
 		}
 	}
@@ -164,7 +178,11 @@ path_to_filetype :: (_path: string) -> string {
 		case ".bashrc"; #through;
 		case ".bashrc_local";
 			return "sh";
-	}
+		case ".vimrc";
+			return "vim";
+		case "PKGBUILD";
+			return "config";
+	} 
 	idx2 := find_index_from_right(path, #char ".");
 	if idx2 >= 0 {
 		ext := advance(path, idx2+1);
@@ -206,9 +224,11 @@ create_mike_syntax :: () -> Syntax {
 
 create_config_syntax :: () -> Syntax {
 	using syntax: Syntax;
+	syntax.elements[STRING1].match = "\"(?:[^\"\\\\]|\\\\.)*(?:\"|$)";
 	syntax.elements[STRING2].match = "'(?:[^'\\\\]|\\\\.)*(?:'|$)";
 	syntax.elements[TAB].match = "\\t++";
 	syntax.elements[COMMENT].match = "#.*?$";
+	syntax.elements[NUMBER1].match = "\\d+(?:\\.\\d+)*"; // supports 1.0.0.0
 	//
 	compile_syntax(*syntax);
 	return syntax;
@@ -252,6 +272,85 @@ create_bash_syntax :: () -> Syntax {
 	syntax.elements[TAB].match = "\\t++";
 	syntax.elements[COMMENT].match = "#.*?$";
 	//
+	compile_syntax(*syntax);
+	return syntax;
+}
+
+create_vim_syntax :: () -> Syntax {
+	using syntax: Syntax;
+	elements[KEYWORD1].match = #run join(.. .[
+		"fu!",
+		"func!",
+		"function",
+		"if",
+		"elseif",
+		"endif",
+		"else",
+		"endfunction",
+		"let",
+		"return",
+		"while",
+		"for",
+		"endfor",
+	], "|");
+	elements[KEYWORD2].match = #run join("^(?:", join(.. .[
+		"require",
+		// command names
+		"set",
+		"lua",
+		"source",
+		"au",
+		"autocmd",
+		"nnoremap",
+		"colorscheme",
+		"syntax",
+		"filetype",
+	], "|"), ")");
+	syntax.elements[CONSTANT1].match = #run join(.. .[
+		"true",
+		"false",
+	], "|");
+	// these are bash builtins?
+	syntax.elements[STRING1].match = "\"(?:[^\"\\\\]|\\\\.)*(?:\"|$)";
+	syntax.elements[STRING2].match = "'(?:[^'\\\\]|\\\\.)*(?:'|$)";
+	//syntax.elements[NUMBER1].match = "\\d+(?:\\.\\d+)?";
+	syntax.elements[TAB].match = "\\t++";
+	//
+	syntax.elements[NUMBER1].match = "\\d+(?:\\.\\d+)?";
+	syntax.elements[COMMENT].match = "\".*?$";
+	compile_syntax(*syntax);
+	return syntax;
+}
+
+create_lua_syntax :: () -> Syntax {
+	using syntax: Syntax;
+	elements[KEYWORD1].match = #run join(.. .[
+		"local",
+		"function",
+		"if",
+		"then",
+		"end",
+		"if",
+		"then",
+		"return",
+		"for",
+		"while",
+		"end",
+		"else",
+		"break",
+	], "|");
+	syntax.elements[CONSTANT1].match = #run join(.. .[
+		"true",
+		"false",
+	], "|");
+	// these are bash builtins?
+	syntax.elements[STRING1].match = "\"(?:[^\"\\\\]|\\\\.)*(?:\"|$)";
+	syntax.elements[STRING2].match = "'(?:[^'\\\\]|\\\\.)*(?:'|$)";
+	//syntax.elements[NUMBER1].match = "\\d+(?:\\.\\d+)?";
+	syntax.elements[TAB].match = "\\t++";
+	//
+	syntax.elements[NUMBER1].match = "\\d+(?:\\.\\d+)?";
+	syntax.elements[COMMENT].match = "--.*?$";
 	compile_syntax(*syntax);
 	return syntax;
 }
@@ -395,7 +494,7 @@ create_jai_syntax :: () -> Syntax {
 	elements[KEYWORD1].match = #run join(.. .[
 		"for",
 		"while",
-		"cast",
+		"cast(?:\\,\\w+)?",
 		"using(?:\\,\\w+)?",
 		"if",
 		"else",

@@ -583,6 +583,11 @@ add_all_motions :: () {
 		proc = #bake_arguments(motion_inner(ch = #char "\"", inclusive = false)),
 	);
 	add_motion(
+		keybind = "i'",
+		flags = .X_ONLY,
+		proc = #bake_arguments(motion_inner(ch = #char "'", inclusive = false)),
+	);
+	add_motion(
 		keybind = "a\"",
 		flags = .X_ONLY,
 		proc = #bake_arguments(motion_inner(ch = #char "\"", inclusive = true)),

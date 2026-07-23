@@ -33,7 +33,7 @@
 // - could highlight escape sequences in string with a lil different color/
 // - my_const : Something(#this) : 123; // syntax is wrong!
 // - doing >> (or <<) with space indentation cuts of a character n shi
-// - CAPS thing seems to not work.. maybe change the cursor color instead?
+// - '^[A-Z]' search regex fails - because of how start-of-line thing works...
 //
 // I want these a lil more
 // - kinda like "go to previous jump" thing, but instead go to latest jump that is in a different file!
@@ -383,6 +383,9 @@ do_some_extra_stuff_to_the_buffer_colors :: (win: *Window) {
 				mod := *lines[pos.y].user_mods[pos.x];
 				mod.attributes ^= A_STANDOUT;
 			}
+		}
+		if cursor.x < line.user_mods.count && is_caps_lock() {
+			line.user_mods[cursor.x].fg = 8;
 		}
 	}
 }
