@@ -176,6 +176,7 @@ path_to_filetype :: (_path: string) -> string {
 		path = advance(path, idx1+1);
 	if path == {
 		case ".bashrc"; #through;
+		case ".xinitrc"; #through;
 		case ".bashrc_local";
 			return "sh";
 		case ".vimrc";
