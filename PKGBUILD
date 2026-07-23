@@ -1,7 +1,7 @@
 # Maintainer: bbbb-b <nullptr@inbox.lt>
 
 pkgname='editool-git'
-pkgver=r38.96ec7f2
+pkgver=r39.03bc2db
 pkgrel=1
 pkgdesc="Tool for editing things"
 arch=(x86_64) 
@@ -26,8 +26,9 @@ pkgver() {
 
 package() {
 	cd "$pkgname"
+	git submodule update --force --init 
 	bash all_is_ok.sh
-	mkdir -p "$pkgdir/opt/$pkgname/"
+	mkdir -p "$pkgdir/opt/" "$pkgdir/usr/bin/"
 	install editool.ok "$pkgdir/opt/editool"
 	ln -s "$pkgdir/opt/editool" "$pkgdir/usr/bin/edit"
 }
