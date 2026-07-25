@@ -34,6 +34,7 @@
 // - my_const : Something(#this) : 123; // syntax is wrong!
 // - doing >> (or <<) with space indentation cuts of a character n shi
 // - '^[A-Z]' search regex fails - because of how start-of-line thing works...
+// - something like this: "i, hello there\escape" doesn't get saved in the dot command, but it should be !
 //
 // I want these a lil more
 // - kinda like "go to previous jump" thing, but instead go to latest jump that is in a different file!
