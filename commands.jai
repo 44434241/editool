@@ -33,7 +33,7 @@ Command_Result :: struct {
 	error_message: string; // this will be tprinted or allocated !!
 	continue_no_number := false; // whatever continues, don't give it a number?
 	modifies_dot := false;
-	inserted_chars := false;
+	inserted_chars := false; // if this was some sort of alias command that inserted chars...
 }
 
 Command_Input :: struct {
@@ -386,19 +386,20 @@ _do_indent :: (using win: *Window, ly: int, ry: int, count: int) {
 	}
 	ly = clamp(ly, 0, win.lines.count-1);
 	ry = clamp(ry, 0, win.lines.count-1);
+	EXPECTED_TAB_WIDTH :: 4; // this is different to mine (currently 3), but most other files have 4 spaces instead of a tab
 	for y: ly..ry {
+		extra_spaces := 0;
+		for win.lines[y].chars {
+			if it != #char " "
+				break;
+			extra_spaces += 1;
+		}
 		if count > 0 {
-			extra_spaces := 0;
-			for win.lines[y].chars {
-				if it != #char " "
-					break;
-				extra_spaces += 1;
-			}
 			here_count := count;
 			if extra_spaces > 0 {
 				// i don't care about this but it should probably work for << too..
-				here_count += (extra_spaces) / 4;
-				delete_range_in_line(win, y, 0, extra_spaces);
+				here_count += (extra_spaces) / EXPECTED_TAB_WIDTH;
+				delete_range_in_line(win, y, 0, extra_spaces-1);
 			}
 			here_count = min(TABS.count, here_count);
 			_write_normal_string(win, .{0, y}, string.{ data = TABS.data, count = here_count });
@@ -406,6 +407,11 @@ _do_indent :: (using win: *Window, ly: int, ry: int, count: int) {
 			// THINK: might wanna have some logic, where if it can't currently un-indent all, it doesn't indent?
 			// Though that's kinda annoying since there'd be no proper visual feedback on what went wrong.
 			cnt := 0;
+			if extra_spaces > 0 {
+				here_count := (extra_spaces) / EXPECTED_TAB_WIDTH;
+				delete_range_in_line(win, y, 0, extra_spaces-1);
+				_write_normal_string(win, .{0, y}, string.{ data = TABS.data, count = here_count });
+			}
 			for x: 0..(-count)-1 {
 				if x >= lines[y].count
 					break;

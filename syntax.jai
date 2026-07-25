@@ -231,7 +231,7 @@ create_config_syntax :: () -> Syntax {
 	syntax.elements[STRING2].match = "'(?:[^'\\\\]|\\\\.)*(?:'|$)";
 	syntax.elements[TAB].match = "\\t++";
 	syntax.elements[COMMENT].match = "#.*?$";
-	syntax.elements[NUMBER1].match = "\\d+(?:\\.\\d+)*"; // supports 1.0.0.0
+	syntax.elements[NUMBER1].match = "\\d+(?:\\.\\d+)*"; // supports '1.0.0.0'
 	//
 	compile_syntax(*syntax);
 	return syntax;
@@ -552,7 +552,7 @@ create_jai_syntax :: () -> Syntax {
 		"it_index"
 	], "|");
 	elements[DECLARATION].match = "[a-zA-Z_]\\w*+";
-	decl_type :: "[\\[\\]\\w\\.\\*]+[^\\[\\]\\w\\.\\*]";
+	decl_type :: "[\\(\\)#\\[\\]\\w\\.\\*]+[^\\[\\]\\w\\.\\*]";
 	elements[DECLARATION].match_suffix = "(?:\\s*\\,\\s*\\w+)*\\s*:";
 	syntax.elements[TYPE2].match = "_?[A-Z]\\w*[a-z]\\w*+";
 	syntax.elements[DIRECTIVE].match = "#\\w*(?:\\,\\w*+)*+";
@@ -565,11 +565,11 @@ create_jai_syntax :: () -> Syntax {
 	syntax.elements[MULTILINE_COMMENT].match_kind = .MULTILINE_START_END;
 	syntax.elements[MULTILINE_COMMENT].multiline_start = "/\\*";
 	syntax.elements[MULTILINE_COMMENT].multiline_end = "\\*/";
-	syntax.elements[CONSTANT2].match = "(?:\\$?[A-Z_][A-Z_\\d]*+|\\$\\w++)";
+	syntax.elements[CONSTANT2].match = "(?:\\$?[A-Z_][A-Z_\\d]*+|\\$\\w++)"; // capitalized word
 	elements[CONSTANT3].match_suffix = #run sprint("\\s*:\\s*(?:%)?\\w*:", decl_type);
 	syntax.elements[CONSTANT3].match = elements[DECLARATION].match;
 	syntax.elements[NOTE].match = "@\\w+";
-	// I'd want EOL_SPACE to match line chars *before* the cursor
+	// TODO: I'd want EOL_SPACE to match line chars *before* the cursor
 	//syntax.elements[EOL_SPACE].match = " +$";
 	//syntax.elements[EOL_SPACE].replace = "-";
 	//

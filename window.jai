@@ -245,7 +245,6 @@ _draw_window :: (using win: *Window) {
 		}
 	}
 	if win.kind == .BUFFER {
-		log("a");
 		time_this("Draw buffer");
 		lines_to_draw: [..]*Line;
 		lines_to_draw.allocator = temp;
@@ -593,7 +592,6 @@ destroy_window :: (win: *Window, force := false) {
 }
 
 hold :: (thing: *$T/.[Window, Buffer]) {
-	log("holding %", get_title(thing));
 	thing.ref_count += 1;
 }
 
@@ -783,7 +781,6 @@ refresh_window_size :: (using win: *Window, force := false) {
 		begin.y += 1;
 		size.y -= 1;
 	}
-	log("win % is now of size %\n", win, size);
 	if win.kind == {
 		case .BUFFER;
 			normalize_scroll(win);

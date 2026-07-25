@@ -81,10 +81,7 @@ push_dot_command :: () {
 	if next_dot_command.count > 0 {
 		array_reset(*current_dot_command);
 		current_dot_command = next_dot_command;
-		{
-			empty: [..]s32;
-			next_dot_command = empty;
-		}
+		next_dot_command = default_of([..]s32);
 	}
 }
 
@@ -248,20 +245,20 @@ handle_command_step :: () -> (should_reset: bool, found_command: bool) {
 	return should_reset, found_command;
 }
 
-_handle_command_result :: (command: *Command, in: Command_In, res: Command_Result, can_motion := false, can_char := false) -> (should_reset: bool) {
+_handle_command_result :: (command: *Command, in: Command_In, res: Command_Result, can_motion := false, can_char := false, dont_touch_dot := false) -> (should_reset: bool) {
 	if res.status == {
 		case .OK;
-			// fails if multiple commands are executed at once?
-			//assert(context.edit.next_dot_command.count == 0); 
-			if res.inserted_chars {
-				array_reset(*context.edit.next_dot_command);
-			}
-			if context.edit.added_chars.count == 0 {
-				if !res.modifies_dot {
+			if !dont_touch_dot {
+				if res.inserted_chars {
 					array_reset(*context.edit.next_dot_command);
-				} else {
-					if context.edit.mode == .COMMAND {
-						push_dot_command();
+				}
+				if context.edit.added_chars.count == 0 {
+					if !res.modifies_dot {
+						array_reset(*context.edit.next_dot_command);
+					} else {
+						if context.edit.mode == .COMMAND {
+							push_dot_command();
+						}
 					}
 				}
 			}

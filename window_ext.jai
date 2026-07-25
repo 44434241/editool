@@ -239,7 +239,6 @@ _update_cursor_mark :: (using win: *Window, create: bool) {
 			create = true;
 		}
 	}
-	log("update cursor mark % %", get_title(win), create);
 	if create {
 		if cursor_mark_index >= 0 {
 			cursor_marks.count = cursor_mark_index + 1; 

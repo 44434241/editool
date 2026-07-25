@@ -31,10 +31,8 @@
 // - alert/warn/error history? could be just a buffer <- could name special buffers like "@search", "@exec"...
 // - cursor in long lines, in the second actual line is a bit off... (or not? seems like the problem is the border existing..)
 // - could highlight escape sequences in string with a lil different color/
-// - my_const : Something(#this) : 123; // syntax is wrong!
-// - doing >> (or <<) with space indentation cuts of a character n shi
 // - '^[A-Z]' search regex fails - because of how start-of-line thing works...
-// - something like this: "i, hello there\escape" doesn't get saved in the dot command, but it should be !
+// - clipbord buffer, similiar to search...
 //
 // I want these a lil more
 // - kinda like "go to previous jump" thing, but instead go to latest jump that is in a different file!
@@ -438,7 +436,7 @@ handle_insert_char :: (ch: s32) {
 			};
 			assert(it.proc != null);
 			res := it.proc(in);
-			_handle_command_result(it, in, res);
+			_handle_command_result(it, in, res, dont_touch_dot = true);
 			return;
 		}
 	}
@@ -477,22 +475,11 @@ handle_char :: (ch: s32) {
 		}
 		if context.edit.mode == .COMMAND || 
 				(context.edit.mode == .INSERT && context.edit.next_dot_command.count > 0) {
+			log("adding % to dot command (%)", ch, context.edit.next_dot_command);
 			array_add(*context.edit.next_dot_command, ch);
+		} else {
+			log("NOT adding adding % to dot command (%)", ch, context.edit.next_dot_command);
 		}
-		/*
-		// special case rn for these!!
-		if context.edit.mode == .INSERT || context.edit.mode == .COMMAND {
-			if ch == {
-				// auto handled
-				case KEY_DC; // delete
-					delete_at_x_offset(win, 0);
-					return;
-				case KEY_BACKSPACE;
-					delete_at_x_offset(win, -1);
-					return;
-			}
-		}
-		*/
 	}
 	{
 		was_handled := true;
