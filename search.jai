@@ -471,6 +471,8 @@ _update_search_matches :: (win: *Window) -> bool {
 			res := execute_motion(motion, number = waiting.number, window = win);
 			ly = normalize_position(win, res.start, .NONE).y;
 			ry = normalize_position(win, res.end, .NONE).y;
+			if ly > ry
+				ly, ry = ry, ly;
 		}
 	}
 	MAX_MATCHES :: 10000;
