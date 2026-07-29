@@ -30,9 +30,11 @@
 // - when screen resolution is too small for floating windows, it crashes instead of just silently failing?.. <- probably because 0 lines_to_draw
 // - alert/warn/error history? could be just a buffer <- could name special buffers like "@search", "@exec"...
 // - cursor in long lines, in the second actual line is a bit off... (or not? seems like the problem is the border existing..)
-// - could highlight escape sequences in string with a lil different color/
+// - could highlight escape sequences in string with a lil different color/ < - very hard
 // - '^[A-Z]' search regex fails - because of how start-of-line thing works...
 // - clipbord buffer, similiar to search...
+// - search find to end of match... need to figure out some way to way to create a command for that? maybe a motion for the current "search match"?
+// - way to delete marks...
 //
 // I want these a lil more
 // - kinda like "go to previous jump" thing, but instead go to latest jump that is in a different file!
@@ -583,7 +585,7 @@ editool_init :: (logfile := "") {
 	noecho(); 
 	nodelay(stdscr, true);
 	keypad(stdscr, true); // use all keys
-	set_escdelay(1); // ms
+	set_escdelay(1); // ms.. better to be as small as possible without being zero?!
 	if !has_colors() || !can_change_color() {
 		log_error("no colors...");
 		editool_deinit();
@@ -773,46 +775,50 @@ main :: () {
 			}
 		}
 		ch: s32 = ERR;
-		if context.edit.added_chars.count == 0 {
-			// Old: If a floating window exists, and the current buffer is not the floating window, then stop floating it.
-			// New: If the current buffer is not floating, unfloat all floating windows.
-			/*
-			if !edit.buffer_window.is_floating {
-				for array_copy(edit.floating_windows,, allocator=temp) {
-					set_floating(it, false);
-				}
-			}*/
-			draw_windows_recursive(context.edit.root);
-			//refresh();
-			#if 1 {
-				if edit.mode == .INSERT
-					update_cursor_thing(false); // thin
-				else
-					update_cursor_thing(true); // normal
-			}
-			#if X11_ENABLE {
-				last_is_caps := is_caps_lock();
-			}
-			while true {
-				#if X11_ENABLE {
-					if !context.edit.no_x11 {
-						Input.update_window_events();
-					}
-					if last_is_caps != is_caps_lock() {
-						break;
-					}
-				}
-				ch = getch();
-				if ch != ERR {
-					break;
-				}
-				sleep_milliseconds(3);
-			}
-			context.edit.time += 1;
-		} else {
+		if context.edit.added_chars.count != 0 {
 			ch = context.edit.added_chars[0];
 			array_ordered_remove_by_index(*context.edit.added_chars, 0);
-		}
+		} else {
+			// If there's a ch ready, we don't bother redrawing, to make shit faster
+			ch = getch(); 
+			if ch == ERR {
+				// But if there's no ch, we redraw and then wait..
+				// This makes some things faster ! like pasting or fzf searching
+				draw_windows_recursive(context.edit.root);
+				//update_cursor_thing(normal = edit.mode != .INSERT); // thin
+				update_cursor_thing(normal = edit.mode != .INSERT); // thin
+				// Old: If a floating window exists, and the current buffer is not the floating window, then stop floating it.
+				// New: If the current buffer is not floating, unfloat all floating windows.
+				// New New: idk, neither?
+				/*
+				if !edit.buffer_window.is_floating {
+					for array_copy(edit.floating_windows,, allocator=temp) {
+						set_floating(it, false);
+					}
+				}*/
+				#if X11_ENABLE {
+					last_is_caps := is_caps_lock();
+				}
+				while true {
+					#if X11_ENABLE {
+						if !context.edit.no_x11 {
+							Input.update_window_events();
+						}
+						if last_is_caps != is_caps_lock() {
+							// when caps lock changes, we force redraw ..
+							break;
+						}
+					}
+					ch = getch();
+					//log("queried ch");
+					if ch != ERR {
+						break;
+					}
+					sleep_milliseconds(1);
+				}
+				context.edit.time += 1;
+			}
+		} 
 		if is_printable_char(ch)
 			log("got ch: % (%)\n", ch, string.{ data = cast(*u8)*ch, count = 1 });
 		else

@@ -318,7 +318,7 @@ do_rg :: (res: *Fzf_Result, _search: string, paths: .. string) {
 	search := _search;
 	extra_paths: [..]string;
 	extra_paths.allocator = temp;
-	if search && search[0] == #char "!" {
+	if starts_with(search, "!") {
 		search = advance(search, 1);
 		array_add(*extra_paths, "/home/user/jai/latest");
 	}

@@ -275,6 +275,7 @@ _draw_window :: (using win: *Window) {
 					y += 1;
 				}
 			}
+			// this fails when the terminal window is too small.. whatever !!
 			assert(lines_to_draw.count > 0, "scroll: %, line.count: %, size: %", scroll, lines.count, size.y);
 		}
 		_refresh_buffer_modifiers(win, buffer, scroll, peek(lines_to_draw) - lines.data + 1);

@@ -57,6 +57,8 @@ _execute_exec :: (__: *String_Command_State, ___: *Window) {
 	}
 	if args.count == 0
 		return;
+	if args[0].count && args[0][0] == #char "#"
+		return;
 	// exec commands should be part of Exec...
 	for context.edit.exec_commands {
 		if it.name == args[0] || array_find(it.name_aliases, args[0]) {
@@ -786,6 +788,16 @@ add_all_execs :: () {
 			return false;
 		win := get_window(.BUFFER, not_floating = true);
 		change_buffer(win, buf);
+		return true;
+	});
+	add_exec("fman", (page: string) -> bool {
+		buf := create_man_buffer(page);
+		if !buf
+			return false;
+		win := create_buffer_window(null, buf, .TEMP_FLOATING, is_hidden = true);
+		set_floating(win);
+		change_buffer(win, buf);
+		select_window(win);
 		return true;
 	});
 }

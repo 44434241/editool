@@ -224,54 +224,56 @@ motion_word :: (in: Motion_In, $step: int = 1, $flags: Motion_Word_Flags = 0) ->
 	x_ok :: () -> bool #expand {
 		return clamp(next_x, 0, line.count-1) == next_x;
 	}
+	for 1..in.number {
 	// still not sure if i wanna do it like this!
-	if flags & .INCLUSIVE {
-		if flags & .FULL {
-			while x_ok() && !is_space(line.chars[next_x]) {
-				next_x += step;
+		if flags & .INCLUSIVE {
+			if flags & .FULL {
+				while x_ok() && !is_space(line.chars[next_x]) {
+					next_x += step;
+				}
+				next_x -= step;
+			} else {
+				while x_ok() && is_alnum(line.chars[next_x]) {
+					next_x += step;
+				}
+				next_x -= step;
 			}
-			next_x -= step;
-		} else {
-			while x_ok() && is_alnum(line.chars[next_x]) {
+		} else if flags & .FULL {
+			if step > 0 {
+				while x_ok() && !is_space(line.chars[next_x]) {
+					next_x += step;
+				}
+				while x_ok() && is_space(line.chars[next_x]) {
+					next_x += step;
+				}
+			} else {
 				next_x += step;
+				while x_ok() && is_space(line.chars[next_x]) {
+					next_x += step;
+				} 
+				while x_ok() && !is_space(line.chars[next_x]) {
+					next_x += step;
+				}
+				next_x -= step;
 			}
-			next_x -= step;
-		}
-	} else if flags & .FULL {
-		if step > 0 {
-			while x_ok() && !is_space(line.chars[next_x]) {
+		} else { 
+			if step > 0 {
+				while x_ok() && is_alunder(line.chars[next_x]) {
+					next_x += step;
+				}
+				while x_ok() && !is_alunder(line.chars[next_x]) {
+					next_x += step;
+				}
+			} else {
 				next_x += step;
+				while x_ok() && !is_alunder(line.chars[next_x]) {
+					next_x += step;
+				} 
+				while x_ok() && is_alunder(line.chars[next_x]) {
+					next_x += step;
+				}
+				next_x -= step;
 			}
-			while x_ok() && is_space(line.chars[next_x]) {
-				next_x += step;
-			}
-		} else {
-			next_x += step;
-			while x_ok() && is_space(line.chars[next_x]) {
-				next_x += step;
-			} 
-			while x_ok() && !is_space(line.chars[next_x]) {
-				next_x += step;
-			}
-			next_x -= step;
-		}
-	} else { 
-		if step > 0 {
-			while x_ok() && is_alunder(line.chars[next_x]) {
-				next_x += step;
-			}
-			while x_ok() && !is_alunder(line.chars[next_x]) {
-				next_x += step;
-			}
-		} else {
-			next_x += step;
-			while x_ok() && !is_alunder(line.chars[next_x]) {
-				next_x += step;
-			} 
-			while x_ok() && is_alunder(line.chars[next_x]) {
-				next_x += step;
-			}
-			next_x -= step;
 		}
 	}
 	return .{

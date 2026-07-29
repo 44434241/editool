@@ -194,6 +194,7 @@ path_to_filetype :: (_path: string) -> string {
 			case "yaml"; #through;
 			case "conf";
 				return "config"; 
+			case "cs"; #through; // C# !!
 			case "ino"; #through; // arduino
 			case "c"; #through;
 			case "cpp"; #through;
@@ -429,6 +430,7 @@ create_glsl_syntax :: () -> Syntax {
 	return syntax;
 }
 
+// this is a mishmash of c/cpp/c# because i cbf to create a separate syntax for all of them
 create_c_syntax :: () -> Syntax {
 	using syntax: Syntax;
 	elements[KEYWORD1].match = #run join(.. .[
@@ -452,6 +454,14 @@ create_c_syntax :: () -> Syntax {
 		"default",
 		"inline",
 		"enum",
+		// cpp:
+		"using",
+		"public",
+		"private",
+		"protected",
+		"virtual",
+		"class",
+		"new",
 	], "|");
 	syntax.elements[TYPE1].match = #run join(.. .[
 		// int
@@ -467,19 +477,21 @@ create_c_syntax :: () -> Syntax {
 		"u?int16_t",
 		"u?int32_t",
 		"u?int64_t",
+		// csharp
+		"string",
 	], "|");
 	syntax.elements[CONSTANT1].match = #run join(.. .[
 		"true",
 		"false",
+		"__\\w+", // special underscore things (c/cpp)
 	], "|");
-	syntax.elements[CONSTANT1].match = "__\\w+";
 	syntax.elements[KEYWORD2].match = #run join(.. .[
 		"sizeof",
 	], "|");
 	syntax.elements[DIRECTIVE].match = "#\\w*(?:\\,\\w*+)*+";
 	syntax.elements[STRING1].match = "\"(?:[^\"\\\\]|\\\\.)*(?:\"|$)";
 	syntax.elements[STRING2].match = "<(?:[^>\\\\]|\\\\.)*>\\w*$";
-	syntax.elements[NUMBER1].match = "\\d+(?:\\.\\d+)?";
+	syntax.elements[NUMBER1].match = "\\d+(?:\\.\\d+)?f?";
 	syntax.elements[NUMBER2].match = "0[xbo][0-9a-fA-F_]*";
 	syntax.elements[TAB].match = "\\t++";
 	syntax.elements[COMMENT].match = "//.*?$";
