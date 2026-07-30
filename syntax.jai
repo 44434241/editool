@@ -6,17 +6,19 @@ Syntax_Element :: struct {
 		DEFAULT;
 		COMMENT;
 		MULTILINE_COMMENT;
+		MULTILINE_STRING;
 		TAB;
 		NOTE;
 		STRING1;
 		STRING2;
+		STRING3;
 		DIRECTIVE; 
 		KEYWORD1;
 		KEYWORD2;
 		KEYWORD3;
+		CONSTANT1;
 		TYPE1;
 		TYPE2;
-		CONSTANT1;
 		CONSTANT2;
 		CONSTANT3;
 		NUMBER1;
@@ -66,6 +68,8 @@ Syntax :: struct {
 	elements[CONSTANT3].color = 12; // white
 	elements[STRING1].color = 12; // white
 	elements[STRING2].color = 12; // white
+	elements[STRING3].color = 12; // white
+	elements[MULTILINE_STRING].color = 12; // white
 	elements[DIRECTIVE].color = 5; // purple 
 	elements[NUMBER1].color = 12; // white
 	elements[NUMBER2].color = 12; // white
@@ -155,6 +159,13 @@ get_syntax_for_filetype :: (filetype: string) -> *Syntax {
 			syntax := New(Syntax);
 			syntax.* = create_vim_syntax();
 			syntax.filetype = "vim";
+			array_add(*context.edit.syntaxes, syntax);
+		}
+		{
+			// Python
+			syntax := New(Syntax);
+			syntax.* = create_python_syntax();
+			syntax.filetype = "py";
 			array_add(*context.edit.syntaxes, syntax);
 		}
 	}
@@ -425,6 +436,82 @@ create_glsl_syntax :: () -> Syntax {
 	syntax.elements[MULTILINE_COMMENT].multiline_start = "/\\*";
 	syntax.elements[MULTILINE_COMMENT].multiline_end = "\\*/";
 	syntax.elements[CONSTANT2].match = "(?:\\$?[A-Z_][A-Z_\\d]*+|\\$\\w++)";
+	//
+	compile_syntax(*syntax);
+	return syntax;
+}
+
+create_python_syntax :: () -> Syntax {
+	using syntax: Syntax;
+	elements[KEYWORD1].match = #run join(.. .[
+		"for",
+		"while",
+		"if",
+		"else",
+		"then",
+		"return",
+		"continue",
+		"break",
+		"class",
+		"def",
+		"from",
+		"import",
+		"as",
+		"try",
+		"except",
+		"is",
+		"not",
+		"and",
+		"in",
+		"yield",
+		"async",
+		"await",
+		"pass",
+		"raise", // throw
+		"elif",
+		"with",
+		"del",
+		"assert",
+	], "|");
+	syntax.elements[TYPE1].match = #run join(.. .[
+		// int
+		"int",
+		"str",
+		"bool",
+		"type",
+		"float",
+	], "|");
+	syntax.elements[CONSTANT1].match = #run join(.. .[
+		"True",
+		"False",
+		"None",
+	], "|");
+	syntax.elements[KEYWORD2].match = #run join(.. .[
+		"self",
+		"object",
+		// builtin procs:
+		"len",
+		"isinstance",
+		"hasattr",
+		"getattr",
+		"set",
+		"range",
+		"ord",
+		"chr",
+		"__\\w+__", // special underscore things (c/cpp)
+	], "|");
+	syntax.elements[STRING1].match = "\"(?:[^\"\\\\]|\\\\.)*(?:\"|$)";
+	syntax.elements[STRING2].match = "'(?:[^'\\\\]|\\\\.)*(?:'|$)"; // 'aad'
+	syntax.elements[MULTILINE_STRING].match_kind = .MULTILINE_START_END;
+	syntax.elements[MULTILINE_STRING].multiline_start = "\"\"\"";
+	syntax.elements[MULTILINE_STRING].multiline_end = "\"\"\"";
+	syntax.elements[NUMBER1].match = "\\d+(?:\\.\\d+)?f?";
+	syntax.elements[NUMBER2].match = "0[xbo][0-9a-fA-F_]*";
+	syntax.elements[TAB].match = "\\t++";
+	syntax.elements[COMMENT].match = "#.*?$";
+	syntax.elements[CONSTANT2].match = "(?:\\$?[A-Z_][A-Z_\\d]*+|\\$\\w++)";
+	syntax.elements[NOTE].match = "@\\w+";
+	syntax.elements[TYPE2].match = "_?[A-Z]\\w*[a-z]\\w*+"; // most python types are LikeThis
 	//
 	compile_syntax(*syntax);
 	return syntax;
