@@ -35,7 +35,7 @@
 // - clipbord buffer, similiar to search...
 // - search find to end of match... need to figure out some way to way to create a command for that? maybe a motion for the current "search match"?
 // - way to delete marks...
-// - python syntax
+// - having proper multiple-line tab names, or maybe find a way to shorten them?
 //
 // I want these a lil more
 // - kinda like "go to previous jump" thing, but instead go to latest jump that is in a different file!

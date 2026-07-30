@@ -168,6 +168,13 @@ get_syntax_for_filetype :: (filetype: string) -> *Syntax {
 			syntax.filetype = "py";
 			array_add(*context.edit.syntaxes, syntax);
 		}
+		{
+			// Obj
+			syntax := New(Syntax);
+			syntax.* = create_obj_syntax();
+			syntax.filetype = "obj";
+			array_add(*context.edit.syntaxes, syntax);
+		}
 	}
 	for context.edit.syntaxes {
 		if it.filetype == filetype
@@ -244,6 +251,25 @@ create_config_syntax :: () -> Syntax {
 	syntax.elements[TAB].match = "\\t++";
 	syntax.elements[COMMENT].match = "#.*?$";
 	syntax.elements[NUMBER1].match = "\\d+(?:\\.\\d+)*"; // supports '1.0.0.0'
+	//
+	compile_syntax(*syntax);
+	return syntax;
+}
+
+create_obj_syntax :: () -> Syntax {
+	using syntax: Syntax;
+	syntax.elements[COMMENT].match = "#.*?$";
+	syntax.elements[NUMBER1].match = "\\d+(?:\\.\\d+)*"; // supports '1.0.0.0'
+	elements[KEYWORD1].match = #run join(.. .[
+		"^v",
+		"^vt",
+		"^vn",
+		"^f",
+		"^s", 
+		"^usemtl",
+		"^mtllib",
+		"^o",
+	], "|");
 	//
 	compile_syntax(*syntax);
 	return syntax;
