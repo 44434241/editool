@@ -1142,7 +1142,7 @@ apply_syntax_mods_differently :: (line: *Line, syntax: *Syntax, line_no_hint := 
 	defer {
 		line.multiline_syntax_index = multiline_syntax_index;
 	}
-	for 1..20 {
+	for 1..40 {
 		if idx >= line.count
 			break;
 		string_to_match := advance(line.as_string, idx);
