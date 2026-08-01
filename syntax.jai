@@ -575,6 +575,13 @@ create_c_syntax :: () -> Syntax {
 		"virtual",
 		"class",
 		"new",
+		// csharp:
+		"sealed",
+		"readonly",
+		"var",
+		"is",
+		"as",
+		"event",
 	], "|");
 	syntax.elements[TYPE1].match = #run join(.. .[
 		// int
