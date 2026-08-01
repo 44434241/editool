@@ -582,6 +582,7 @@ create_c_syntax :: () -> Syntax {
 		"is",
 		"as",
 		"event",
+		"out",
 	], "|");
 	syntax.elements[TYPE1].match = #run join(.. .[
 		// int
@@ -593,6 +594,7 @@ create_c_syntax :: () -> Syntax {
 		"char",
 		"short",
 		"float",
+		"double",
 		"u?int8_t",
 		"u?int16_t",
 		"u?int32_t",
@@ -603,6 +605,7 @@ create_c_syntax :: () -> Syntax {
 	syntax.elements[CONSTANT1].match = #run join(.. .[
 		"true",
 		"false",
+		"null",
 		"__\\w+", // special underscore things (c/cpp)
 	], "|");
 	syntax.elements[KEYWORD2].match = #run join(.. .[
