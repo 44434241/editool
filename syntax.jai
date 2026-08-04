@@ -26,6 +26,7 @@ Syntax_Element :: struct {
 		EOL_SPACE;
 		DECLARATION;
 		OTHER1;
+		OTHER2;
 		COUNT;
 	}
 	COUNT :: Kind.COUNT;
@@ -80,6 +81,7 @@ Syntax :: struct {
 	elements[NOTE].color = 6; // dark green (24 or 30 or 6?)
 	elements[EOL_SPACE].color = 4; // grey, same as comment
 	elements[OTHER1].color = 5; // dark purple - this is for bash `ls`
+	elements[OTHER2].color = 12; // white? - this is for bash $VARIABLE
 	//
 	elements[KEYWORD1].flags = .IS_WORD;
 	elements[KEYWORD2].flags = .IS_WORD;
@@ -175,6 +177,13 @@ get_syntax_for_filetype :: (filetype: string) -> *Syntax {
 			syntax.filetype = "obj";
 			array_add(*context.edit.syntaxes, syntax);
 		}
+		{
+			// Dockerfile
+			syntax := New(Syntax);
+			syntax.* = create_dockerfile_syntax();
+			syntax.filetype = "dockerfile";
+			array_add(*context.edit.syntaxes, syntax);
+		}
 	}
 	for context.edit.syntaxes {
 		if it.filetype == filetype
@@ -201,6 +210,7 @@ path_to_filetype :: (_path: string) -> string {
 			return "vim";
 		case "PKGBUILD"; #through;
 		case "fstab"; #through;
+		case ".env"; #through;
 		case "sshd_config";
 			return "config";
 	} 
@@ -210,6 +220,8 @@ path_to_filetype :: (_path: string) -> string {
 		if ext == {
 			case "toml"; #through;
 			case "yaml"; #through;
+			case "yml"; #through;
+			case "example"; #through;
 			case "conf";
 				return "config"; 
 			case "cs"; #through; // C# !!
@@ -275,6 +287,54 @@ create_obj_syntax :: () -> Syntax {
 	return syntax;
 }
 
+create_dockerfile_syntax :: () -> Syntax {
+	using syntax: Syntax;
+	kw :: (s: string) -> string #compile_time {
+		buf := NewArray(s.count * 4 + 1, u8);
+		buf[0] = #char "^";
+		for s {
+			assert(to_lower(it) != to_upper(it));
+			buf[1+it_index*4+0] = #char "[";
+			buf[1+it_index*4+1] = to_lower(it);
+			buf[1+it_index*4+2] = to_upper(it);
+			buf[1+it_index*4+3] = #char "]";
+		}
+		return cast(string)buf;
+	}
+	elements[KEYWORD1].match = #run join(.. .[
+		#run kw("add"),
+		#run kw("arg"),
+		#run kw("cmd"),
+		#run kw("copy"),
+		#run kw("entrypoint"),
+		#run kw("env"),
+		#run kw("expose"),
+		#run kw("from"),
+		#run kw("healthcheck"),
+		#run kw("label"),
+		#run kw("maintainer"),
+		#run kw("onbuild"),
+		#run kw("run"),
+		#run kw("shell"),
+		#run kw("stopsignal"),
+		#run kw("user"),
+		#run kw("volume"),
+		#run kw("workdir"),
+	], "|");
+	// these are bash builtins?
+	syntax.elements[STRING1].match = "\"(?:[^\"\\\\]|\\\\.)*(?:\"|$)";
+	syntax.elements[STRING2].match = "'(?:[^'\\\\]|\\\\.)*(?:'|$)";
+	//
+	syntax.elements[OTHER2].match = "\\$[A-Za-z_]+";
+	syntax.elements[OTHER1].match = "`(?:[^`\\\\]|\\\\.)*(?:`|$)";
+	//syntax.elements[NUMBER1].match = "\\d+(?:\\.\\d+)?";
+	syntax.elements[TAB].match = "\\t++";
+	syntax.elements[COMMENT].match = "#.*?$";
+	//
+	compile_syntax(*syntax);
+	return syntax;
+}
+
 create_bash_syntax :: () -> Syntax {
 	using syntax: Syntax;
 	elements[KEYWORD1].match = #run join(.. .[
@@ -309,7 +369,7 @@ create_bash_syntax :: () -> Syntax {
 	syntax.elements[STRING1].match = "\"(?:[^\"\\\\]|\\\\.)*(?:\"|$)";
 	syntax.elements[STRING2].match = "'(?:[^'\\\\]|\\\\.)*(?:'|$)";
 	syntax.elements[OTHER1].match = "`(?:[^`\\\\]|\\\\.)*(?:`|$)";
-	//syntax.elements[NUMBER1].match = "\\d+(?:\\.\\d+)?";
+	syntax.elements[OTHER2].match = "\\$[A-Za-z_]+"; // variable.. idk if i should call this a keyword
 	syntax.elements[TAB].match = "\\t++";
 	syntax.elements[COMMENT].match = "#.*?$";
 	//
