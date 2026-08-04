@@ -27,7 +27,7 @@
 // - Some way to save esc-ed search/exec?
 // - - maybe just remember the last esc-ed, and have a keybind to start from it ig..
 // - history files (search/exec/undo?), or some sort of session thing
-// - when screen resolution is too small for floating windows, it crashes instead of just silently failing?.. <- probably because 0 lines_to_draw
+// - when screen resolution is too small for floating windows, it crashes instead of just silently failing?.. <- fixed when lines_to_draw.count == 0, but still crashes if it's super smaller. maybe something in ncurses??
 // - alert/warn/error history? could be just a buffer <- could name special buffers like "@search", "@exec"...
 // - cursor in long lines, in the second actual line is a bit off... (or not? seems like the problem is the border existing..)
 // - could highlight escape sequences in string with a lil different color/ < - very hard

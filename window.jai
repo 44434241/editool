@@ -255,7 +255,10 @@ _draw_window :: (using win: *Window) {
 		{
 			y := scroll;
 			found_cursor := false;
-			while y < lines.count && lines_to_draw.count < size.y {
+			if size.y <= 0 {
+				edit_alert("Not enough size to draw something !! "); // still fucks up sometimes..
+			}
+			while y < lines.count && lines_to_draw.count < max(size.y, 1) {
 				array_add(*lines_to_draw, *lines[y]);
 				fold := get_fold_exact(win.buffer, y);
 				//

@@ -444,11 +444,27 @@ create_glsl_syntax :: () -> Syntax {
 	], "|");
 	syntax.elements[KEYWORD2].match = #run join(.. .[
 		"texture",
+		//
 		"length",
 		"inverse",
+		"transpose",
+		"normalize",
+		"abs",
+		"cos",
+		"sin",
+		"asin",
+		"acos",
+		"sqrt",
+		"clamp",
+		"round",
+		"pow",
+		"dot",
+		"sign",
+		"mod",
+		"mix",
+		//
 		"atomicAdd",
 		"atomicCompSwap",
-		"mix",
 		// gl_Position
 		"gl_\\w*", // are we do i wanna use wildcard or hardcode things??
 	], "|");
