@@ -467,6 +467,7 @@ _update_search_matches :: (win: *Window) -> bool {
 		motion := find_motion(waiting.chars);
 		if !motion {
 			edit_warn("Couldn't find search motion '%'", motion_string);
+			return false;
 		} else {
 			res := execute_motion(motion, number = waiting.number, window = win);
 			ly = normalize_position(win, res.start, .NONE).y;

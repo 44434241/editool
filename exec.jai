@@ -1,6 +1,4 @@
 
-
-
 Exec :: struct {
 	#as using _: String_Command_State;
 }
@@ -201,11 +199,65 @@ make_exec_proc :: ($proc: () -> bool) -> Exec_Command.Proc {
 	return inner_proc;
 }
 
+// returns container window? or directory window?
+make_archer_window :: (_path: string) -> *Window {
+	path := _path;
+	if !path
+		path = ".";
+	if !is_directory(normalize_path(path,, allocator=temp))
+		return null;
+	Archer_State :: struct {
+		root: *Window;
+		directory_window: *Window;
+		preview_window_id: WinId;
+		//preview_window: *Window;
+	}
+	maybe_update_state :: (using state: *Archer_State) {
+		preview_window := find_window(preview_window_id);
+		if !preview_window
+			return;
+		dir_buf := directory_window.buffer;
+		if dir_buf.kind != .DIRECTORY
+			return;
+		rel_path := dir_buf.lines[directory_window.cursor.y].as_string;
+		preview_path := path_join(dir_buf.path, rel_path);
+		buf := get_path_buffer(preview_path);
+		change_buffer(preview_window, buf);
+	}
+	state := New(Archer_State);
+	{
+		using state;
+		root = create_container_window(context.edit.root);
+		//
+		directory_buffer := get_directory_buffer(path);
+		directory_window = create_buffer_window(root, directory_buffer);
+		//
+		preview_buffer := create_dummy_buffer(); // will get destroyed at the end of this proc probably
+		preview_window := create_buffer_window(root, preview_buffer);
+		preview_window.flags |= .BUFFER_MARKS | .BUFFER_LINE_NO | .BUFFER_STATUS_LINE;
+		preview_window_id = preview_window.id;
+		//
+		directory_window.user_data = state;
+		root.user_data = state;
+	}
+	state.root.on_destroy = (win: *Window) {
+		state := win.user_data.(*Archer_State);
+		free(state);
+	};
+	state.directory_window.before_draw = (win: *Window) {
+		// Since directory window is on the left, it'll get updated first, and therefor the right buffer will be refreshed..
+		state := win.user_data.(*Archer_State);
+		maybe_update_state(state);
+	};
+	//
+	maybe_update_state(state);
+	select_window(state.directory_window);
+	return state.root;
+}
+
 // when rerunning the search, something leaks !!! not when creating buffers !!
 make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_data: *void = null, start_search := "") -> *Window {
 	Fzf_State :: struct {
-		// 1 is list of matches
-		// 2 is search being typed
 		match_buf: *Buffer;
 		input_buf: *Buffer;
 		match_win: *Window;
@@ -829,6 +881,21 @@ add_all_execs :: () {
 		ok := execute_exec_from_args(.[ arg0, arg1 ]);
 		return ok;
 	}, aliases = .[ "as" ] );
+	add_exec("archer", #run make_exec_proc((path: string) -> bool {
+		win := make_archer_window(ifx path else ".");
+		return win != null;
+	}, ""));
+	add_exec("fullscreen", () -> bool {
+		buf := context.buffer_window.buffer;
+		win := create_buffer_window(null, buf, .TEMP_FLOATING, select = true, is_hidden = true);
+		set_floating(win, .{
+			lx = .{ .BEGIN, 2 },
+			rx = .{ .END, -2 },
+			ly = .{ .BEGIN, 1 },
+			ry = .{ .END, -1 },
+		});
+		return true;
+	});
 }
 
 #scope_file

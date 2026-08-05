@@ -37,6 +37,8 @@
 // - having proper multiple-line tab names, or maybe find a way to shorten them?
 // - could make --no-x11 and --std-tty flags auto-detectable !
 // - utf-8 viewing works, but not editing. whatever, just keeping a note of that!
+// - wouldn't be that difficult to make search preview even those who are not part of the motion !
+//
 //
 // I want these a lil more
 // - kinda like "go to previous jump" thing, but instead go to latest jump that is in a different file!
@@ -516,20 +518,16 @@ handle_char :: (ch: s32) {
 
 // these 3 add_* are in main instead of their files...
 
-// still dont get colors, but this is stable for now (BUT :colors IS STILL GLICHING)
+// still dont get colors, but this is stable for now 
 // alright, this looks ok.. 6 + 1 bg colors
 COLOR_BG_LAST :: 6; // some nonsense happens when bg color > 8
-COLOR_FG_LAST :: 30;
+COLOR_FG_LAST :: 20;
 COLOR_BG_COUNT :: COLOR_BG_LAST + 2;
 COLOR_FG_COUNT :: COLOR_FG_LAST + 2;
 
 
 // returns pair index, still need to call COLOR_PAIR
 color_fg_bg :: (fg: int, bg: int) -> (pair: s32) {
-	//assert(-1 <= fg);
-	//assert(-1 <= bg);
-	//assert(fg <= COLOR_FG_LAST, "%", fg);
-	//assert(bg <= COLOR_BG_LAST, "%", bg);
 	idx := (fg + 1) + (bg + 1) * (COLOR_FG_COUNT);
 	return xx idx;
 }
@@ -605,8 +603,8 @@ editool_init :: (logfile := "") {
 	use_default_colors(); // use terminals colors..
 	log("COLOR PAIRS: %", COLOR_PAIRS);
 	#if 1 {
-			for fg: -1..COLOR_FG_LAST {
-		for bg: -1..COLOR_BG_LAST {
+		for fg: -1..COLOR_FG_LAST {
+			for bg: -1..COLOR_BG_LAST {
 				idx := color_fg_bg(fg, bg);
 				fg2, bg2 := uncolor_fg_bg(idx);
 				assert(fg2 == fg);
@@ -662,7 +660,79 @@ editool_deinit :: () {
 	}
 }
 
+do_the_image_color_thing :: () {
+	file_bytes, ok := read_entire_file("/tmp/screenshot.png");
+	assert(ok);
+	desired_channels := 3;
+	image_width, image_height, channels: s32;
+	_image_bytes: *u8 = stbi_load_from_memory(file_bytes.data, xx file_bytes.count,
+				*image_width, *image_height, *channels, desired_channels = 3);
+	image_bytes := []u8.{ data = _image_bytes, count = image_width * image_height * channels };
+	assert(channels == desired_channels);
+	Color :: struct {
+		x, y, z: float;
+	}
+	dp: []Color = NewArray((image_width+1) * (image_height+1), Color, initialized = false,, allocator=temp);
+	{
+		// calculate dp
+		operator - :: (l: Color, r: Color) -> Color {
+			return .{
+				l.x - r.x,
+				l.y - r.y,
+				l.z - r.z,
+			};
+		}
+		operator + :: (l: Color, r: Color) -> Color {
+			return .{
+				l.x + r.x,
+				l.y + r.y,
+				l.z + r.z,
+			};
+		}
+		at_dp :: (x: int, y: int) -> *Color #expand {
+			return *dp[x*(image_height+1)+y];
+		}
+		at_image :: (x: int, y: int) -> Color #expand {
+			byte_offset := (x*image_height+y) * channels;
+			here_bytes: []u8 = advance(image_bytes, byte_offset);
+			return .{
+				cast(float)here_bytes[0] / 255.0,
+				cast(float)here_bytes[1] / 255.0,
+				cast(float)here_bytes[2] / 255.0,
+			};
+		}
+		for x: 0..image_width {
+			for y: 0..image_height {
+				if x == 0 && y == 0 {
+					at_dp(x, y).* = .{0, 0, 0};
+				} else if x == 0 {
+					at_dp(x, y).* = at_dp(x, y-1).* + at_image(x, y-1);
+				} else if y == 0 {
+					at_dp(x, y).* = at_dp(x-1, y).* + at_image(x-1, y);
+				} else {
+					at_dp(x, y).* = at_dp(x-1, y).* + at_dp(x, y-1).* - at_dp(x-1, y-1).* + at_image(x-1, y-1);
+				}
+			}
+		}
+	}
+	//
+	WANTED_WIDTH :: 232;
+	WANTED_HEIGHT :: 50;
+	ratio_x := cast(float)image_width / cast(float)WANTED_WIDTH;
+	ratio_y := cast(float)image_height / cast(float)WANTED_HEIGHT;
+	ratio := min(ratio_x, ratio_y);
+	assert(ratio < 1);
+	width := cast(int)(cast(float)WANTED_WIDTH * ratio);
+	height := cast(int)(cast(float)WANTED_HEIGHT * ratio);
+	//
+}
+
 main :: () {
+	#if 0 {
+		// cbf, maybe later
+		do_the_image_color_thing();
+		return;
+	}
 	{
 		// yeeted
 		// need this shit for utf8
@@ -676,6 +746,7 @@ main :: () {
 	filenames: [..]string;
 	filenames.allocator = temp;
 	logfile := "";
+	is_archer := false;
 	{
 		args := get_command_line_arguments();
 		idx := 1;
@@ -685,6 +756,9 @@ main :: () {
 				case "-";
 					context.edit.use_stdout_as_tty_fd = true;
 					array_add(*filenames, "-");
+					idx += 1;
+				case "--archer";
+					is_archer = true;
 					idx += 1;
 				case "--print-path";
 					context.edit.should_print_path = true;
@@ -741,7 +815,16 @@ main :: () {
 	{
 		log("filenames: %", filenames);
 		parent := context.edit.root;
+		if is_archer && filenames.count != 1 {
+			editool_deinit();
+			print("Error: --archer must have at most 1 directory", to_standard_error = true);
+			return;
+		}
 		for filenames {
+			if is_archer {
+				win := make_archer_window(it);
+				continue;
+			}
 			if it != "-" {
 				buf: *Buffer = get_path_buffer(it);
 				win := create_buffer_window(parent, buf, flags = .BUFFER_LINE_NO);
@@ -886,6 +969,8 @@ main :: () {
 #import "fson";
 #import "POSIX";
 #import "Unicode";
+#import "stb_image";
+
 Uniform :: #import "uniform";
 
 #if X11_ENABLE {

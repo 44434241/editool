@@ -25,8 +25,8 @@ find_or_create_file_buffer :: (_filename: string, flags: Buffer.Flags = .NONE, f
 		assert(!is_directory(filename));
 		for context.edit.buffers {
 			if it.kind == .FILE && it.path == filename {
-				if it.file_flags != file_flags
-					continue;
+				// file flags might be different here... not sure the best way to handle this but whatever
+				//
 				// for the buffer to be temp, both the previous and this "new created" buffer must be temp
 				return it;
 			}
@@ -521,6 +521,10 @@ file_list_including_directories :: (path: string, recursive := false, follow_dir
 	visit_files(path, recursive, *files, visitor,
 			follow_directory_symlinks=follow_directory_symlinks, visit_directories=true);
 	return files;
+}
+
+create_dummy_buffer :: () -> *Buffer {
+	return create_custom_buffer();
 }
 
 #import "Sort";
