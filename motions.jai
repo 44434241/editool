@@ -1,5 +1,7 @@
 
 
+
+Motion_Res :: Motion_Result;
 // start/end could be reversed, depending on the motion
 Motion_Result :: struct {
 	Flags :: enum_flags {
@@ -24,10 +26,9 @@ Motion_Result :: struct {
 	is_jump: bool = false;
 	scroll: int = -1;
 	window: *Window;
+	buffer: *Buffer;
 	motion: *Motion;
 }
-
-Motion_Res :: Motion_Result;
 
 Motion_Input :: struct {
 	window: *Window; // 
@@ -422,17 +423,25 @@ motion_mark :: (_: Motion_In) -> Motion_Result {
 
 motion_mark_char :: (in: Motion_In, char: s32) -> Motion_Result {
 	win := in.window;
-	ok, mark := find_mark(win.buffer, char);
+	ok, mark := find_mark(char);
 	if !ok {
 		return .{
 			status = .ERROR,
 			error_message = tprint("Mark '%' not found", keybind_to_string(.[ char ])),
 		};
 	}
+	buf := get_mark_buffer(mark);
+	if !buf {
+		return .{
+			status = .ERROR,
+			error_message = tprint("Mark '%' is not in any buffer?"),
+		};
+	}
 	return .{
 		start = win.cursor.position,
 		end = mark.position,
 		scroll = mark.scroll,
+		buffer = buf,
 		flags = .Y_ONLY,
 		is_jump = true,
 	};

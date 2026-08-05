@@ -61,6 +61,8 @@ execute_motion :: (motion: *Motion, number: int = 1, window: *Window = null) -> 
 	}
 	res := motion.proc(in);
 	res.window = in.window;
+	if !res.buffer 
+		res.buffer = res.window.buffer;
 	res.motion = motion;
 	return res, in;
 }
@@ -70,6 +72,8 @@ execute_motion :: (motion: *Motion, in: Motion_In, char: s32) -> Motion_Res {
 	assert(motion.char_proc != null);
 	res := motion.char_proc(in, char);
 	res.window = in.window;
+	if !res.buffer 
+		res.buffer = res.window.buffer;
 	res.motion = motion;
 	return res;
 }
@@ -306,6 +310,11 @@ _handle_motion_result :: (motion: *Motion, in: Motion_In, res: Motion_Result, wa
 		case .OK;
 			assert(waiting.command != null);
 			assert(waiting.command.motion_proc != null);
+			if res.window.buffer != res.buffer && waiting.command.flags & .ALLOW_DIFFERENT_BUFFER == 0 {
+				edit_alert("Motion to different buffer disallowed with '%' command (% %)",
+						keybind_to_string(waiting.command.keybind), res.window.buffer, res.buffer);
+				return true;
+			}
 			command_res := waiting.command.motion_proc(waiting.command_in, res);
 			return _handle_command_result(waiting.command, waiting.command_in, command_res, can_char = can_char);
 		case .CONTINUE_CHAR;

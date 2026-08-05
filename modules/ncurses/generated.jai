@@ -6,6 +6,7 @@
 
 
 
+NCURSES_WIDECHAR :: 1;
 CURSES :: 1;
 CURSES_H :: 1;
 
@@ -40,7 +41,7 @@ NCURSES_TPARM_ARG :: s64;
 
 NCURSES_WCWIDTH_GRAPHICS :: 1;
 
-NCURSES_WIDECHAR :: 0;
+NCURSES_CH_T :: cchar_t;
 
 TRUE :: 1;
 
@@ -72,6 +73,10 @@ _WRAPPED :: 0x40;
 _NOCHANGE :: -1;
 
 _NEWINDEX :: -1;
+
+CCHARW_MAX :: 5;
+
+NCURSES_EXT_COLORS :: 20251230;
 
 NCURSES_EXT_FUNCS :: 20251230;
 
@@ -224,6 +229,15 @@ _win_st :: struct {}
 WINDOW :: _win_st;
 
 attr_t :: chtype;
+
+wint_t :: u32;
+
+cchar_t :: struct {
+    attr:      attr_t;
+    chars:     [5] s32;
+
+    ext_color: s32; /* color pair, must be more than 16-bits */
+}
 
 /*
 * Curses uses a helper function.  Define our type for this to simplify
@@ -796,6 +810,120 @@ ESCDELAY: s32 #elsewhere libncursesw;
 LINES: s32 #elsewhere libncursesw;
 TABSIZE: s32 #elsewhere libncursesw;
 
+_nc_wacs: *cchar_t #elsewhere libncursesw;
+
+/*
+* Function prototypes for wide-character operations.
+*
+* "generated" comments should include ":WIDEC" to make the corresponding
+* functions ifdef'd in lib_gen.c
+*
+* "implemented" comments do not need this marker.
+*/
+add_wch :: (unknown0: *cchar_t) -> s32 #foreign libncursesw;
+add_wchnstr :: (unknown0: *cchar_t, unknown1: s32) -> s32 #foreign libncursesw;
+add_wchstr :: (unknown0: *cchar_t) -> s32 #foreign libncursesw;
+addnwstr :: (unknown0: *s32, unknown1: s32) -> s32 #foreign libncursesw;
+addwstr :: (unknown0: *s32) -> s32 #foreign libncursesw;
+bkgrnd :: (unknown0: *cchar_t) -> s32 #foreign libncursesw;
+bkgrndset :: (unknown0: *cchar_t) -> void #foreign libncursesw;
+border_set :: (unknown0: *cchar_t, unknown1: *cchar_t, unknown2: *cchar_t, unknown3: *cchar_t, unknown4: *cchar_t, unknown5: *cchar_t, unknown6: *cchar_t, unknown7: *cchar_t) -> s32 #foreign libncursesw;
+box_set :: (unknown0: *WINDOW, unknown1: *cchar_t, unknown2: *cchar_t) -> s32 #foreign libncursesw;
+echo_wchar :: (unknown0: *cchar_t) -> s32 #foreign libncursesw;
+erasewchar :: (unknown0: *s32) -> s32 #foreign libncursesw;
+get_wch :: (unknown0: *wint_t) -> s32 #foreign libncursesw;
+get_wstr :: (unknown0: *wint_t) -> s32 #foreign libncursesw;
+getbkgrnd :: (unknown0: *cchar_t) -> s32 #foreign libncursesw;
+getcchar :: (unknown0: *cchar_t, unknown1: *s32, unknown2: *attr_t, unknown3: *s16, unknown4: *void) -> s32 #foreign libncursesw;
+getn_wstr :: (unknown0: *wint_t, unknown1: s32) -> s32 #foreign libncursesw;
+hline_set :: (unknown0: *cchar_t, unknown1: s32) -> s32 #foreign libncursesw;
+in_wch :: (unknown0: *cchar_t) -> s32 #foreign libncursesw;
+in_wchnstr :: (unknown0: *cchar_t, unknown1: s32) -> s32 #foreign libncursesw;
+in_wchstr :: (unknown0: *cchar_t) -> s32 #foreign libncursesw;
+innwstr :: (unknown0: *s32, unknown1: s32) -> s32 #foreign libncursesw;
+ins_nwstr :: (unknown0: *s32, unknown1: s32) -> s32 #foreign libncursesw;
+ins_wch :: (unknown0: *cchar_t) -> s32 #foreign libncursesw;
+ins_wstr :: (unknown0: *s32) -> s32 #foreign libncursesw;
+inwstr :: (unknown0: *s32) -> s32 #foreign libncursesw;
+key_name :: (unknown0: s32) -> *u8 #foreign libncursesw;
+killwchar :: (unknown0: *s32) -> s32 #foreign libncursesw;
+mvadd_wch :: (unknown0: s32, unknown1: s32, unknown2: *cchar_t) -> s32 #foreign libncursesw;
+mvadd_wchnstr :: (unknown0: s32, unknown1: s32, unknown2: *cchar_t, unknown3: s32) -> s32 #foreign libncursesw;
+mvadd_wchstr :: (unknown0: s32, unknown1: s32, unknown2: *cchar_t) -> s32 #foreign libncursesw;
+mvaddnwstr :: (unknown0: s32, unknown1: s32, unknown2: *s32, unknown3: s32) -> s32 #foreign libncursesw;
+mvaddwstr :: (unknown0: s32, unknown1: s32, unknown2: *s32) -> s32 #foreign libncursesw;
+mvget_wch :: (unknown0: s32, unknown1: s32, unknown2: *wint_t) -> s32 #foreign libncursesw;
+mvget_wstr :: (unknown0: s32, unknown1: s32, unknown2: *wint_t) -> s32 #foreign libncursesw;
+mvgetn_wstr :: (unknown0: s32, unknown1: s32, unknown2: *wint_t, unknown3: s32) -> s32 #foreign libncursesw;
+mvhline_set :: (unknown0: s32, unknown1: s32, unknown2: *cchar_t, unknown3: s32) -> s32 #foreign libncursesw;
+mvin_wch :: (unknown0: s32, unknown1: s32, unknown2: *cchar_t) -> s32 #foreign libncursesw;
+mvin_wchnstr :: (unknown0: s32, unknown1: s32, unknown2: *cchar_t, unknown3: s32) -> s32 #foreign libncursesw;
+mvin_wchstr :: (unknown0: s32, unknown1: s32, unknown2: *cchar_t) -> s32 #foreign libncursesw;
+mvinnwstr :: (unknown0: s32, unknown1: s32, unknown2: *s32, unknown3: s32) -> s32 #foreign libncursesw;
+mvins_nwstr :: (unknown0: s32, unknown1: s32, unknown2: *s32, unknown3: s32) -> s32 #foreign libncursesw;
+mvins_wch :: (unknown0: s32, unknown1: s32, unknown2: *cchar_t) -> s32 #foreign libncursesw;
+mvins_wstr :: (unknown0: s32, unknown1: s32, unknown2: *s32) -> s32 #foreign libncursesw;
+mvinwstr :: (unknown0: s32, unknown1: s32, unknown2: *s32) -> s32 #foreign libncursesw;
+mvvline_set :: (unknown0: s32, unknown1: s32, unknown2: *cchar_t, unknown3: s32) -> s32 #foreign libncursesw;
+mvwadd_wch :: (unknown0: *WINDOW, unknown1: s32, unknown2: s32, unknown3: *cchar_t) -> s32 #foreign libncursesw;
+mvwadd_wchnstr :: (unknown0: *WINDOW, unknown1: s32, unknown2: s32, unknown3: *cchar_t, unknown4: s32) -> s32 #foreign libncursesw;
+mvwadd_wchstr :: (unknown0: *WINDOW, unknown1: s32, unknown2: s32, unknown3: *cchar_t) -> s32 #foreign libncursesw;
+mvwaddnwstr :: (unknown0: *WINDOW, unknown1: s32, unknown2: s32, unknown3: *s32, unknown4: s32) -> s32 #foreign libncursesw;
+mvwaddwstr :: (unknown0: *WINDOW, unknown1: s32, unknown2: s32, unknown3: *s32) -> s32 #foreign libncursesw;
+mvwget_wch :: (unknown0: *WINDOW, unknown1: s32, unknown2: s32, unknown3: *wint_t) -> s32 #foreign libncursesw;
+mvwget_wstr :: (unknown0: *WINDOW, unknown1: s32, unknown2: s32, unknown3: *wint_t) -> s32 #foreign libncursesw;
+mvwgetn_wstr :: (unknown0: *WINDOW, unknown1: s32, unknown2: s32, unknown3: *wint_t, unknown4: s32) -> s32 #foreign libncursesw;
+mvwhline_set :: (unknown0: *WINDOW, unknown1: s32, unknown2: s32, unknown3: *cchar_t, unknown4: s32) -> s32 #foreign libncursesw;
+mvwin_wch :: (unknown0: *WINDOW, unknown1: s32, unknown2: s32, unknown3: *cchar_t) -> s32 #foreign libncursesw;
+mvwin_wchnstr :: (unknown0: *WINDOW, unknown1: s32, unknown2: s32, unknown3: *cchar_t, unknown4: s32) -> s32 #foreign libncursesw;
+mvwin_wchstr :: (unknown0: *WINDOW, unknown1: s32, unknown2: s32, unknown3: *cchar_t) -> s32 #foreign libncursesw;
+mvwinnwstr :: (unknown0: *WINDOW, unknown1: s32, unknown2: s32, unknown3: *s32, unknown4: s32) -> s32 #foreign libncursesw;
+mvwins_nwstr :: (unknown0: *WINDOW, unknown1: s32, unknown2: s32, unknown3: *s32, unknown4: s32) -> s32 #foreign libncursesw;
+mvwins_wch :: (unknown0: *WINDOW, unknown1: s32, unknown2: s32, unknown3: *cchar_t) -> s32 #foreign libncursesw;
+mvwins_wstr :: (unknown0: *WINDOW, unknown1: s32, unknown2: s32, unknown3: *s32) -> s32 #foreign libncursesw;
+mvwinwstr :: (unknown0: *WINDOW, unknown1: s32, unknown2: s32, unknown3: *s32) -> s32 #foreign libncursesw;
+mvwvline_set :: (unknown0: *WINDOW, unknown1: s32, unknown2: s32, unknown3: *cchar_t, unknown4: s32) -> s32 #foreign libncursesw;
+pecho_wchar :: (unknown0: *WINDOW, unknown1: *cchar_t) -> s32 #foreign libncursesw;
+setcchar :: (unknown0: *cchar_t, unknown1: *s32, unknown2: attr_t, unknown3: s16, unknown4: *void) -> s32 #foreign libncursesw;
+slk_wset :: (unknown0: s32, unknown1: *s32, unknown2: s32) -> s32 #foreign libncursesw;
+term_attrs :: () -> attr_t #foreign libncursesw;
+unget_wch :: (unknown0: s32) -> s32 #foreign libncursesw;
+vid_attr :: (unknown0: attr_t, unknown1: s16, unknown2: *void) -> s32 #foreign libncursesw;
+vid_puts :: (unknown0: attr_t, unknown1: s16, unknown2: *void, unknown3: NCURSES_OUTC) -> s32 #foreign libncursesw;
+vline_set :: (unknown0: *cchar_t, unknown1: s32) -> s32 #foreign libncursesw;
+wadd_wch :: (unknown0: *WINDOW, unknown1: *cchar_t) -> s32 #foreign libncursesw;
+wadd_wchnstr :: (unknown0: *WINDOW, unknown1: *cchar_t, unknown2: s32) -> s32 #foreign libncursesw;
+wadd_wchstr :: (unknown0: *WINDOW, unknown1: *cchar_t) -> s32 #foreign libncursesw;
+waddnwstr :: (unknown0: *WINDOW, unknown1: *s32, unknown2: s32) -> s32 #foreign libncursesw;
+waddwstr :: (unknown0: *WINDOW, unknown1: *s32) -> s32 #foreign libncursesw;
+wbkgrnd :: (unknown0: *WINDOW, unknown1: *cchar_t) -> s32 #foreign libncursesw;
+wbkgrndset :: (unknown0: *WINDOW, unknown1: *cchar_t) -> void #foreign libncursesw;
+wborder_set :: (unknown0: *WINDOW, unknown1: *cchar_t, unknown2: *cchar_t, unknown3: *cchar_t, unknown4: *cchar_t, unknown5: *cchar_t, unknown6: *cchar_t, unknown7: *cchar_t, unknown8: *cchar_t) -> s32 #foreign libncursesw;
+wecho_wchar :: (unknown0: *WINDOW, unknown1: *cchar_t) -> s32 #foreign libncursesw;
+wget_wch :: (unknown0: *WINDOW, unknown1: *wint_t) -> s32 #foreign libncursesw;
+wget_wstr :: (unknown0: *WINDOW, unknown1: *wint_t) -> s32 #foreign libncursesw;
+wgetbkgrnd :: (unknown0: *WINDOW, unknown1: *cchar_t) -> s32 #foreign libncursesw;
+wgetn_wstr :: (unknown0: *WINDOW, unknown1: *wint_t, unknown2: s32) -> s32 #foreign libncursesw;
+whline_set :: (unknown0: *WINDOW, unknown1: *cchar_t, unknown2: s32) -> s32 #foreign libncursesw;
+win_wch :: (unknown0: *WINDOW, unknown1: *cchar_t) -> s32 #foreign libncursesw;
+win_wchnstr :: (unknown0: *WINDOW, unknown1: *cchar_t, unknown2: s32) -> s32 #foreign libncursesw;
+win_wchstr :: (unknown0: *WINDOW, unknown1: *cchar_t) -> s32 #foreign libncursesw;
+winnwstr :: (unknown0: *WINDOW, unknown1: *s32, unknown2: s32) -> s32 #foreign libncursesw;
+wins_nwstr :: (unknown0: *WINDOW, unknown1: *s32, unknown2: s32) -> s32 #foreign libncursesw;
+wins_wch :: (unknown0: *WINDOW, unknown1: *cchar_t) -> s32 #foreign libncursesw;
+wins_wstr :: (unknown0: *WINDOW, unknown1: *s32) -> s32 #foreign libncursesw;
+winwstr :: (unknown0: *WINDOW, unknown1: *s32) -> s32 #foreign libncursesw;
+wunctrl :: (unknown0: *cchar_t) -> *s32 #foreign libncursesw;
+wvline_set :: (unknown0: *WINDOW, unknown1: *cchar_t, unknown2: s32) -> s32 #foreign libncursesw;
+
+term_attrs_sp :: (unknown0: *SCREEN) -> attr_t #foreign libncursesw;
+erasewchar_sp :: (unknown0: *SCREEN, unknown1: *s32) -> s32 #foreign libncursesw;
+killwchar_sp :: (unknown0: *SCREEN, unknown1: *s32) -> s32 #foreign libncursesw;
+unget_wch_sp :: (unknown0: *SCREEN, unknown1: s32) -> s32 #foreign libncursesw;
+vid_attr_sp :: (unknown0: *SCREEN, unknown1: attr_t, unknown2: s16, unknown3: *void) -> s32 #foreign libncursesw;
+vid_puts_sp :: (unknown0: *SCREEN, unknown1: attr_t, unknown2: s16, unknown3: *void, unknown4: NCURSES_OUTC_sp) -> s32 #foreign libncursesw;
+wunctrl_sp :: (unknown0: *SCREEN, unknown1: *cchar_t) -> *s32 #foreign libncursesw;
+
 MEVENT :: struct {
     id:     s16; /* ID to distinguish multiple devices */
     x:      s32; /* event coordinates (character-cell) */
@@ -837,6 +965,24 @@ exit_curses :: (unknown0: s32) -> void #foreign libncursesw;
 libncursesw :: #library,system "libncursesw";
 
 #run {
+    {
+        info := type_info(cchar_t);
+        for info.members {
+            if it.name == {
+                case "attr";
+                    assert(it.offset_in_bytes == 0, "cchar_t.attr has unexpected offset % instead of 0", it.offset_in_bytes);
+                    assert(it.type.runtime_size == 4, "cchar_t.attr has unexpected size % instead of 4", it.type.runtime_size);
+                case "chars";
+                    assert(it.offset_in_bytes == 4, "cchar_t.chars has unexpected offset % instead of 4", it.offset_in_bytes);
+                    assert(it.type.runtime_size == 20, "cchar_t.chars has unexpected size % instead of 20", it.type.runtime_size);
+                case "ext_color";
+                    assert(it.offset_in_bytes == 24, "cchar_t.ext_color has unexpected offset % instead of 24", it.offset_in_bytes);
+                    assert(it.type.runtime_size == 4, "cchar_t.ext_color has unexpected size % instead of 4", it.type.runtime_size);
+            }
+        }
+        assert(size_of(cchar_t) == 28, "cchar_t has size % instead of 28", size_of(cchar_t));
+    }
+
     {
         info := type_info(MEVENT);
         for info.members {

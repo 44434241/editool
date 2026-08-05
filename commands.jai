@@ -4,10 +4,13 @@ Command :: struct {
 	Motion_Proc :: #type (Command_In, Motion_Result) -> Command_Result;
 	Char_Proc :: #type (Command_In, s32) -> Command_Result;
 	Flags :: enum_flags {
+		// THESE ARE BARELY USED (but used)
 		EXPECT_NORMALIZED_MOTION;
+		ALLOW_DIFFERENT_BUFFER;
 		CURSOR; // this commands acts on cursors (supports multicursor)
 		NONE :: 0;
 	}
+	flags: Flags;
 	name: string;
 	keybind: Keybind;
 	proc: Proc;
@@ -440,7 +443,7 @@ command_mark_create_char :: (in: Command_In, char: s32) -> Command_Result {
 	win := in.window;
 	m := create_mark(win);
 	m.name = xx char;
-	set_mark(win.buffer, m);
+	set_global_mark(m);
 	return .{};
 }
 
@@ -667,6 +670,7 @@ add_all_commands :: () {
 		keybind = "",
 		proc = command_motion,
 		motion_proc = command_motion_motion,
+		flags = .ALLOW_DIFFERENT_BUFFER,
 	);
 	//add_global_command(
 		//keybind = "q",
@@ -961,17 +965,18 @@ add_all_commands :: () {
 }
 
 add_global_command :: inline (name: string = "", keybind: $T/.[string, []s32],
-			mode: Edit_Mode_Bits = .COMMAND,
+			mode: Edit_Mode_Bits = .COMMAND, flags: Command.Flags = .NONE,
 			proc: Command.Proc, motion_proc: Command.Motion_Proc = null, char_proc: Command.Char_Proc = null) {
-	add_command(*context.edit.commands, name, keybind, mode, proc, motion_proc, char_proc);
+	add_command(*context.edit.commands, name, keybind, mode, flags, proc, motion_proc, char_proc);
 }
 
 add_command :: inline (commands: *[..]Command, name: string = "", keybind: $T/.[string, []s32],
-			mode: Edit_Mode_Bits = .COMMAND,
+			mode: Edit_Mode_Bits = .COMMAND, flags: Command.Flags = .NONE,
 			proc: Command.Proc, motion_proc: Command.Motion_Proc = null, char_proc: Command.Char_Proc = null) {
 	array_add(commands, .{
 		name = name,
 		mode = mode,
+		flags = flags,
 		keybind = to_keybind(keybind),
 		proc = proc,
 		motion_proc = motion_proc,

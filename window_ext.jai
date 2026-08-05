@@ -58,6 +58,7 @@ Cursor :: struct {
 
 /// MARKS
 
+// why is this in window
 Mark :: struct {
 	position: Position = .{-1, -1};
 	scroll: int = -1;
@@ -85,11 +86,12 @@ create_mark :: (using win: *Window) -> Mark {
 
 get_mark_buffer :: (mark: Mark) -> *Buffer {
 	buf := find_buffer(mark.buffer_id);
-	if !buf && mark.path
+	if !buf && mark.path != ""
 		buf = get_path_buffer(mark.path);
 	return buf;
 }
 
+// this is only used for cursor-undo marks, not global named marks!
 go_to_mark :: (win: *Window, mark: Mark, is_jump := true) -> bool {
 	buf := get_mark_buffer(mark);
 	if !buf
@@ -100,8 +102,8 @@ go_to_mark :: (win: *Window, mark: Mark, is_jump := true) -> bool {
 	return true;
 }
 
-find_mark :: (using buf: *Buffer, name: s32) -> bool, Mark {
-	for marks {
+find_mark :: (name: s32) -> bool, Mark {
+	for context.edit.marks {
 		if it.name == name {
 			return true, it;
 		}
@@ -109,24 +111,24 @@ find_mark :: (using buf: *Buffer, name: s32) -> bool, Mark {
 	return false, .{};
 }
 
-set_mark :: (using buf: *Buffer, mark: Mark) {
+set_global_mark :: (mark: Mark) {
 	if !mark.name {
-		edit_error("Can't set un-named mark");
+		edit_error("Can't set global un-named mark");
 		return;
 	}
-	for * marks {
+	for * context.edit.marks {
 		if it.name == mark.name {
 			it.* = mark;
 			return;
 		}
 	}
-	array_add(*marks, mark);
+	array_add(*context.edit.marks, mark);
 }
 
 // there might be more than one! 
 get_mark_at_y :: (using buf: *Buffer, y: int) -> bool, Mark {
-	for marks {
-		if it.position.y == y {
+	for context.edit.marks {
+		if it.buffer_id == buf.id && it.position.y == y {
 			return true, it;
 		}
 	}
@@ -328,6 +330,11 @@ move_cursor :: (res: Motion_Result, count: int = 1) {
 	if res.status != .OK
 		return;
 	win := res.window;
+	//
+	if win.buffer != res.buffer {
+		// doing buffer check here..
+		change_buffer(win, res.buffer);
+	}
 	if win.motion_proc {
 		ok := win.motion_proc(win, res);
 		if !ok
@@ -540,20 +547,42 @@ _get_real_x_in_line :: (line: *Line, x: int) -> int {
 	if x == 0
 		return 0;
 	ret: int = 0;
-	for 0..min(x-1, line.count-1) {
-		ret += _get_char_info(line.chars[it]).size;
+	idx: int = 0;
+	//character_utf8_to_utf32 :: (s: *u8, source_length: s64, $strict := false) -> u32, s64, Unicode_Result {
+	while idx < min(x, line.count) {
+		code, count, res := character_utf8_to_utf32(line.chars.data + idx, line.chars.count - idx);
+		if res != .CONVERSION_OK {
+			break;
+		}
+		idx += count;
+		ret += _get_char_info(code).size;
 	}
-	//ret += 1; // the NEXT char counts as size 1
 	return ret;
 }
 
 _from_real_x_in_line :: (line: *Line, real_x: int) -> int {
+	idx := 0;
+	utf_idx := 0;
+	while idx < line.count {
+		if real_x <= 0
+			return utf_idx;
+		code, count, res := character_utf8_to_utf32(line.chars.data + idx, line.chars.count - idx);
+		if res != .CONVERSION_OK {
+			break;
+		}
+		idx += count;
+		real_x -= _get_char_info(code).size;
+		if real_x < 0
+			return utf_idx;
+		utf_idx += 1;
+	}
+	/*
 	for line.chars {
 		if real_x <= 0
 			return it_index;
 		real_x -= _get_char_info(it).size;
 		if real_x < 0
 			return it_index;
-	}
-	return line.chars.count;
+	}*/
+	return utf_idx;
 }

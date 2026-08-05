@@ -22,7 +22,6 @@
 // - UPDATE HOW CURSOR MARKS WORK
 // - ^ scroll still not working with jumps (need to look into them)
 // - should have separate "should show line numbers/status bar/etc" flags for buffers, and windows can have the option to override them???
-// - named marks should be global? <- priority maybe <- i need to learn to use them better
 // - ^ also for compilation, i could mark the lines in the error output
 // - Some way to save esc-ed search/exec?
 // - - maybe just remember the last esc-ed, and have a keybind to start from it ig..
@@ -36,7 +35,8 @@
 // - search find to end of match... need to figure out some way to way to create a command for that? maybe a motion for the current "search match"?
 // - way to delete marks...
 // - having proper multiple-line tab names, or maybe find a way to shorten them?
-// - path bug thing: when path is `/hello` and opening `/hello-bye/something`, filename fucks up
+// - could make --no-x11 and --std-tty flags auto-detectable !
+// - utf-8 viewing works, but not editing. whatever, just keeping a note of that!
 //
 // I want these a lil more
 // - kinda like "go to previous jump" thing, but instead go to latest jump that is in a different file!
@@ -203,6 +203,8 @@ Editool :: struct {
 	next_dot_command: [..]s32;
 	clipboard: Clipboard;
 	//
+	marks: [..]Mark; // i want global marks !
+	//
 	#if X11_ENABLE {
 		x11_window: X11.Window;
 	} 
@@ -282,8 +284,13 @@ is_printable_char :: (ch: s32) -> bool {
 	return 0x20 <= ch && ch < 0x7f;
 }
 
+is_ascii :: (ch: u32) -> bool {
+	// 0x20: space, 0x7f: del
+	return 0x00 <= ch && ch <= 0x7f;
+}
+
 is_alnum :: (ch: s32) -> bool {
-	return is_printable_char(ch) && is_alnum(cast(u8)ch);
+	return ch & 0xff == ch && is_alnum(cast(u8)ch);
 }
 
 reset_edit_mode :: () {
@@ -655,6 +662,14 @@ editool_deinit :: () {
 }
 
 main :: () {
+	{
+		// yeeted
+		// need this shit for utf8
+		libc :: #library,system "libc";
+		LC_ALL : s32 : 6;
+		setlocale :: (what: s32, loc: *u8) -> *u8 #foreign libc;
+		setlocale(LC_ALL, "");
+	}
 	//here_edit: Editool;
 	//context.edit = *here_edit;
 	filenames: [..]string;
@@ -855,6 +870,7 @@ main :: () {
 #import "ncurses";
 #import "fson";
 #import "POSIX";
+#import "Unicode";
 Uniform :: #import "uniform";
 
 #if X11_ENABLE {

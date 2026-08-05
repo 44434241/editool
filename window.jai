@@ -278,7 +278,6 @@ _draw_window :: (using win: *Window) {
 					y += 1;
 				}
 			}
-			// this fails when the terminal window is too small.. whatever !!
 			assert(lines_to_draw.count > 0, "scroll: %, line.count: %, size: %", scroll, lines.count, size.y);
 		}
 		_refresh_buffer_modifiers(win, buffer, scroll, peek(lines_to_draw) - lines.data + 1);
@@ -324,11 +323,16 @@ _draw_window :: (using win: *Window) {
 			wmove(nwindow, xx ny, xx (begin.x));
 			using,only(mods, user_mods) it;
 			//assert (it.count <= mods.count);
-			for it.chars {
-				info := _get_char_info(it);
+			line_str := it.as_string;
+			while line_str {
+				ch_idx := it.chars.count - line_str.count;
+				ch, res := utf8_next_character(*line_str);
+				if res != .CONVERSION_OK
+					break;
+				info := _get_char_info(ch);
 				mod: Char_Mod = ---;
 				if it_index < user_mods.count {
-					mod = user_mods[it_index];
+					mod = user_mods[ch_idx];
 				} else {
 					Initialize(*mod);
 				}
@@ -337,14 +341,21 @@ _draw_window :: (using win: *Window) {
 				// matches are color 2
 				attr := as_ncurses_attribute(mod);
 				wattrset(nwindow, attr);
-				//if mod.replaced.count > 0 {
+				//if mod.replaced.count > 0
 					//waddch(nwindow, mod.replaced[0]);
 				if info.replaced {
 					assert(info.replaced.count == info.size);
 					waddnstr(nwindow, info.replaced.data, xx info.replaced.count);
 				} else {
-					assert(info.size == 1);
-					waddch(nwindow, it);
+					if is_ascii(ch) {
+						waddch(nwindow, ch);
+					} else {
+						// cringe
+						wch: cchar_t;
+						arr: [2]s32 = .[ xx ch, 0 ];
+						setcchar(*wch, arr.data, A_NORMAL, 0, null);
+						wadd_wch(nwindow, *wch);
+					}
 				}
 				wattrset(nwindow, 0);
 			}
@@ -1072,10 +1083,12 @@ get_title :: (using buf: *Buffer) -> string {
 			s := ifx path else "[NONE]";
 			if path {
 				pwd := get_working_directory(,,allocator = temp);
+				if peek(pwd) != #char "/"
+					pwd = tprint("%/", pwd);
 				if starts_with(s, pwd) {
 					s = advance(s, pwd.count);
-					if s.count && s[0] == #char "/"
-						s = advance(s, 1);
+					//if s.count && s[0] == #char "/"
+						//s = advance(s, 1);
 				}
 			}
 			if kind == .DIRECTORY {

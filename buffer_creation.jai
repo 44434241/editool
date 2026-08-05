@@ -95,28 +95,6 @@ _insert_string_into_buffer_as_from_file :: (buf: *Buffer, file_str: string, this
 						s = advance(s, 1);
 					}
 				}
-				{
-					// tbh this shit needs utf support...
-					// utf-8 dash (fucking retards)
-					if starts_with(s, "\xe2\x80\x90") {
-						not_escape("-");
-						s = advance(s, 3);
-						continue;
-					}
-					// utf-8 long dash (fucking retards)
-					if starts_with(s, "\xe2\x80\x94") {
-						not_escape("-");
-						not_escape("-");
-						s = advance(s, 3);
-						continue;
-					}
-					// utf-8 dot
-					if starts_with(s, "\xe2\x80\xa2") {
-						not_escape("-");
-						s = advance(s, 3);
-						continue;
-					}
-				}
 				if starts_with(s, "\e[") {
 					num, ok, remainder := string_to_int(advance(s, 2), T = s32);
 					//edit_alert("% '%'", ok, remainder);
@@ -181,6 +159,10 @@ _create_buffer_from_file :: (filename: string, flags: Buffer.Flags, file_flags: 
 		_insert_string_into_buffer_as_from_file(buf, file_str);
 	} else {
 		buf.file_flags |= .NO_FILE;
+	}
+	for * context.edit.marks {
+		if it.path == buf.path
+			it.buffer_id = buf.id;
 	}
 	return buf;
 }
@@ -364,6 +346,10 @@ _create_buffer_from_directory :: (path: string) -> *Buffer {
 			}
 		}
 	}
+	for * context.edit.marks {
+		if it.path == buf.path
+			it.buffer_id = buf.id;
+	}
 	return buf;
 }
 
@@ -518,7 +504,7 @@ _new_buffer :: (kind: Buffer.Kind) -> *Buffer {
 	buf.windows.allocator = allocator;
 	buf.commands.allocator = allocator;
 	buf.search_matches.matches.allocator = allocator;
-	buf.marks.allocator = allocator;
+	//buf.marks.allocator = allocator;
 	buf.folds.allocator = allocator;
 	buf.directory_files.allocator = allocator;
 	array_add(*buf.lines, .{

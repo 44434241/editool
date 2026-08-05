@@ -142,7 +142,7 @@ Buffer :: struct {
 	windows: [..]*Window; // doing it like this for now..
 	commands: [..]Command; // can only be added to after buffer creation
 	search_matches: Search_Matches; // touched by search..
-	marks: [..]Mark;
+	//marks: [..]Mark;
 	folds: [..]Fold;
 	// file
 	path: string; // for .FILE or .DIRECTORY
@@ -901,8 +901,10 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 	shift_y :: (pos: Position, count: int, dont_update_from_virtual_x := false) #expand {
 		if buf.caps & .MOVE_Y == 0
 			return;
-		for * buf.marks {
-			_shift_y(*it.position, pos, count, null);
+		for * context.edit.marks {
+			if it.buffer_id == buf.id {
+				_shift_y(*it.position, pos, count, null);
+			}
 		}
 		for * buf.folds {
 			if it.start > pos.y {
@@ -925,8 +927,10 @@ _execute_buffer_operation :: (win: *Window, using,except(flags) buf: *Buffer, op
 	shift_x :: (pos: Position, count: int, dont_refresh_virtual_x := false) #expand {
 		if buf.caps & .MOVE_X == 0
 			return;
-		for * buf.marks {
-			_shift_x(*it.position, pos, count, null);
+		for * context.edit.marks {
+			if it.buffer_id == buf.id {
+				_shift_x(*it.position, pos, count, null);
+			}
 		}
 		for buf.windows {
 			moved_real_x := false;
@@ -1292,16 +1296,16 @@ Buffer_Char_Info :: struct {
 	override_color: s8 = -1;
 }
 
-_get_char_info :: (ch: u8) -> Buffer_Char_Info {
+_get_char_info :: (ch: u32) -> Buffer_Char_Info {
 	ESCAPE_COLOR :: 4; // grey
 	if ch == {
-		case "\r";
+		case #char "\r";
 			return .{
 				size = 2,
 				replaced = "@r",
 				override_color = ESCAPE_COLOR,
 			};
-		case "\e";
+		case #char "\e";
 			return .{
 				size = 2,
 				replaced = "@e",
@@ -1313,7 +1317,7 @@ _get_char_info :: (ch: u8) -> Buffer_Char_Info {
 				replaced = "@n",
 				override_color = ESCAPE_COLOR,
 			};
-		case "\t";
+		case #char "\t";
 			return .{
 				size = 3,
 				replaced = ">--",
