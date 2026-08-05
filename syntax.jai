@@ -255,6 +255,7 @@ path_to_filetype :: (_path: string) -> string {
 			case "c"; #through;
 			case "cpp"; #through;
 			case "h"; #through;
+			case "java"; #through;
 			case "hpp";
 				return "c"; 
 			case;
@@ -728,6 +729,11 @@ create_c_syntax :: () -> Syntax {
 		"explicit",
 		"template",
 		"typename",
+		"try",
+		"throw",
+		"finally",
+		"catch",
+		"final",
 		//
 		"and", "or", "xor", "not", // hehe
 		// csharp:
@@ -738,6 +744,10 @@ create_c_syntax :: () -> Syntax {
 		"as",
 		"event",
 		"out",
+		// java:
+		"import",
+		"package",
+		"implements",
 	], "|");
 	syntax.elements[TYPE1].match = #run join(.. .[
 		// int
@@ -758,6 +768,9 @@ create_c_syntax :: () -> Syntax {
 		"auto", // is this a type or a keywork
 		// csharp
 		"string",
+		// java
+		"boolean",
+		//"String",
 	], "|");
 	syntax.elements[CONSTANT1].match = #run join(.. .[
 		"true",
