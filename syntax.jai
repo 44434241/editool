@@ -44,6 +44,7 @@ Syntax_Element :: struct {
 	color: s8 = -1; // 
 	// .NORMAL
 	match: string;
+	match_prefix: string; // not captured
 	match_suffix: string; // not captured
 	// .START_END_MULTILINE
 	multiline_start: string;
@@ -191,6 +192,13 @@ get_syntax_for_filetype :: (filetype: string) -> *Syntax {
 			syntax := New(Syntax);
 			syntax.* = create_markdown_syntax();
 			syntax.filetype = "md";
+			array_add(*context.edit.syntaxes, syntax);
+		}
+		{
+			// html
+			syntax := New(Syntax);
+			syntax.* = create_html_syntax();
+			syntax.filetype = "html";
 			array_add(*context.edit.syntaxes, syntax);
 		}
 	}
@@ -655,9 +663,31 @@ create_python_syntax :: () -> Syntax {
 	syntax.elements[TAB].match = "\\t++";
 	syntax.elements[COMMENT].match = "#.*?$";
 	syntax.elements[CONSTANT2].match = "(?:\\$?[A-Z_][A-Z_\\d]*+|\\$\\w++)";
-	syntax.elements[NOTE].match = "@\\w+";
+	syntax.elements[NOTE].match = "@[\\w\\.]+";
 	syntax.elements[TYPE2].match = "_?[A-Z]\\w*[a-z]\\w*+"; // most python types are LikeThis
 	//
+	compile_syntax(*syntax);
+	return syntax;
+}
+
+create_html_syntax :: () -> Syntax {
+	using syntax: Syntax;
+	elements[TYPE1].match_prefix = "</?";
+	elements[TYPE1].match = "\\w++";
+	elements[TYPE1].match_suffix = ">?";
+	syntax.elements[TAB].match = "\\t++";
+	//
+	elements[KEYWORD1].match = join(.. .[
+		"&nbsp",
+	], "|");
+	elements[KEYWORD2].match = "\\{?\\{.*\\}\\}?";
+	elements[STRING1].match = "\"(?:[^\"\\\\]|\\\\.)*(?:\"|$)";
+	syntax.elements[STRING2].match = "'(?:[^'\\\\]|\\\\.)*(?:'|$)"; // 'aad'
+	syntax.elements[STRING3].match = "`(?:[^`\\\\]|\\\\.)*(?:`|$)";
+	//
+	elements[TYPE1].flags &= ~.IS_WORD;
+	elements[KEYWORD1].flags &= ~.IS_WORD;
+	elements[KEYWORD2].flags &= ~.IS_WORD;
 	compile_syntax(*syntax);
 	return syntax;
 }
@@ -866,7 +896,7 @@ compile_syntax :: (using syntax: *Syntax) {
 				extra_end = "(?:\\W|$)"; 
 				extra_start = "(?:^|\\W)"; // CAN'T DO WITH THIS
 			}
-			s := tprint("%(%)%0%", extra_start, it.match, it.match_suffix, extra_end);
+			s := tprint("%0%0(%)%0%", extra_start, it.match_prefix, it.match, it.match_suffix, extra_end);
 			print(*builder, "%", s);
 		}
 		print(*builder, ")");
@@ -888,7 +918,7 @@ compile_syntax :: (using syntax: *Syntax) {
 				extra_start = "(?:^|\\W)"; 
 				extra_end = "(?:\\W|$)"; 
 			}
-			regex_str := tprint("%(%)%0%", extra_start, it.match, it.match_suffix, extra_end);
+			regex_str := tprint("%0%0(%)%0%", extra_start, it.match_prefix, it.match, it.match_suffix, extra_end);
 			it.regex, it.is_compiled = Uniform.compile(regex_str);
 		} else if it.match_kind == .MULTILINE_START_END {
 			if !it.multiline_start || !it.multiline_end
