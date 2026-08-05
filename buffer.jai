@@ -256,7 +256,7 @@ refresh_buffer :: (win: *Window) -> bool, string {
 			refresh_directory_buffer(buf);
 			return true, "";
 		case;
-			return false, "Not a file (%)";
+			return false, tprint("Not a file (%)", buf.kind);
 	}
 }
 
@@ -542,7 +542,7 @@ save_buffer :: (buf: *Buffer) -> bool, string {
 			}, buf);
 			return true, "";
 		case;
-			return false, "Not a file (%)";
+			return false, tprint("Not a file (%)", buf.kind);
 	}
 }
 
