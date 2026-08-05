@@ -679,6 +679,7 @@ main :: () {
 	{
 		args := get_command_line_arguments();
 		idx := 1;
+		should_cd := false;
 		while idx < args.count {
 			if args[idx] == {
 				case "-";
@@ -702,6 +703,9 @@ main :: () {
 					}
 					logfile = args[idx];
 					idx += 1;
+				case "--cd";
+					should_cd = true;
+					idx += 1;
 				case "--dir";
 					idx += 1;
 					if idx >= args.count {
@@ -716,6 +720,16 @@ main :: () {
 					idx += 1;
 			}
 		}
+		if should_cd && filenames.count > 0 {
+			fn := filenames[0];
+			path := normalize_path(filenames[0],, allocator=temp);
+			if !is_directory(path) {
+				ok, left, right := split_from_right(path, #char "/");
+				if ok
+					path = left;
+			}
+				set_working_directory(path);
+		} 
 		if !filenames {
 			if context.edit.should_print_path
 				array_add(*filenames, "./"); 
