@@ -1,4 +1,3 @@
-# Maintainer: bbbb-b <nullptr@inbox.lt>
 
 pkgname='editool-git'
 pkgrel=1

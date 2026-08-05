@@ -205,7 +205,8 @@ handle_command_char :: (ch: s32) {
 handle_command_step :: () -> (should_reset: bool, found_command: bool) {
 	found_command := false;
 	should_reset := true;
-	{
+	#if 0 {
+		// i don't know why this here..
 		win := get_selected_window_of_kind(.BUFFER);
 		if win {
 			// thats fairly simple actually.....

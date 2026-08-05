@@ -520,15 +520,6 @@ _default_get_buffer :: (item: Fzf_Item) -> *Buffer {
 	return get_path_buffer(item.filename);
 }
 
-file_length :: (filename: string) -> int {
-	f, ok := file_open(filename);
-	if !ok
-		return -1;
-	len := file_length(f);
-	file_close(*f);
-	return len;
-}
-
 #import "Process";
 //#import "jaison";
 #import "Pool";

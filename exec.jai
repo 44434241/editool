@@ -202,10 +202,11 @@ make_exec_proc :: ($proc: () -> bool) -> Exec_Command.Proc {
 // returns container window? or directory window?
 make_archer_window :: (_path: string) -> *Window {
 	path := _path;
-	if !path
 		path = ".";
-	if !is_directory(normalize_path(path,, allocator=temp))
+	if !is_directory(normalize_path(path,, allocator=temp)) {
+		edit_alert("Bad path: '%', for archer", path);
 		return null;
+	}
 	Archer_State :: struct {
 		root: *Window;
 		directory_window: *Window;
@@ -221,6 +222,11 @@ make_archer_window :: (_path: string) -> *Window {
 			return;
 		rel_path := dir_buf.lines[directory_window.cursor.y].as_string;
 		preview_path := path_join(dir_buf.path, rel_path);
+		cnt := file_length(preview_path);
+		if cnt > 1024 * 1024 {
+			edit_alert("Refusing to preview > 1mb file");
+			return;
+		}
 		buf := get_path_buffer(preview_path);
 		change_buffer(preview_window, buf);
 	}
@@ -231,6 +237,9 @@ make_archer_window :: (_path: string) -> *Window {
 		//
 		directory_buffer := get_directory_buffer(path);
 		directory_window = create_buffer_window(root, directory_buffer);
+		update_container_item(directory_window, .{
+			weighted_size = 0.35,
+		});
 		//
 		preview_buffer := create_dummy_buffer(); // will get destroyed at the end of this proc probably
 		preview_window := create_buffer_window(root, preview_buffer);
@@ -883,17 +892,21 @@ add_all_execs :: () {
 	}, aliases = .[ "as" ] );
 	add_exec("archer", #run make_exec_proc((_path: string) -> bool {
 		path := _path;
+		if path
+			path = normalize_path(path,, allocator=temp);
 		if !path {
+			path = context.buffer_window.buffer.path;
+		}
+		if !is_directory(path) {
 			// if current dir is at '/tmp/something.txt', we open archer at '/tmp'
 			// (should do that with ff/fzf too)
-			if context.buffer_window.buffer.kind == .DIRECTORY {
-				path = context.buffer_window.buffer.path;
+			// also
+			ok, left, right := split_from_right(context.buffer_window.buffer.path, #char "/");
+			if ok {
+				// actually, this should also select the file
+				path = tprint("%/", left);
 			} else {
-				ok, left, right := split_from_right(context.buffer_window.buffer.path, #char "/");
-				if ok
-					path = left;
-				else
-					path = ".";
+				path = ".";
 			}
 		}
 		win := make_archer_window(path);
@@ -903,10 +916,26 @@ add_all_execs :: () {
 		buf := context.buffer_window.buffer;
 		win := create_buffer_window(null, buf, .TEMP_FLOATING, select = true, is_hidden = true);
 		set_floating(win, .{
-			lx = .{ .BEGIN, 2 },
-			rx = .{ .END, -2 },
-			ly = .{ .BEGIN, 1 },
-			ry = .{ .END, -1 },
+			lx = .{ .BEGIN, 0 },
+			rx = .{ .END, -0 },
+			ly = .{ .BEGIN, 0 },
+			ry = .{ .END, -0 },
+		});
+		return true;
+	});
+	add_exec("contained_weight", (v: float) -> bool {
+		if v <= 0
+			return false;
+		update_container_item(context.buffer_window, .{
+			weighted_size = v,
+		});
+		return true;
+	});
+	add_exec("contained_fixed", (v: int) -> bool {
+		if v <= 0
+			return false;
+		update_container_item(context.buffer_window, .{
+			fixed_size = v,
 		});
 		return true;
 	});

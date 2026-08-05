@@ -101,6 +101,15 @@ array_reverse :: (arr: *[]$T) {
 
 string_copy :: copy_string;
 
+file_length :: (filename: string) -> int {
+	f, ok := file_open(filename);
+	if !ok
+		return -1;
+	len := file_length(f);
+	file_close(*f);
+	return len;
+}
+
 #scope_file
 
 #import "Math";

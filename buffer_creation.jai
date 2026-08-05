@@ -239,6 +239,8 @@ _create_buffer_from_directory :: (path: string) -> *Buffer {
 		keybind = "\n",
 		mode = .COMMAND,
 		proc = (in: Command_In) -> Command_Res {
+			edit_alert("called?");
+			log_stack_trace(context.stack_trace);
 			using in.window.buffer;
 			idx := in.window.cursor.position.y;
 			name := directory_files[idx].last_name;
@@ -247,6 +249,9 @@ _create_buffer_from_directory :: (path: string) -> *Buffer {
 			new_path := path_join(path, name);
 			buf := get_path_buffer(new_path);
 			change_buffer(in.window, buf);
+			//
+			if buf.kind == .DIRECTORY
+				move_cursor_y(in.window, min(2, buf.lines.count-1));
 			return .{};
 		}
 	);

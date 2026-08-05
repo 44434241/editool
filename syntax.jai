@@ -7,6 +7,7 @@ Syntax_Element :: struct {
 		COMMENT;
 		MULTILINE_COMMENT;
 		MULTILINE_STRING;
+		MULTILINE_OTHER1;
 		TAB;
 		NOTE;
 		STRING1;
@@ -81,6 +82,7 @@ Syntax :: struct {
 	elements[NOTE].color = 6; // dark green (24 or 30 or 6?)
 	elements[EOL_SPACE].color = 4; // grey, same as comment
 	elements[OTHER1].color = 5; // dark purple - this is for bash `ls`
+	elements[MULTILINE_OTHER1].color = 5; // dark purple - this is for markdown ```
 	elements[OTHER2].color = 12; // white? - this is for bash $VARIABLE
 	//
 	elements[KEYWORD1].flags = .IS_WORD;
@@ -215,10 +217,17 @@ path_to_filetype :: (_path: string) -> string {
 			return "sh";
 		case ".vimrc";
 			return "vim";
+		case "Dockerfile";
+			return "dockerfile";
 		case "PKGBUILD"; #through;
 		case "fstab"; #through;
 		case ".env"; #through;
 		case "sudoers"; #through; // yes i know you're supposed to use visudo
+		// i don't respect these 2 enough to properply implement syntax
+		case "makefile"; #through;
+		case "CMakeLists.txt"; #through;
+		//
+		case "conf"; #through;
 		case "sshd_config";
 			return "config";
 	} 
@@ -351,7 +360,13 @@ create_markdown_syntax :: () -> Syntax {
 	//syntax.elements[STRING1].match = "\"(?:[^\"\\\\]|\\\\.)*(?:\"|$)";
 	//syntax.elements[STRING2].match = "'(?:[^'\\\\]|\\\\.)*(?:'|$)";
 	syntax.elements[STRING2].match = "\\[.*?\\]\\(.*?\\)";
-	syntax.elements[OTHER1].match = "`(?:[^`\\\\]|\\\\.)*(?:`|$)";
+	syntax.elements[OTHER1].match = join(.. .[
+		"`.*?`" ,
+		"\\*\\*.*?\\*\\*",
+	], "|");
+	syntax.elements[MULTILINE_OTHER1].match_kind = .MULTILINE_START_END;
+	syntax.elements[MULTILINE_OTHER1].multiline_start = "```";
+	syntax.elements[MULTILINE_OTHER1].multiline_end = "```";
 	//syntax.elements[OTHER2].match = "\\$[A-Za-z_]+"; // variable.. idk if i should call this a keyword
 	//syntax.elements[TAB].match = "\\t++";
 	//syntax.elements[COMMENT].match = "#.*?$";
@@ -393,7 +408,10 @@ create_bash_syntax :: () -> Syntax {
 	], "|");
 	syntax.elements[STRING1].match = "\"(?:[^\"\\\\]|\\\\.)*(?:\"|$)";
 	syntax.elements[STRING2].match = "'(?:[^'\\\\]|\\\\.)*(?:'|$)";
-	syntax.elements[OTHER1].match = "`(?:[^`\\\\]|\\\\.)*(?:`|$)";
+	syntax.elements[OTHER1].match = join(.. .[
+		"`(?:[^`\\\\]|\\\\.)*(?:`|$)",
+		"\\$\\(.*?\\)",
+	], "|");
 	syntax.elements[OTHER2].match = "\\$[A-Za-z_]+"; // variable.. idk if i should call this a keyword
 	syntax.elements[TAB].match = "\\t++";
 	syntax.elements[COMMENT].match = "#.*?$";
@@ -676,6 +694,12 @@ create_c_syntax :: () -> Syntax {
 		"virtual",
 		"class",
 		"new",
+		"namespace",
+		"explicit",
+		"template",
+		"typename",
+		//
+		"and", "or", "xor", "not", // hehe
 		// csharp:
 		"sealed",
 		"readonly",
@@ -700,6 +724,8 @@ create_c_syntax :: () -> Syntax {
 		"u?int16_t",
 		"u?int32_t",
 		"u?int64_t",
+		"s?size_t",
+		"auto", // is this a type or a keywork
 		// csharp
 		"string",
 	], "|");
@@ -714,7 +740,7 @@ create_c_syntax :: () -> Syntax {
 	], "|");
 	syntax.elements[DIRECTIVE].match = "#\\w*(?:\\,\\w*+)*+";
 	syntax.elements[STRING1].match = "\"(?:[^\"\\\\]|\\\\.)*(?:\"|$)";
-	syntax.elements[STRING2].match = "<(?:[^>\\\\]|\\\\.)*>\\w*$";
+	syntax.elements[STRING2].match = "<(?:[^>\\\\ ]|\\\\.)*>\\w*$";
 	syntax.elements[NUMBER1].match = "\\d+(?:\\.\\d+)?f?";
 	syntax.elements[NUMBER2].match = "0[xbo][0-9a-fA-F_]*";
 	syntax.elements[TAB].match = "\\t++";
