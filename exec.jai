@@ -881,8 +881,22 @@ add_all_execs :: () {
 		ok := execute_exec_from_args(.[ arg0, arg1 ]);
 		return ok;
 	}, aliases = .[ "as" ] );
-	add_exec("archer", #run make_exec_proc((path: string) -> bool {
-		win := make_archer_window(ifx path else ".");
+	add_exec("archer", #run make_exec_proc((_path: string) -> bool {
+		path := _path;
+		if !path {
+			// if current dir is at '/tmp/something.txt', we open archer at '/tmp'
+			// (should do that with ff/fzf too)
+			if context.buffer_window.buffer.kind == .DIRECTORY {
+				path = context.buffer_window.buffer.path;
+			} else {
+				ok, left, right := split_from_right(context.buffer_window.buffer.path, #char "/");
+				if ok
+					path = left;
+				else
+					path = ".";
+			}
+		}
+		win := make_archer_window(path);
 		return win != null;
 	}, ""));
 	add_exec("fullscreen", () -> bool {
