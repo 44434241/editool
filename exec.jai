@@ -59,6 +59,10 @@ _execute_exec :: (__: *String_Command_State, ___: *Window) {
 		return;
 	if args[0].count && args[0][0] == #char "#"
 		return;
+	ok := execute_exec_from_args(args);
+}
+
+execute_exec_from_args :: (args: []string) -> bool {
 	// exec commands should be part of Exec...
 	for context.edit.exec_commands {
 		if it.name == args[0] || array_find(it.name_aliases, args[0]) {
@@ -66,10 +70,11 @@ _execute_exec :: (__: *String_Command_State, ___: *Window) {
 			if res.status != .OK {
 				edit_alert("Command '%' failed: %\n", args[0], res.error_message);
 			}
-			return;
+			return res.status == .OK;
 		}
 	}
 	edit_alert("Command '%' not found", args[0]);
+	return false;
 }
 
 add_exec :: (name: string, $_proc: $T, aliases: []string = .[]) {
@@ -142,6 +147,29 @@ make_exec_proc :: ($proc: (_: $T0, _: $T1) -> bool) -> Exec_Command.Proc {
 		arg0 := _convert_arg(0, args[0], T0);
 		arg1 := _convert_arg(1, args[1], T1);
 		ok := proc(arg0, arg1);
+		if !ok {
+			return .{
+				status = .ERROR,
+				error_message = "Something went wrong!",
+			};
+		} 
+		return .{};
+	}
+	return inner_proc;
+}
+
+make_exec_proc :: ($proc: (_: $T0, _: $T1, _: $T2) -> bool) -> Exec_Command.Proc {
+	inner_proc :: (args: []string) -> Exec_Result {
+		if args.count != 3 {
+			return .{
+				status = .ERROR,
+				error_message = tprint("Argument count mismatch (% -> %)", args.count, 3)
+			};
+		}
+		arg0 := _convert_arg(0, args[0], T0);
+		arg1 := _convert_arg(1, args[1], T1);
+		arg2 := _convert_arg(2, args[2], T2);
+		ok := proc(arg0, arg1, arg2);
 		if !ok {
 			return .{
 				status = .ERROR,
@@ -372,15 +400,8 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 			}
 		}
 	};
-	Select_Mode :: enum {
-		OPEN;
-		TAB;
-		VERTICAL;
-		FLOAT;
-		WINDOW; // ctrl + b
-	}
-	select_proc :: (in: Command_In, _select_mode: Select_Mode) -> Command_Result {
-		select_mode := _select_mode;
+	select_proc :: (in: Command_In, _window_select_mode: Window_Select_Mode) -> Command_Result {
+		window_select_mode := _window_select_mode;
 		win := context.buffer_window;
 		state := win.user_data.(*Fzf_State);
 		if state.items.count == 0 {
@@ -395,8 +416,9 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 		hold(buf);
 		defer release(buf);
 		//
-		new_win: *Window;
-		if select_mode == .WINDOW {
+		new_win: *Window = select_or_create_buffer_window(buf, window_select_mode);
+		/*
+		if Window_Select_Mode == .WINDOW {
 			// reverse iterate, select the most recent one!
 			for < buf.windows {
 				if _root_of(it) == context.edit.root {
@@ -405,17 +427,17 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 				} 
 			}
 			if new_win == null
-				select_mode = .TAB;
+				Window_Select_Mode = .TAB;
 		}
-		if select_mode == .OPEN {
+		if Window_Select_Mode == .OPEN {
 			new_win = get_window(.BUFFER, not_floating = true, not_special = true);
 			change_buffer(new_win, buf);
-		} else if select_mode == .FLOAT {
+		} else if Window_Select_Mode == .FLOAT {
 			new_win = create_buffer_window(null, buf, flags = .TEMP_FLOATING, is_hidden = true);
 			set_floating(new_win);
-		} else if select_mode == .TAB || select_mode == .VERTICAL { 
+		} else if Window_Select_Mode == .TAB || Window_Select_Mode == .VERTICAL { 
 			parent := get_window(.CONTAINER, not_floating = true);
-			need_container: Window.Container_Mode = ifx select_mode == .TAB then .TABBED else .VERTICAL;
+			need_container: Window.Container_Mode = ifx Window_Select_Mode == .TAB then .TABBED else .VERTICAL;
 			while parent != null {
 				if parent.container_mode == need_container
 					break;
@@ -435,6 +457,7 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 			}
 			new_win = create_buffer_window(parent, buf);
 		}
+		*/
 		assert(new_win != null); // shouldnt fail, but logic here is kinda all over the place
 		destroy_window(state.parent, force = true);
 		//
@@ -448,27 +471,27 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 	add_command(*input_win.commands, 
 		keybind = "\n",
 		mode = .COMMAND | .INSERT,
-		proc = #bake_arguments select_proc(_select_mode = .OPEN),
+		proc = #bake_arguments select_proc(_window_select_mode = .OPEN),
 	);
 	add_command(*input_win.commands, 
 		keybind = .[ 20 ], // ctrl + t
 		mode = .COMMAND | .INSERT,
-		proc = #bake_arguments select_proc(_select_mode = .TAB),
+		proc = #bake_arguments select_proc(_window_select_mode = .TAB),
 	);
 	add_command(*input_win.commands,
 		keybind = .[ 22 ], // ctrl + v
 		mode = .COMMAND | .INSERT,
-		proc = #bake_arguments select_proc(_select_mode = .VERTICAL),
+		proc = #bake_arguments select_proc(_window_select_mode = .VERTICAL),
 	);
 	add_command(*input_win.commands,
 		keybind = .[ 6 ], // ctrl + f (not sure...)
 		mode = .COMMAND | .INSERT,
-		proc = #bake_arguments select_proc(_select_mode = .FLOAT),
+		proc = #bake_arguments select_proc(_window_select_mode = .FLOAT),
 	);
 	add_command(*input_win.commands,
 		keybind = .[ 2 ], // ctrl + b
 		mode = .COMMAND | .INSERT,
-		proc = #bake_arguments select_proc(_select_mode = .WINDOW),
+		proc = #bake_arguments select_proc(_window_select_mode = .WINDOW),
 	);
 	add_command(*input_win.commands, 
 		keybind = .[ KEY_ESCAPE ],
@@ -556,8 +579,8 @@ add_all_execs :: () {
 		buf := get_path_buffer(filename); // doesn't fail?
 		if !buf
 			return false;
-		change_buffer(context.buffer_window, buf);
-		return true;
+		win := select_or_create_buffer_window(buf, .OPEN);
+		return win != null;
 	});
 	// default argument is true here
 	add_exec("caps", (caps: Buffer.Caps, add: bool) -> bool {
@@ -786,9 +809,9 @@ add_all_execs :: () {
 		buf := create_man_buffer(page);
 		if !buf
 			return false;
-		win := get_window(.BUFFER, not_floating = true);
-		change_buffer(win, buf);
-		return true;
+		win := select_or_create_buffer_window(buf, .FLOAT); // .FLOAT by default for man?
+		//change_buffer(win, buf);
+		return win != null;
 	});
 	add_exec("fman", (page: string) -> bool {
 		buf := create_man_buffer(page);
@@ -800,6 +823,12 @@ add_all_execs :: () {
 		select_window(win);
 		return true;
 	});
+	add_exec("openas", (mode: Window_Select_Mode, arg0: string, arg1: string) -> bool {
+		edit_alert("w % '% %'", mode, arg0, arg1);
+		push_pop_window_select_mode(mode);
+		ok := execute_exec_from_args(.[ arg0, arg1 ]);
+		return ok;
+	}, aliases = .[ "as" ] );
 }
 
 #scope_file

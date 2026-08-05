@@ -184,6 +184,13 @@ get_syntax_for_filetype :: (filetype: string) -> *Syntax {
 			syntax.filetype = "dockerfile";
 			array_add(*context.edit.syntaxes, syntax);
 		}
+		{
+			// Markdown
+			syntax := New(Syntax);
+			syntax.* = create_markdown_syntax();
+			syntax.filetype = "md";
+			array_add(*context.edit.syntaxes, syntax);
+		}
 	}
 	for context.edit.syntaxes {
 		if it.filetype == filetype
@@ -332,6 +339,22 @@ create_dockerfile_syntax :: () -> Syntax {
 	//syntax.elements[NUMBER1].match = "\\d+(?:\\.\\d+)?";
 	syntax.elements[TAB].match = "\\t++";
 	syntax.elements[COMMENT].match = "#.*?$";
+	//
+	compile_syntax(*syntax);
+	return syntax;
+}
+
+create_markdown_syntax :: () -> Syntax {
+	using syntax: Syntax;
+	// these are bash builtins?
+	syntax.elements[TYPE1].match = "^#.*$"; // whatever, using type highlighting
+	//syntax.elements[STRING1].match = "\"(?:[^\"\\\\]|\\\\.)*(?:\"|$)";
+	//syntax.elements[STRING2].match = "'(?:[^'\\\\]|\\\\.)*(?:'|$)";
+	syntax.elements[STRING2].match = "\\[.*?\\]\\(.*?\\)";
+	syntax.elements[OTHER1].match = "`(?:[^`\\\\]|\\\\.)*(?:`|$)";
+	//syntax.elements[OTHER2].match = "\\$[A-Za-z_]+"; // variable.. idk if i should call this a keyword
+	//syntax.elements[TAB].match = "\\t++";
+	//syntax.elements[COMMENT].match = "#.*?$";
 	//
 	compile_syntax(*syntax);
 	return syntax;

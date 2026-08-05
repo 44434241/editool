@@ -331,7 +331,7 @@ _draw_window :: (using win: *Window) {
 					break;
 				info := _get_char_info(ch);
 				mod: Char_Mod = ---;
-				if it_index < user_mods.count {
+				if ch_idx < user_mods.count {
 					mod = user_mods[ch_idx];
 				} else {
 					Initialize(*mod);
@@ -567,6 +567,80 @@ create_buffer_window :: (parent: *Window, buf: *Buffer, flags: Window.Flags = .N
 		select_window(win);
 	}
 	return win;
+}
+
+select_or_create_buffer_window :: (buf: *Buffer, default_mode: Window_Select_Mode = .NONE) -> (win: *Window, error_message: string) {
+	mode := context.edit.window_select_mode;
+	if mode == .NONE
+		mode = default_mode;
+	if mode == .NONE
+		mode = .OPEN;
+	win: *Window;
+	if mode == .WINDOW {
+		// reverse iterate, select the most recent one!
+		for < buf.windows {
+			if _root_of(it) == context.edit.root {
+				win = buf.windows[0];
+				break;
+			} 
+		}
+		if win == null
+			mode = .TAB;
+	}
+	if mode == {
+		case .OPEN;
+			win = get_window(.BUFFER, not_floating = true, not_special = true);
+			change_buffer(win, buf);
+		case .FLOAT;
+			win = create_buffer_window(null, buf, flags = .TEMP_FLOATING, is_hidden = true);
+			set_floating(win);
+		case .TAB; #through;
+		case .VERTICAL;
+			parent := get_window(.CONTAINER, not_floating = true);
+			need_container: Window.Container_Mode = ifx mode == .TAB then .TABBED else .VERTICAL;
+			while parent != null {
+				if parent.container_mode == need_container
+					break;
+				parent = parent.parent;
+			}
+			if parent == null {
+				if context.buffer_window != null {
+					buf_win := get_window(.BUFFER, not_floating = true);
+					parent = nest_window(buf_win.parent, buf_win, select = true, mode = need_container);
+				}
+			}
+			if parent == null {
+				return null, "Can't create container";
+			}
+			win = create_buffer_window(parent, buf);
+	}
+	assert(win != null);
+	return win, "";
+}
+
+// window select (or open) mode
+Window_Select_Mode :: enum {
+	NONE :: 0;
+	OPEN;
+	WINDOW_; // @CompilerBug whatever man, just make this normal and you'll see the problem
+	WINDOW :: WINDOW_; // ctrl + b - maybe find a window with that buffer, and select that instead
+	TAB;
+	VERTICAL;
+	FLOAT;
+	// 
+	O :: OPEN;
+	T :: TAB;
+	V :: VERTICAL;
+	F :: FLOAT;
+	B :: WINDOW; // WINDOW !!, @CompilerBug can't use just WINDOW, probably because of the curses import
+}
+
+push_pop_window_select_mode :: (mode: Window_Select_Mode) #expand {
+	old := context.edit.window_select_mode;
+	context.edit.window_select_mode = mode;
+	`defer {
+		context.edit.window_select_mode = old;
+	}
 }
 
 add_flags :: (win: *Window, flags: Window.Flags) {

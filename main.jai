@@ -204,6 +204,7 @@ Editool :: struct {
 	clipboard: Clipboard;
 	//
 	marks: [..]Mark; // i want global marks !
+	window_select_mode: Window_Select_Mode = .NONE;
 	//
 	#if X11_ENABLE {
 		x11_window: X11.Window;
