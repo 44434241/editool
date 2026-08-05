@@ -36,6 +36,7 @@
 // - search find to end of match... need to figure out some way to way to create a command for that? maybe a motion for the current "search match"?
 // - way to delete marks...
 // - having proper multiple-line tab names, or maybe find a way to shorten them?
+// - path bug thing: when path is `/hello` and opening `/hello-bye/something`, filename fucks up
 //
 // I want these a lil more
 // - kinda like "go to previous jump" thing, but instead go to latest jump that is in a different file!

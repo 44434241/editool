@@ -211,6 +211,7 @@ path_to_filetype :: (_path: string) -> string {
 		case "PKGBUILD"; #through;
 		case "fstab"; #through;
 		case ".env"; #through;
+		case "sudoers"; #through; // yes i know you're supposed to use visudo
 		case "sshd_config";
 			return "config";
 	} 
@@ -222,6 +223,7 @@ path_to_filetype :: (_path: string) -> string {
 			case "yaml"; #through;
 			case "yml"; #through;
 			case "example"; #through;
+			case "defs"; #through;
 			case "conf";
 				return "config"; 
 			case "cs"; #through; // C# !!
