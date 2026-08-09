@@ -261,7 +261,6 @@ path_to_filetype :: (_path: string) -> string {
 			case "frag"; #through;
 			case "vert";
 				return "glsl";
-					return "glsl";
 			case "toml"; #through;
 			case "yaml"; #through;
 			case "yml"; #through;
