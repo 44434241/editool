@@ -39,6 +39,9 @@
 // - utf-8 viewing works, but not editing. whatever, just keeping a note of that!
 // - wouldn't be that difficult to make search preview even those who are not part of the motion !
 // - fullscreen should acctually fullscreen?
+// - doing a bluteooth thing could be good !
+// - maybe backspace working in command mode?
+// - dotify
 //
 //
 // I want these a lil more
