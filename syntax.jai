@@ -208,6 +208,13 @@ get_syntax_for_filetype :: (filetype: string) -> *Syntax {
 			syntax.filetype = "rs";
 			array_add(*context.edit.syntaxes, syntax);
 		}
+		{
+			// go
+			syntax := New(Syntax);
+			syntax.* = create_go_syntax();
+			syntax.filetype = "go";
+			array_add(*context.edit.syntaxes, syntax);
+		}
 	}
 	for context.edit.syntaxes {
 		if it.filetype == filetype
@@ -805,6 +812,67 @@ create_c_syntax :: () -> Syntax {
 	syntax.elements[MULTILINE_COMMENT].multiline_start = "/\\*";
 	syntax.elements[MULTILINE_COMMENT].multiline_end = "\\*/";
 	syntax.elements[CONSTANT2].match = "(?:\\$?[A-Z_][A-Z_\\d]*+|\\$\\w++)";
+	//
+	compile_syntax(*syntax);
+	return syntax;
+}
+
+// this is a mishmash of c/cpp/c# because i cbf to create a separate syntax for all of them
+create_go_syntax :: () -> Syntax {
+	using syntax: Syntax;
+	elements[KEYWORD1].match = #run join(.. .[
+		"for",
+		"while",
+		"if",
+		"else",
+		"then",
+		"return",
+		"continue",
+		"break",
+		"struct",
+		"interface",
+		"const",
+		"type",
+		"case",
+		"switch",
+		"default",
+		"var",
+		"import",
+		"package",
+		"func",
+		"range",
+		"chan", // ???
+	], "|");
+	syntax.elements[TYPE1].match = #run join(.. .[
+		// int
+		"u?int(?:8|16|32|64)?",
+		"float(?:32|64)?",
+		"bool",
+		"error", // ?
+		"string",
+		"byte",
+	], "|");
+	syntax.elements[CONSTANT1].match = #run join(.. .[
+		"true",
+		"false",
+		"nil",
+		"__\\w+", // special underscore things 
+	], "|");
+	syntax.elements[KEYWORD2].match = #run join(.. .[
+		"new",
+		"make",
+	], "|");
+	//syntax.elements[DIRECTIVE].match = "#\\w*(?:\\,\\w*+)*+";
+	syntax.elements[STRING1].match = "\"(?:[^\"\\\\]|\\\\.)*(?:\"|$)";
+	syntax.elements[NUMBER1].match = "\\d+(?:\\.\\d+)?f?";
+	syntax.elements[NUMBER2].match = "0[xbo][0-9a-fA-F_]*";
+	syntax.elements[TAB].match = "\\t++";
+	syntax.elements[COMMENT].match = "//.*?$";
+	syntax.elements[MULTILINE_COMMENT].match_kind = .MULTILINE_START_END;
+	syntax.elements[MULTILINE_COMMENT].multiline_start = "/\\*";
+	syntax.elements[MULTILINE_COMMENT].multiline_end = "\\*/";
+	syntax.elements[CONSTANT2].match = "(?:\\$?[A-Z_][A-Z_\\d]*+|\\$\\w++)";
+	syntax.elements[OTHER1].match = "`(?:[^`\\\\]|\\\\.)*(?:`|$)";
 	//
 	compile_syntax(*syntax);
 	return syntax;
