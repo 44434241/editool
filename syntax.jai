@@ -201,6 +201,13 @@ get_syntax_for_filetype :: (filetype: string) -> *Syntax {
 			syntax.filetype = "html";
 			array_add(*context.edit.syntaxes, syntax);
 		}
+		{
+			// rust
+			syntax := New(Syntax);
+			syntax.* = create_rust_syntax();
+			syntax.filetype = "rs";
+			array_add(*context.edit.syntaxes, syntax);
+		}
 	}
 	for context.edit.syntaxes {
 		if it.filetype == filetype
@@ -248,6 +255,8 @@ path_to_filetype :: (_path: string) -> string {
 			case "yml"; #through;
 			case "example"; #through;
 			case "defs"; #through;
+			case "lock"; #through;
+			case "json"; #through; 
 			case "conf";
 				return "config"; 
 			case "cs"; #through; // C# !!
@@ -290,6 +299,10 @@ create_config_syntax :: () -> Syntax {
 	syntax.elements[TAB].match = "\\t++";
 	syntax.elements[COMMENT].match = "#.*?$";
 	syntax.elements[NUMBER1].match = "\\d+(?:\\.\\d+)*"; // supports '1.0.0.0'
+	syntax.elements[CONSTANT1].match = #run join(.. .[
+		"true",
+		"false",
+	], "|");
 	//
 	compile_syntax(*syntax);
 	return syntax;
@@ -791,6 +804,106 @@ create_c_syntax :: () -> Syntax {
 	syntax.elements[MULTILINE_COMMENT].match_kind = .MULTILINE_START_END;
 	syntax.elements[MULTILINE_COMMENT].multiline_start = "/\\*";
 	syntax.elements[MULTILINE_COMMENT].multiline_end = "\\*/";
+	syntax.elements[CONSTANT2].match = "(?:\\$?[A-Z_][A-Z_\\d]*+|\\$\\w++)";
+	//
+	compile_syntax(*syntax);
+	return syntax;
+}
+
+// this is a mishmash of c/cpp/c# because i cbf to create a separate syntax for all of them
+create_rust_syntax :: () -> Syntax {
+	using syntax: Syntax;
+	elements[KEYWORD1].match = #run join(.. .[
+		"for",
+		"while",
+		"if",
+		"else",
+		// "return", // ?
+		"continue",
+		"break",
+		"struct",
+		//
+		//"do",
+		//"static",
+		"const",
+		"async",
+		"fn",
+		"mut",
+		"match",
+		"mod", 
+		"in",
+		"move",
+		//"extern",
+		//"case",
+		//"switch",
+		//"default",
+		//"inline",
+		//"enum",
+		"pub",
+		//"private",
+		//"protected",
+		//"new",
+		//"namespace",
+		//
+		// csharp:
+		"let",
+		// java:
+		"impl",
+		"use",
+		"type",
+		"as",
+		"where",
+		"static",
+	], "|");
+	syntax.elements[TYPE1].match = #run join(.. .[
+		// int
+		"u(:?32|16|8|size)",
+		"bool",
+		"char",
+		"str",
+		/*
+		"void",
+		"unsigned",
+		"char",
+		"short",
+		"float",
+		"double",
+		"u?int8_t",
+		"u?int16_t",
+		"u?int32_t",
+		"u?int64_t",
+		"s?size_t",
+		// csharp
+		//"string",
+		// java
+		"boolean",
+		//"String",
+		*/
+	], "|");
+	syntax.elements[CONSTANT1].match = #run join(.. .[
+		"true",
+		"false",
+		"null",
+		"__\\w+", // special underscore things?
+	], "|");
+	syntax.elements[KEYWORD2].match = #run join(.. .[
+		"new",
+		"self",
+	], "|");
+	syntax.elements[TYPE2].match = "_?[A-Z]\\w*[a-z]\\w*+";
+	syntax.elements[DIRECTIVE].match = "#\\w*(?:\\,\\w*+)*+";
+	syntax.elements[STRING1].match = "\"(?:[^\"\\\\]|\\\\.)*(?:\"|$)";
+	syntax.elements[STRING2].match = "'.'";
+	syntax.elements[NUMBER1].match = "\\d+(?:\\.\\d+)?f?";
+	syntax.elements[NUMBER2].match = "0[xbo][0-9a-fA-F_]*";
+	syntax.elements[TAB].match = "\\t++";
+	syntax.elements[COMMENT].match = "//.*?$";
+	syntax.elements[MULTILINE_COMMENT].match_kind = .MULTILINE_START_END;
+	syntax.elements[MULTILINE_COMMENT].multiline_start = "/\\*";
+	syntax.elements[MULTILINE_COMMENT].multiline_end = "\\*/";
+	syntax.elements[MULTILINE_STRING].match_kind = .MULTILINE_START_END;
+	syntax.elements[MULTILINE_STRING].multiline_start = "r\"";
+	syntax.elements[MULTILINE_STRING].multiline_end = "\"";
 	syntax.elements[CONSTANT2].match = "(?:\\$?[A-Z_][A-Z_\\d]*+|\\$\\w++)";
 	//
 	compile_syntax(*syntax);

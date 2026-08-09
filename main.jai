@@ -806,7 +806,10 @@ main :: () {
 				if ok
 					path = left;
 			}
-				set_working_directory(path);
+			for * filenames {
+				it.* = normalize_path(it.*);
+			}
+			set_working_directory(path);
 		} 
 		if !filenames {
 			if context.edit.should_print_path
