@@ -257,6 +257,11 @@ path_to_filetype :: (_path: string) -> string {
 	if idx2 >= 0 {
 		ext := advance(path, idx2+1);
 		if ext == {
+			case "comp"; #through;
+			case "frag"; #through;
+			case "vert";
+				return "glsl";
+					return "glsl";
 			case "toml"; #through;
 			case "yaml"; #through;
 			case "yml"; #through;
@@ -796,6 +801,7 @@ create_c_syntax :: () -> Syntax {
 		"true",
 		"false",
 		"null",
+		"nullptr",
 		"__\\w+", // special underscore things (c/cpp)
 	], "|");
 	syntax.elements[KEYWORD2].match = #run join(.. .[
