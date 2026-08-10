@@ -448,6 +448,7 @@ find_buffer :: (id: BufId) -> *Buffer {
 
 // this doesn't have lines, so it'll crash if u dont add any
 create_custom_buffer :: (flags: Buffer.Flags = .NONE) -> *Buffer {
+	time_this("create_custom_buffer");
 	buf := _new_buffer(.CUSTOM);
 	buf.syntax = get_syntax_for_filename("");
 	buf.flags |= flags;

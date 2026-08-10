@@ -42,6 +42,8 @@
 // - doing a bluteooth thing could be good !
 // - maybe backspace working in command mode?
 // - dotify
+// - can use /dev/tty instead of finding tty file?
+// - refresh man page
 //
 //
 // I want these a lil more
@@ -579,7 +581,6 @@ editool_init :: (logfile := "") {
 		init_file_logger(logfile);
 	else
 		context.logger = _1984_logger;
-	time_this("Editool init");
 	// ncurses
 	if context.edit.dont_mess_with_tty {
 		initscr();
@@ -635,6 +636,8 @@ editool_init :: (logfile := "") {
 	context.assertion_failed = editool_assertion_failed;
 	// x11
 	#if X11_ENABLE {
+		// This x11 initialization takes the most time during initialization.
+		// Second most is compiling the regexes.
 		if !context.edit.no_x11 {
 			X11.init_global_display();
 			// invisible window for clipboard ..
@@ -647,6 +650,103 @@ editool_init :: (logfile := "") {
 	context.print_style.default_format_struct.use_newlines_if_long_form = true;
 }
 
+editool_deinit :: () {
+	update_cursor_thing(normal = true);
+	endwin();
+	if context.edit.should_print_path {
+		print("%\n", context.edit.buffer_window.buffer.path);
+	}
+}
+
+editool_tick :: () {
+	// cringe
+	//using,only(edit) context;
+	edit: *Editool = *context.edit;
+	// housekeeping here + before drawing
+	if edit.should_reset_edit_mode {
+		// (i don't know how relavant this is tbh..)
+		_change_edit_mode(edit.mode, force = true);
+		edit.should_reset_edit_mode = false;
+	}
+	for edit.floating_windows {
+		if it.flags & .TEMP_FLOATING && _root_of(get_selected_window_of_kind(it.kind)) != it {
+			destroy_window(it, force = true);
+		}
+	}
+	windows_to_destroy := edit.windows_to_destroy;
+	windows_to_force_destroy := edit.windows_to_force_destroy;
+	edit.windows_to_destroy = default_of([..]*Window);
+	edit.windows_to_force_destroy = default_of([..]*Window);
+	// CRASH: when destroying a window and then buffer, something in buffers pool reset() fails (null pointer)
+	for windows_to_destroy {
+		_destroy_window(it);
+	}
+	for windows_to_force_destroy {
+		_destroy_window(it, force = true);
+	}
+	array_reset(*windows_to_destroy);
+	array_reset(*windows_to_force_destroy);
+	{
+		buffers_to_destroy: [..]BufId;
+		buffers_to_destroy.allocator = temp;
+		for context.edit.buffers {
+			if can_destroy_buffer(it)
+				array_add(*buffers_to_destroy, it.id);
+		}
+		for buffers_to_destroy {
+			buf := find_buffer(it);
+			if buf {
+				destroy_buffer(buf);
+			}
+		}
+	}
+	//
+	ch: s32 = ERR;
+	if context.edit.added_chars.count != 0 {
+		ch = context.edit.added_chars[0];
+		array_ordered_remove_by_index(*context.edit.added_chars, 0);
+	} else {
+		// If there's a ch ready, we don't bother redrawing, to make shit faster
+		ch = getch(); 
+		if ch == ERR {
+			// But if there's no ch, we redraw and then wait..
+			// This makes some things faster ! like pasting or fzf searching
+			draw_windows_recursive(context.edit.root);
+			//
+			update_cursor_thing(normal = edit.mode != .INSERT); // thin
+			//
+			#if X11_ENABLE {
+				last_is_caps := is_caps_lock();
+			}
+			while true {
+				#if X11_ENABLE {
+					if !context.edit.no_x11 {
+						Input.update_window_events();
+					}
+					if last_is_caps != is_caps_lock() {
+						// when caps lock changes, we force redraw ..
+						break;
+					}
+				}
+				ch = getch();
+				//log("queried ch");
+				if ch != ERR {
+					break;
+				}
+				sleep_milliseconds(1);
+			}
+			context.edit.time += 1;
+		}
+	} 
+	if is_printable_char(ch)
+		log("got ch: % (%)\n", ch, string.{ data = cast(*u8)*ch, count = 1 });
+	else
+		log("got ch: % ((%))\n", ch, to_string(keyname(ch)));
+	if ch != ERR
+		handle_char(ch);
+	reset_temporary_storage();
+}
+
 // ...
 update_cursor_thing :: (normal: bool) {
 	s := ifx normal then "\x1b[2 q" else "\x1b[6 q";
@@ -654,14 +754,6 @@ update_cursor_thing :: (normal: bool) {
 	cnt := fwrite(s.data, 1, xx s.count, context.edit.tty_file);
 	fflush(context.edit.tty_file); // looks like i need to do this..
 	log("cnt = %\n", cnt);
-}
-
-editool_deinit :: () {
-	update_cursor_thing(true);
-	endwin();
-	if context.edit.should_print_path {
-		print("%\n", context.edit.buffer_window.buffer.path);
-	}
 }
 
 do_the_image_color_thing :: () {
@@ -751,6 +843,7 @@ main :: () {
 	filenames.allocator = temp;
 	logfile := "";
 	is_archer := false;
+	should_early_quit := false;
 	{
 		args := get_command_line_arguments();
 		idx := 1;
@@ -793,7 +886,26 @@ main :: () {
 					dir := args[idx];
 					idx += 1;
 					set_working_directory(dir);
+				case "--run";
+					idx += 1;
+					if idx >= args.count {
+						print("Missing --run argument\n", to_standard_error = true);
+						exit(1);
+					}
+					thing_to_insert := replace(args[idx], "\\n", "\n"); // eeesshh
+					// bit lazy, but inserting tty chars works even before initializing editool..
+					insert_tty_input(thing_to_insert);
+					idx += 1;
+				case "--quit";
+					// assuming no --run ..
+					idx += 1;
+					should_early_quit = true;
 				case;
+					if starts_with(args[idx], "--") {
+						print("Bad argument: %", args[idx]);
+						exit(1);
+						return;
+					}
 					array_add(*filenames, args[idx]);
 					idx += 1;
 			}
@@ -825,6 +937,7 @@ main :: () {
 		if is_archer && filenames.count != 1 {
 			editool_deinit();
 			print("Error: --archer must have at most 1 directory", to_standard_error = true);
+			exit(1);
 			return;
 		}
 		for filenames {
@@ -856,103 +969,23 @@ main :: () {
 	}
 	//
 	while true {
-		using,only(edit) context;
-		{
-			// housekeeping here + before drawing
-			if edit.should_reset_edit_mode {
-				_change_edit_mode(edit.mode, force = true);
-				edit.should_reset_edit_mode = false;
-			}
-			for edit.floating_windows {
-				if it.flags & .TEMP_FLOATING && _root_of(get_selected_window_of_kind(it.kind)) != it {
-					destroy_window(it, force = true);
-				}
-			}
-			windows_to_destroy := edit.windows_to_destroy;
-			windows_to_force_destroy := edit.windows_to_force_destroy;
-			edit.windows_to_destroy = default_of([..]*Window);
-			edit.windows_to_force_destroy = default_of([..]*Window);
-			// CRASH: when destroying a window and then buffer, something in buffers pool reset() fails (null pointer)
-			for windows_to_destroy {
-				_destroy_window(it);
-			}
-			for windows_to_force_destroy {
-				_destroy_window(it, force = true);
-			}
-			array_reset(*windows_to_destroy);
-			array_reset(*windows_to_force_destroy);
-			{
-				buffers_to_destroy: [..]BufId;
-				buffers_to_destroy.allocator = temp;
-				for context.edit.buffers {
-					if can_destroy_buffer(it)
-						array_add(*buffers_to_destroy, it.id);
-				}
-				for buffers_to_destroy {
-					buf := find_buffer(it);
-					if buf {
-						destroy_buffer(buf);
-					}
-				}
-			}
+		if should_early_quit && context.edit.added_chars.count == 0 {
+			break;
 		}
-		ch: s32 = ERR;
-		if context.edit.added_chars.count != 0 {
-			ch = context.edit.added_chars[0];
-			array_ordered_remove_by_index(*context.edit.added_chars, 0);
-		} else {
-			// If there's a ch ready, we don't bother redrawing, to make shit faster
-			ch = getch(); 
-			if ch == ERR {
-				// But if there's no ch, we redraw and then wait..
-				// This makes some things faster ! like pasting or fzf searching
-				draw_windows_recursive(context.edit.root);
-				//update_cursor_thing(normal = edit.mode != .INSERT); // thin
-				update_cursor_thing(normal = edit.mode != .INSERT); // thin
-				// Old: If a floating window exists, and the current buffer is not the floating window, then stop floating it.
-				// New: If the current buffer is not floating, unfloat all floating windows.
-				// New New: idk, neither?
-				/*
-				if !edit.buffer_window.is_floating {
-					for array_copy(edit.floating_windows,, allocator=temp) {
-						set_floating(it, false);
-					}
-				}*/
-				#if X11_ENABLE {
-					last_is_caps := is_caps_lock();
-				}
-				while true {
-					#if X11_ENABLE {
-						if !context.edit.no_x11 {
-							Input.update_window_events();
-						}
-						if last_is_caps != is_caps_lock() {
-							// when caps lock changes, we force redraw ..
-							break;
-						}
-					}
-					ch = getch();
-					//log("queried ch");
-					if ch != ERR {
-						break;
-					}
-					sleep_milliseconds(1);
-				}
-				context.edit.time += 1;
-			}
-		} 
-		if is_printable_char(ch)
-			log("got ch: % (%)\n", ch, string.{ data = cast(*u8)*ch, count = 1 });
-		else
-			log("got ch: % ((%))\n", ch, to_string(keyname(ch)));
-		if ch != ERR
-			handle_char(ch);
-		reset_temporary_storage();
+		editool_tick();
 		if context.edit.should_quit
 			break;
 	}
 	editool_deinit();
 }
+
+/*
+trace :: () #expand {
+	log("[trace-enter] %()\n", #procedure_name(#this));
+	`_trace_start_time := current_time_monotonic();
+	`defer log("[trace-exit ] %(), % sec\n", #procedure_name(#this), to_float64_seconds(current_time_monotonic() - _trace_start_time));
+}
+*/
 
 #load "utils.jai";
 #load "motions.jai";

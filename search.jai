@@ -51,6 +51,7 @@ Search_State :: struct {
 }
 
 editool_search_init :: () {
+	time_this("editool_search_init");
 	using context.search;
 	string_commands_init(*context.search, "Search");
 	add_command(*buffer.commands, 
@@ -452,7 +453,6 @@ _update_search_matches :: (win: *Window) -> bool {
 	if status == .ERROR {
 		return false;
 	}
-	time_this("Search");
 	//text: [..]u8;
 	//indices: [..]Position;
 	//text.allocator, indices.allocator = temp;

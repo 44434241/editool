@@ -104,124 +104,65 @@ Syntax :: struct {
 
 get_syntax_for_filetype :: (filetype: string) -> *Syntax {
 	if context.edit.syntaxes.count == 0 {
-		{
-			// Empty
-			syntax := New(Syntax);
-			syntax.filetype = "";
-			array_add(*context.edit.syntaxes, syntax);
+		// Empty (default)
+		syntax := New(Syntax);
+		syntax.filetype = "";
+		array_add(*context.edit.syntaxes, syntax);
+	}
+	// only create on demand !
+	create_syntax_if_possible :: (filetype: string) -> *Syntax {
+		syntax: *Syntax = null;
+		if filetype == {
+			case "jai";
+				syntax = create_jai_syntax();
+			case "sh";
+				syntax = create_bash_syntax();
+			case "mike";
+				syntax = create_mike_syntax();
+			case "config";
+				syntax = create_config_syntax();
+			case "glsl";
+				syntax = create_glsl_syntax();
+			case "c";
+				syntax = create_c_syntax();
+			case "lua";
+				syntax = create_lua_syntax();
+			case "vim";
+				syntax = create_vim_syntax();
+			case "py";
+				syntax = create_python_syntax();
+			case "obj";
+				syntax = create_obj_syntax();
+			case "dockerfile";
+				syntax = create_dockerfile_syntax();
+			case "md";
+				syntax = create_markdown_syntax();
+			case "html";
+				syntax = create_html_syntax();
+			case "rs";
+				syntax = create_rust_syntax();
+			case "go";
+				syntax = create_go_syntax();
+			case "asm";
+				syntax = create_asm_syntax();
 		}
-		{
-			// Jai
-			syntax := New(Syntax);
-			syntax.* = create_jai_syntax();
-			syntax.filetype = "jai";
-			array_add(*context.edit.syntaxes, syntax);
+		if syntax {
+			syntax.filetype = filetype;
 		}
-		{
-			// Bash
-			syntax := New(Syntax);
-			syntax.* = create_bash_syntax();
-			syntax.filetype = "sh";
-			array_add(*context.edit.syntaxes, syntax);
-		}
-		{
-			// Mike
-			syntax := New(Syntax);
-			syntax.* = create_mike_syntax();
-			syntax.filetype = "mike";
-			array_add(*context.edit.syntaxes, syntax);
-		}
-		{
-			// Config
-			syntax := New(Syntax);
-			syntax.* = create_config_syntax();
-			syntax.filetype = "config";
-			array_add(*context.edit.syntaxes, syntax);
-		}
-		{
-			// Glsl
-			syntax := New(Syntax);
-			syntax.* = create_glsl_syntax();
-			syntax.filetype = "glsl";
-			array_add(*context.edit.syntaxes, syntax);
-		}
-		{
-			// C
-			syntax := New(Syntax);
-			syntax.* = create_c_syntax();
-			syntax.filetype = "c";
-			array_add(*context.edit.syntaxes, syntax);
-		}
-		{
-			// Lua
-			syntax := New(Syntax);
-			syntax.* = create_lua_syntax();
-			syntax.filetype = "lua";
-			array_add(*context.edit.syntaxes, syntax);
-		}
-		{
-			// Vim
-			syntax := New(Syntax);
-			syntax.* = create_vim_syntax();
-			syntax.filetype = "vim";
-			array_add(*context.edit.syntaxes, syntax);
-		}
-		{
-			// Python
-			syntax := New(Syntax);
-			syntax.* = create_python_syntax();
-			syntax.filetype = "py";
-			array_add(*context.edit.syntaxes, syntax);
-		}
-		{
-			// Obj
-			syntax := New(Syntax);
-			syntax.* = create_obj_syntax();
-			syntax.filetype = "obj";
-			array_add(*context.edit.syntaxes, syntax);
-		}
-		{
-			// Dockerfile
-			syntax := New(Syntax);
-			syntax.* = create_dockerfile_syntax();
-			syntax.filetype = "dockerfile";
-			array_add(*context.edit.syntaxes, syntax);
-		}
-		{
-			// Markdown
-			syntax := New(Syntax);
-			syntax.* = create_markdown_syntax();
-			syntax.filetype = "md";
-			array_add(*context.edit.syntaxes, syntax);
-		}
-		{
-			// html
-			syntax := New(Syntax);
-			syntax.* = create_html_syntax();
-			syntax.filetype = "html";
-			array_add(*context.edit.syntaxes, syntax);
-		}
-		{
-			// rust
-			syntax := New(Syntax);
-			syntax.* = create_rust_syntax();
-			syntax.filetype = "rs";
-			array_add(*context.edit.syntaxes, syntax);
-		}
-		{
-			// go
-			syntax := New(Syntax);
-			syntax.* = create_go_syntax();
-			syntax.filetype = "go";
-			array_add(*context.edit.syntaxes, syntax);
-		}
+		return syntax;
 	}
 	for context.edit.syntaxes {
 		if it.filetype == filetype
 			return it;
 	}
+	created_syntax := create_syntax_if_possible(filetype);
+	if created_syntax {
+		array_add(*context.edit.syntaxes, created_syntax);
+		return created_syntax;
+	}
 	return context.edit.syntaxes[0];
 }
+
 
 get_syntax_for_filename :: (filename: string) -> *Syntax {
 	return get_syntax_for_filetype(path_to_filetype(filename));
@@ -286,8 +227,19 @@ path_to_filetype :: (_path: string) -> string {
 	}
 }
 
-create_mike_syntax :: () -> Syntax {
-	using syntax: Syntax;
+create_asm_syntax :: () -> *Syntax {
+	using syntax: *Syntax = New(Syntax);
+	syntax.elements[COMMENT].match = ";.*?$";
+	syntax.elements[TAB].match = "\\t++";
+	syntax.elements[STRING2].match = "'(?:[^'\\\\]|\\\\.)*(?:'|$)";
+	syntax.elements[KEYWORD2].match = "\\w++";
+	syntax.elements[KEYWORD2].match_suffix = ": *$";
+	compile_syntax(syntax);
+	return syntax;
+}
+
+create_mike_syntax :: () -> *Syntax {
+	using syntax: *Syntax = New(Syntax);
 	syntax.elements[STRING1].match = "\"(?:[^\"\\\\]|\\\\.)*(?:\"|$)";
 	syntax.elements[NUMBER1].match = "\\d+(?:\\.\\d+)?";
 	syntax.elements[TAB].match = "\\t++";
@@ -299,12 +251,12 @@ create_mike_syntax :: () -> Syntax {
 	//
 	syntax.elements[CONSTANT1].flags |= .IS_WORD;
 	syntax.elements[NUMBER1].flags |= .IS_WORD;
-	compile_syntax(*syntax);
+	compile_syntax(syntax);
 	return syntax;
 }
 
-create_config_syntax :: () -> Syntax {
-	using syntax: Syntax;
+create_config_syntax :: () -> *Syntax {
+	using syntax: *Syntax = New(Syntax);
 	syntax.elements[STRING1].match = "\"(?:[^\"\\\\]|\\\\.)*(?:\"|$)";
 	syntax.elements[STRING2].match = "'(?:[^'\\\\]|\\\\.)*(?:'|$)";
 	syntax.elements[TAB].match = "\\t++";
@@ -315,12 +267,12 @@ create_config_syntax :: () -> Syntax {
 		"false",
 	], "|");
 	//
-	compile_syntax(*syntax);
+	compile_syntax(syntax);
 	return syntax;
 }
 
-create_obj_syntax :: () -> Syntax {
-	using syntax: Syntax;
+create_obj_syntax :: () -> *Syntax {
+	using syntax: *Syntax = New(Syntax);
 	syntax.elements[COMMENT].match = "#.*?$";
 	syntax.elements[NUMBER1].match = "\\d+(?:\\.\\d+)*"; // supports '1.0.0.0'
 	elements[KEYWORD1].match = #run join(.. .[
@@ -334,12 +286,12 @@ create_obj_syntax :: () -> Syntax {
 		"^o",
 	], "|");
 	//
-	compile_syntax(*syntax);
+	compile_syntax(syntax);
 	return syntax;
 }
 
-create_dockerfile_syntax :: () -> Syntax {
-	using syntax: Syntax;
+create_dockerfile_syntax :: () -> *Syntax {
+	using syntax: *Syntax = New(Syntax);
 	kw :: (s: string) -> string #compile_time {
 		buf := NewArray(s.count * 4 + 1, u8);
 		buf[0] = #char "^";
@@ -382,12 +334,12 @@ create_dockerfile_syntax :: () -> Syntax {
 	syntax.elements[TAB].match = "\\t++";
 	syntax.elements[COMMENT].match = "#.*?$";
 	//
-	compile_syntax(*syntax);
+	compile_syntax(syntax);
 	return syntax;
 }
 
-create_markdown_syntax :: () -> Syntax {
-	using syntax: Syntax;
+create_markdown_syntax :: () -> *Syntax {
+	using syntax: *Syntax = New(Syntax);
 	// these are bash builtins?
 	syntax.elements[TYPE1].match = "^#.*$"; // whatever, using type highlighting
 	//syntax.elements[STRING1].match = "\"(?:[^\"\\\\]|\\\\.)*(?:\"|$)";
@@ -404,12 +356,12 @@ create_markdown_syntax :: () -> Syntax {
 	//syntax.elements[TAB].match = "\\t++";
 	//syntax.elements[COMMENT].match = "#.*?$";
 	//
-	compile_syntax(*syntax);
+	compile_syntax(syntax);
 	return syntax;
 }
 
-create_bash_syntax :: () -> Syntax {
-	using syntax: Syntax;
+create_bash_syntax :: () -> *Syntax {
+	using syntax: *Syntax = New(Syntax);
 	elements[KEYWORD1].match = #run join(.. .[
 		"alias",
 		"export",
@@ -449,12 +401,12 @@ create_bash_syntax :: () -> Syntax {
 	syntax.elements[TAB].match = "\\t++";
 	syntax.elements[COMMENT].match = "#.*?$";
 	//
-	compile_syntax(*syntax);
+	compile_syntax(syntax);
 	return syntax;
 }
 
-create_vim_syntax :: () -> Syntax {
-	using syntax: Syntax;
+create_vim_syntax :: () -> *Syntax {
+	using syntax: *Syntax = New(Syntax);
 	elements[KEYWORD1].match = #run join(.. .[
 		"fu!",
 		"func!",
@@ -495,12 +447,12 @@ create_vim_syntax :: () -> Syntax {
 	//
 	syntax.elements[NUMBER1].match = "\\d+(?:\\.\\d+)?";
 	syntax.elements[COMMENT].match = "\".*?$";
-	compile_syntax(*syntax);
+	compile_syntax(syntax);
 	return syntax;
 }
 
-create_lua_syntax :: () -> Syntax {
-	using syntax: Syntax;
+create_lua_syntax :: () -> *Syntax {
+	using syntax: *Syntax = New(Syntax);
 	elements[KEYWORD1].match = #run join(.. .[
 		"local",
 		"function",
@@ -528,12 +480,12 @@ create_lua_syntax :: () -> Syntax {
 	//
 	syntax.elements[NUMBER1].match = "\\d+(?:\\.\\d+)?";
 	syntax.elements[COMMENT].match = "--.*?$";
-	compile_syntax(*syntax);
+	compile_syntax(syntax);
 	return syntax;
 }
 
-create_glsl_syntax :: () -> Syntax {
-	using syntax: Syntax;
+create_glsl_syntax :: () -> *Syntax {
+	using syntax: *Syntax = New(Syntax);
 	elements[KEYWORD1].match = #run join(.. .[
 		"for",
 		"while",
@@ -615,12 +567,12 @@ create_glsl_syntax :: () -> Syntax {
 	syntax.elements[MULTILINE_COMMENT].multiline_end = "\\*/";
 	syntax.elements[CONSTANT2].match = "(?:\\$?[A-Z_][A-Z_\\d]*+|\\$\\w++)";
 	//
-	compile_syntax(*syntax);
+	compile_syntax(syntax);
 	return syntax;
 }
 
-create_python_syntax :: () -> Syntax {
-	using syntax: Syntax;
+create_python_syntax :: () -> *Syntax {
+	using syntax: *Syntax = New(Syntax);
 	elements[KEYWORD1].match = #run join(.. .[
 		"for",
 		"while",
@@ -691,12 +643,12 @@ create_python_syntax :: () -> Syntax {
 	syntax.elements[NOTE].match = "@[\\w\\.]+";
 	syntax.elements[TYPE2].match = "_?[A-Z]\\w*[a-z]\\w*+"; // most python types are LikeThis
 	//
-	compile_syntax(*syntax);
+	compile_syntax(syntax);
 	return syntax;
 }
 
-create_html_syntax :: () -> Syntax {
-	using syntax: Syntax;
+create_html_syntax :: () -> *Syntax {
+	using syntax: *Syntax = New(Syntax);
 	elements[TYPE1].match_prefix = "</?";
 	elements[TYPE1].match = "\\w++";
 	elements[TYPE1].match_suffix = ">?";
@@ -713,13 +665,13 @@ create_html_syntax :: () -> Syntax {
 	elements[TYPE1].flags &= ~.IS_WORD;
 	elements[KEYWORD1].flags &= ~.IS_WORD;
 	elements[KEYWORD2].flags &= ~.IS_WORD;
-	compile_syntax(*syntax);
+	compile_syntax(syntax);
 	return syntax;
 }
 
 // this is a mishmash of c/cpp/c# because i cbf to create a separate syntax for all of them
-create_c_syntax :: () -> Syntax {
-	using syntax: Syntax;
+create_c_syntax :: () -> *Syntax {
+	using syntax: *Syntax = New(Syntax);
 	elements[KEYWORD1].match = #run join(.. .[
 		"for",
 		"while",
@@ -818,13 +770,13 @@ create_c_syntax :: () -> Syntax {
 	syntax.elements[MULTILINE_COMMENT].multiline_end = "\\*/";
 	syntax.elements[CONSTANT2].match = "(?:\\$?[A-Z_][A-Z_\\d]*+|\\$\\w++)";
 	//
-	compile_syntax(*syntax);
+	compile_syntax(syntax);
 	return syntax;
 }
 
 // this is a mishmash of c/cpp/c# because i cbf to create a separate syntax for all of them
-create_go_syntax :: () -> Syntax {
-	using syntax: Syntax;
+create_go_syntax :: () -> *Syntax {
+	using syntax: *Syntax = New(Syntax);
 	elements[KEYWORD1].match = #run join(.. .[
 		"for",
 		"while",
@@ -879,13 +831,13 @@ create_go_syntax :: () -> Syntax {
 	syntax.elements[CONSTANT2].match = "(?:\\$?[A-Z_][A-Z_\\d]*+|\\$\\w++)";
 	syntax.elements[OTHER1].match = "`(?:[^`\\\\]|\\\\.)*(?:`|$)";
 	//
-	compile_syntax(*syntax);
+	compile_syntax(syntax);
 	return syntax;
 }
 
 // this is a mishmash of c/cpp/c# because i cbf to create a separate syntax for all of them
-create_rust_syntax :: () -> Syntax {
-	using syntax: Syntax;
+create_rust_syntax :: () -> *Syntax {
+	using syntax: *Syntax = New(Syntax);
 	elements[KEYWORD1].match = #run join(.. .[
 		"for",
 		"while",
@@ -979,12 +931,12 @@ create_rust_syntax :: () -> Syntax {
 	syntax.elements[MULTILINE_STRING].multiline_end = "\"";
 	syntax.elements[CONSTANT2].match = "(?:\\$?[A-Z_][A-Z_\\d]*+|\\$\\w++)";
 	//
-	compile_syntax(*syntax);
+	compile_syntax(syntax);
 	return syntax;
 }
 
-create_jai_syntax :: () -> Syntax {
-	using syntax: Syntax;
+create_jai_syntax :: () -> *Syntax {
+	using syntax: *Syntax = New(Syntax);
 	elements[KEYWORD1].match = #run join(.. .[
 		"for",
 		"while",
@@ -1064,7 +1016,7 @@ create_jai_syntax :: () -> Syntax {
 	//syntax.elements[EOL_SPACE].match = " +$";
 	//syntax.elements[EOL_SPACE].replace = "-";
 	//
-	compile_syntax(*syntax);
+	compile_syntax(syntax);
 	return syntax;
 }
 
@@ -1100,7 +1052,7 @@ compile_syntax :: (using syntax: *Syntax) {
 		}
 		print(*builder, ")");
 		regex_str = builder_to_string(*builder,, allocator=temp);
-		#if 1 {
+		#if 0 {
 			log("regex str: %\n", regex_str);
 		}
 	}
