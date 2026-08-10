@@ -44,6 +44,7 @@
 // - dotify
 // - can use /dev/tty instead of finding tty file?
 // - refresh man page
+// - in archer, can't destroy left window??? (probably related to fixed size..?)
 //
 //
 // I want these a lil more
@@ -362,6 +363,7 @@ keybind_matches_start :: (keybind: Keybind, chars: []s32) -> bool {
 }
 
 do_some_extra_stuff_to_the_buffer_colors :: (win: *Window) {
+	// utf-8 code: 9604, for character whos botton is foreground, and top is background
 	buf: *Buffer = win.buffer;
 	{
 		//using context.edit.search_state;
@@ -527,9 +529,13 @@ handle_char :: (ch: s32) {
 // still dont get colors, but this is stable for now 
 // alright, this looks ok.. 6 + 1 bg colors
 COLOR_BG_LAST :: 6; // some nonsense happens when bg color > 8
-COLOR_FG_LAST :: 20;
+COLOR_FG_LAST :: 15; // 
 COLOR_BG_COUNT :: COLOR_BG_LAST + 2;
 COLOR_FG_COUNT :: COLOR_FG_LAST + 2;
+
+// 136?
+MAIN_PAIR_COUNT :: COLOR_BG_COUNT * COLOR_BG_COUNT;
+// then [136,236) will be used for images
 
 
 // returns pair index, still need to call COLOR_PAIR
@@ -581,6 +587,7 @@ editool_init :: (logfile := "") {
 		init_file_logger(logfile);
 	else
 		context.logger = _1984_logger;
+	time_this("editool init");
 	// ncurses
 	if context.edit.dont_mess_with_tty {
 		initscr();
@@ -615,7 +622,7 @@ editool_init :: (logfile := "") {
 				assert(fg2 == fg);
 				assert(bg2 == bg);
 				//log_error("init color % (%, %) (% %)", idx, fg, bg, fg2, bg2);
-				ret := init_pair(xx idx, xx fg, xx bg);
+				ret := init_extended_pair(xx idx, xx fg, xx bg);
 				if ret == ERR {
 					log_error("can't init color % (%, %)", idx, fg, bg);
 					editool_deinit();
@@ -628,7 +635,8 @@ editool_init :: (logfile := "") {
 	add_all_motions();
 	add_all_commands();
 	add_all_execs();
-	create_container_window(null, stdscr); // root!
+	create_container_window(null, stdscr, mode = .TAB); // root!
+	context.edit.container_window = context.edit.root;
 	editool_search_init();
 	editool_exec_init();
 	change_edit_mode(.COMMAND);
@@ -757,70 +765,61 @@ update_cursor_thing :: (normal: bool) {
 }
 
 do_the_image_color_thing :: () {
-	file_bytes, ok := read_entire_file("/tmp/screenshot.png");
+	editool_init();
+	#if 0 {
+		COLOR_NUMBER :: 255;
+		init_extended_color(COLOR_NUMBER, 1000, 1000, 500);
+		init_extended_pair(100, COLOR_NUMBER, -1);
+		attr_set(0, 100, null);
+		addch(#char "a");
+		refresh();
+	}
+	file_bytes, ok := read_entire_file("/home/user/catimg/test.png");
 	assert(ok);
-	desired_channels := 3;
+	desired_channels :: 3;
 	image_width, image_height, channels: s32;
 	_image_bytes: *u8 = stbi_load_from_memory(file_bytes.data, xx file_bytes.count,
-				*image_width, *image_height, *channels, desired_channels = 3);
+				*image_width, *image_height, *channels, desired_channels = desired_channels);
 	image_bytes := []u8.{ data = _image_bytes, count = image_width * image_height * channels };
-	assert(channels == desired_channels);
-	Color :: struct {
-		x, y, z: float;
-	}
-	dp: []Color = NewArray((image_width+1) * (image_height+1), Color, initialized = false,, allocator=temp);
-	{
-		// calculate dp
-		operator - :: (l: Color, r: Color) -> Color {
-			return .{
-				l.x - r.x,
-				l.y - r.y,
-				l.z - r.z,
-			};
-		}
-		operator + :: (l: Color, r: Color) -> Color {
-			return .{
-				l.x + r.x,
-				l.y + r.y,
-				l.z + r.z,
-			};
-		}
-		at_dp :: (x: int, y: int) -> *Color #expand {
-			return *dp[x*(image_height+1)+y];
-		}
-		at_image :: (x: int, y: int) -> Color #expand {
-			byte_offset := (x*image_height+y) * channels;
-			here_bytes: []u8 = advance(image_bytes, byte_offset);
-			return .{
-				cast(float)here_bytes[0] / 255.0,
-				cast(float)here_bytes[1] / 255.0,
-				cast(float)here_bytes[2] / 255.0,
-			};
-		}
-		for x: 0..image_width {
-			for y: 0..image_height {
-				if x == 0 && y == 0 {
-					at_dp(x, y).* = .{0, 0, 0};
-				} else if x == 0 {
-					at_dp(x, y).* = at_dp(x, y-1).* + at_image(x, y-1);
-				} else if y == 0 {
-					at_dp(x, y).* = at_dp(x-1, y).* + at_image(x-1, y);
-				} else {
-					at_dp(x, y).* = at_dp(x-1, y).* + at_dp(x, y-1).* - at_dp(x-1, y-1).* + at_image(x-1, y-1);
+	//image_colors := []u32.{ data = cast(*u32)_image_bytes, count = image_width * image_height };
+	assert(channels >= desired_channels, "channels = %", channels);
+	pair_index: s16 = MAIN_PAIR_COUNT;
+	color_index: s32 = 100;
+	color_map: Table(u32, s16); // from s32 rgba color to color index
+	// table_find_or_add :: find_or_add !!!
+	for y: 0..image_height-1 {
+		move(y, 0);
+		for x: 0..image_width-1 {
+			base_image_index := ((y * image_width)+x)*channels;
+			r := image_bytes[base_image_index+0];
+			g := image_bytes[base_image_index+1];
+			b := image_bytes[base_image_index+2];
+			col32: u32 = r + g << 8 + b << 16;
+			val: *s16 = find_or_add(*color_map, col32);
+			if val.* == 0 {
+				val.* = pair_index;
+				color_index += 1;
+				//
+				to_col :: (col: u8) -> s32 {
+					return xx ((col * 1000) / 255);
 				}
+				init_extended_color(color_index, to_col(r), to_col(g), to_col(b));
+				init_extended_pair(pair_index, -1, color_index);
+				//
+				val.* = pair_index;
+				pair_index += 1;
+				color_index += 1;
 			}
+			attr_set(0, val.*, null);
+			addch(#char " ");
+			addch(#char " ");
 		}
 	}
+	refresh();
 	//
-	WANTED_WIDTH :: 232;
-	WANTED_HEIGHT :: 50;
-	ratio_x := cast(float)image_width / cast(float)WANTED_WIDTH;
-	ratio_y := cast(float)image_height / cast(float)WANTED_HEIGHT;
-	ratio := min(ratio_x, ratio_y);
-	assert(ratio < 1);
-	width := cast(int)(cast(float)WANTED_WIDTH * ratio);
-	height := cast(int)(cast(float)WANTED_HEIGHT * ratio);
-	//
+	while getch() == ERR {}
+	editool_deinit();
+	return;
 }
 
 main :: () {
@@ -1010,6 +1009,7 @@ trace :: () #expand {
 #import "POSIX";
 #import "Unicode";
 #import "stb_image";
+#import "Hash_Table";
 
 Uniform :: #import "uniform";
 

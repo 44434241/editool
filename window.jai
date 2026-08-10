@@ -77,6 +77,7 @@ Window :: struct {
 		NONE :: 0;
 		BUFFER; // contains buffer
 		CONTAINER; // contains more windows
+		PLACEHOLDER; // doesn't have anything, will be replaced with a different window soon?
 	}
 	Flags :: enum_flags {
 		BORDER; // maybe this should belong to buffer? <- or propogate somehow
@@ -176,6 +177,7 @@ draw_windows_recursive :: (win: *Window) {
 	if win.kind == .CONTAINER {
 		if win.container_mode == .TABBED {
 			if win.children.count != 0 {
+				log("active child: % (%)", win.active_child, win.children.count);
 				draw_windows_recursive(win.children[win.active_child]);
 			} else {
 				edit_error("Tabbed container has no children..");
@@ -463,11 +465,71 @@ _draw_window :: (using win: *Window) {
 
 SECOND_ROOT :: true;
 
+// yes, this initializes root....
+// (doesn't refresh window size !)
+_new_window :: (kind: Window.Kind, parent: *Window, flags: Window.Flags,
+			nwindow: *WINDOW, is_hidden: bool) -> *Window {
+	if is_hidden {
+		assert(parent == null);
+	} 
+	win := New(Window);
+	array_add(*context.edit.windows, win);
+	set_allocators(*win.pool);
+	win.commands.allocator = allocator_of(*win.pool);
+	win.id = next_window_id();
+	win.is_hidden = is_hidden;
+	win.flags = flags;
+	win.kind = kind;
+	win.parent = parent;
+	//
+	if !is_hidden && parent == null {
+		assert(kind == .CONTAINER, "only container can be root");
+		if context.edit.root == null {
+			context.edit.root = win;
+			win.is_root = true;
+			win.is_any_root = true;
+			assert(nwindow != null);
+		} else if context.edit.second_root == null {
+			context.edit.second_root = win;
+			win.is_second_root = true;
+			win.is_any_root = true;
+			nwindow = derwin(stdscr, 1, 1, 0, 0);
+		} else {
+			assert(false);
+		}
+	}
+	if nwindow == null {
+		if parent != null {
+			// just auto create nwindow..
+			nwindow = derwin(parent.nwindow, 1, 1, 0, 0);
+		} else {
+			// Assumes that it belongs to root, will need to remove this later..
+			assert(context.edit.root != null);
+			nwindow = derwin(context.edit.root.nwindow, 1, 1, 0, 0);
+		}
+	}
+	win.nwindow = nwindow;
+	if win.is_root {
+		#if SECOND_ROOT { // true
+			assert(context.edit.second_root == null);
+			tmp := create_container_window(null, null, mode = .TABBED);
+			//remove_flags(tmp, .CONTAINER_TABS);
+			assert(tmp == context.edit.second_root);
+		}
+	}
+	if parent != null {
+		array_add(*parent.children, win);
+	} 
+	return win;
+}
+
 // U CREATE ROOT WITH THIS
 create_container_window :: (parent: *Window, nwindow: *WINDOW = null, flags: Window.Flags = .NONE, mode: Window.Container_Mode = .VERTICAL, is_hidden := false) -> *Window {
+	/*
 	if is_hidden {
 		assert(parent == null);
 	}
+	//
 	win := New(Window);
 	set_allocators(*win.pool);
 	win.commands.allocator = allocator_of(*win.pool);
@@ -477,8 +539,12 @@ create_container_window :: (parent: *Window, nwindow: *WINDOW = null, flags: Win
 	win.flags |= .CONTAINER_TABS;
 	array_add(*context.edit.windows, win);
 	win.kind = .CONTAINER;
+	*/
+	win := _new_window(.CONTAINER, parent, flags | .CONTAINER_TABS, nwindow, is_hidden = is_hidden);
 	win.container_mode = mode;
+	/*
 	win.parent = parent;
+	//
 	if !is_hidden && parent == null {
 		if context.edit.root == null {
 			context.edit.root = win;
@@ -512,8 +578,8 @@ create_container_window :: (parent: *Window, nwindow: *WINDOW = null, flags: Win
 			assert(tmp == context.edit.second_root);
 		}
 	}
+	*/
 	if parent != null {
-		array_add(*parent.children, win);
 		refresh_window_size(parent);
 	} else {
 		refresh_window_size(win);
@@ -521,15 +587,34 @@ create_container_window :: (parent: *Window, nwindow: *WINDOW = null, flags: Win
 	return win;
 }
 
+create_placeholder_window :: (parent: *Window, flags: Window.Flags = .NONE, is_hidden := false) -> *Window {
+	win := _new_window(.PLACEHOLDER, parent, flags, null, is_hidden = is_hidden);
+	if win.parent != null
+		refresh_window_size(win.parent);
+	return win;
+}
+
 // screen is explicitly initialized i guess?
 create_buffer_window :: (parent: *Window, buf: *Buffer, flags: Window.Flags = .NONE, nwindow: *WINDOW = null,
 			select := true, is_hidden := false) -> *Window {
+	/*
 	if !is_hidden {
 		assert(parent != null, "Only container window can be root");
 	} else {
 		// hidden window might have a parent?? idk
 		assert(parent == null);
 	}
+	*/
+	//
+	if buf.kind == .FILE || buf.kind == .DIRECTORY {
+		flags |= .BUFFER_MARKS;
+		flags |= .BUFFER_LINE_NO;
+		flags |= .BUFFER_STATUS_LINE;
+	}
+	win := _new_window(.BUFFER, parent, flags, nwindow, is_hidden = is_hidden);
+	win.buffer = buf;
+	array_add(*buf.windows, win); // HMMMM
+	/*
 	win := New(Window);
 	set_allocators(*win.pool);
 	win.commands.allocator = allocator_of(*win.pool);
@@ -559,8 +644,8 @@ create_buffer_window :: (parent: *Window, buf: *Buffer, flags: Window.Flags = .N
 	//
 	array_add(*buf.windows, win); // HMMMM
 	move_cursor(win, .{0, 0});
+	*/
 	if parent != null {
-		array_add(*parent.children, win);
 		refresh_window_size(parent);
 	}
 	if select {
@@ -570,30 +655,50 @@ create_buffer_window :: (parent: *Window, buf: *Buffer, flags: Window.Flags = .N
 }
 
 select_or_create_buffer_window :: (buf: *Buffer, default_mode: Window_Select_Mode = .NONE) -> (win: *Window, error_message: string) {
+	// overriding default mode..
 	mode := context.edit.window_select_mode;
-	if mode == .NONE
-		mode = default_mode;
-	if mode == .NONE
-		mode = .OPEN;
-	win: *Window;
-	if mode == .WINDOW {
-		// reverse iterate, select the most recent one!
-		for < buf.windows {
-			if _root_of(it) == context.edit.root {
-				win = buf.windows[0];
-				break;
-			} 
+	{
+		// buffer specific modes... for now !
+		if mode == .NONE
+			mode = default_mode;
+		if mode == .WINDOW {
+			for < buf.windows {
+				if _root_of(it) == context.edit.root {
+					return it, "";
+				} 
+			}
+			mode = .OPEN;
 		}
-		if win == null
-			mode = .TAB;
-	}
-	if mode == {
-		case .OPEN;
-			win = get_window(.BUFFER, not_floating = true, not_special = true);
+		if mode == .OPEN {
+			win := get_window(.BUFFER, not_floating = true, not_special = true);
 			change_buffer(win, buf);
+			return win, "";
+		}
+	}
+	win, msg := select_or_create_placeholder_window(mode);
+	if win {
+		convert_into_buffer_window(win, buf);
+	}
+	return win, msg;
+}
+
+select_or_create_placeholder_window :: (default_mode: Window_Select_Mode = .NONE) -> (win: *Window, error_message: string) {
+	mode := context.edit.window_select_mode;
+	if mode == .NONE || mode == .WINDOW || mode == .OPEN
+		mode = default_mode;
+	if mode == .NONE || mode == .WINDOW || mode == .OPEN
+		mode = .TAB;
+	win: *Window;
+	if mode == {
 		case .FLOAT;
-			win = create_buffer_window(null, buf, flags = .TEMP_FLOATING, is_hidden = true);
-			set_floating(win);
+			#if 1 { // testing
+				win = create_placeholder_window(null, .TEMP_FLOATING, is_hidden = true);
+				set_floating(win);
+				//convert_into_buffer_window(win, buf);
+			} else {
+				win = create_buffer_window(null, buf, flags = .TEMP_FLOATING, is_hidden = true);
+				set_floating(win);
+			}
 		case .TAB; #through;
 		case .VERTICAL;
 			parent := get_window(.CONTAINER, not_floating = true);
@@ -612,7 +717,14 @@ select_or_create_buffer_window :: (buf: *Buffer, default_mode: Window_Select_Mod
 			if parent == null {
 				return null, "Can't create container";
 			}
-			win = create_buffer_window(parent, buf);
+			#if 1 { // testing
+				win = create_placeholder_window(parent);
+				//convert_into_buffer_window(win, buf);
+			} else {
+				win = create_buffer_window(parent, buf);
+			}
+		case;
+			assert(false, "bad mode %", mode);
 	}
 	assert(win != null);
 	return win, "";
@@ -690,6 +802,7 @@ release :: (thing: *$T/.[Window, Buffer]) {
 	thing.ref_count -= 1;
 }
 
+// right now force only is relavant if the window is floating..
 can_destroy_window :: (win: *Window, force: bool = false, even_if_only_child := false) -> bool, string {
 	if win.is_root
 		return false, "Can't destroy root";
@@ -744,10 +857,13 @@ _destroy_window :: (win: *Window, force: bool = false, even_only_child := false)
 	should_unselect := is_selected;
 	if win.parent != null {
 		idx := _child_index_of_window(win);
-		if idx < win.parent.active_child || idx + 1 == win.parent.children.count {
+		assert(idx >= 0);
+		//log("% % %", idx, win.parent.active_child, win.parent.children.count);
+		if idx < win.parent.active_child || (idx == win.parent.active_child && idx + 1 == win.parent.children.count) {
 			win.parent.active_child -= 1;
 		}
 		array_ordered_remove_by_index(*win.parent.children, idx);
+		//log("% % %", idx, win.parent.active_child, win.parent.children.count);
 	} 
 	{
 		ok, idx := array_find(context.edit.windows, win);
@@ -1014,6 +1130,27 @@ select_window :: (win: *Window) {
 		win.parent.active_child = _child_index_of_window(win);
 		win = win.parent;
 	}
+}
+
+convert_into_buffer_window :: (win: *Window, buf: *Buffer) {
+	assert(win.kind == .PLACEHOLDER);
+	if buf.kind == .FILE || buf.kind == .DIRECTORY {
+		win.flags |= .BUFFER_MARKS;
+		win.flags |= .BUFFER_LINE_NO;
+		win.flags |= .BUFFER_STATUS_LINE;
+	}
+	win.kind = .BUFFER;
+	win.buffer = buf;
+	array_add(*buf.windows, win); 
+	refresh_window_size(win);
+}
+
+convert_into_container_window :: (win: *Window, mode: Window.Container_Mode) {
+	assert(win != null);
+	assert(win.kind == .PLACEHOLDER);
+	win.kind = .CONTAINER;
+	win.container_mode = mode;
+	refresh_window_size(win);
 }
 
 change_buffer :: (win: *Window, id: BufId) -> bool {

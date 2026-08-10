@@ -68,10 +68,11 @@ Char_Mod :: struct {
 	attributes: s32;
 	fg: s8 = 0;
 	bg: s8 = -1;
+	pair_index: u8 = 0; // if != 0, then use this instead of fg/bg
 }
 
 as_ncurses_attribute :: (mod: Char_Mod) -> s32 {
-	col := color_fg_bg(mod.fg, mod.bg);
+	col: s32 = ifx mod.pair_index != 0 then mod.pair_index else color_fg_bg(mod.fg, mod.bg);
 	ret: s32 = 0;
 	ret |= COLOR_PAIR(col);
 	ret |= mod.attributes;

@@ -533,7 +533,6 @@ split_line :: (using win: *Window, pos: Position, indent: bool = true) {
 	});
 	if ok && indent {
 		indent := _indentation_of_next_line(buffer, curr_y);
-		edit_alert("indent (%): %", pos.y, indent);
 		indent_chars := NewArray(indent, u8, initialized = false,, allocator=temp);
 		for * indent_chars
 			it.* = #char "\t";

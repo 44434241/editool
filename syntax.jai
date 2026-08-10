@@ -103,6 +103,7 @@ Syntax :: struct {
 }
 
 get_syntax_for_filetype :: (filetype: string) -> *Syntax {
+	assert(context.allocator.proc == context.default_allocator.proc);
 	if context.edit.syntaxes.count == 0 {
 		// Empty (default)
 		syntax := New(Syntax);
@@ -147,7 +148,7 @@ get_syntax_for_filetype :: (filetype: string) -> *Syntax {
 				syntax = create_asm_syntax();
 		}
 		if syntax {
-			syntax.filetype = filetype;
+			syntax.filetype = copy_string(filetype);
 		}
 		return syntax;
 	}
@@ -165,6 +166,8 @@ get_syntax_for_filetype :: (filetype: string) -> *Syntax {
 
 
 get_syntax_for_filename :: (filename: string) -> *Syntax {
+	log("filename gotten");
+	log("filename: %", filename);
 	return get_syntax_for_filetype(path_to_filetype(filename));
 }
 
@@ -710,6 +713,7 @@ create_c_syntax :: () -> *Syntax {
 		"finally",
 		"catch",
 		"final",
+		"volatile",
 		//
 		"and", "or", "xor", "not", // hehe
 		// csharp:
@@ -761,6 +765,7 @@ create_c_syntax :: () -> *Syntax {
 	syntax.elements[DIRECTIVE].match = "#\\w*(?:\\,\\w*+)*+";
 	syntax.elements[STRING1].match = "\"(?:[^\"\\\\]|\\\\.)*(?:\"|$)";
 	syntax.elements[STRING2].match = "<(?:[^>\\\\ ]|\\\\.)*>\\w*$";
+	syntax.elements[STRING3].match = "'(?:[^'\\\\]|\\\\.)*(?:'|$)";
 	syntax.elements[NUMBER1].match = "\\d+(?:\\.\\d+)?f?";
 	syntax.elements[NUMBER2].match = "0[xbo][0-9a-fA-F_]*";
 	syntax.elements[TAB].match = "\\t++";

@@ -142,6 +142,7 @@ _insert_string_into_buffer_as_from_file :: (buf: *Buffer, file_str: string, this
 
 // filename must be normalized
 _create_buffer_from_file :: (filename: string, flags: Buffer.Flags, file_flags: Buffer.File_Flags) -> *Buffer {
+	assert(context.allocator.proc == context.default_allocator.proc);
 	time_this("Create buffer");
 	buf := _new_buffer(.FILE);
 	buf.caps = .ALL;
