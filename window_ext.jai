@@ -379,6 +379,17 @@ _write_normal_string :: (using win: *Window, pos: Position, s: string) {
 	});
 }
 
+// no funky characters!
+_write_normal_string :: (buf: *Buffer, pos: Position, s: string) {
+	execute_buffer_operation(null, buf, .{
+		kind = .INSERT_CHARS,
+		y = pos.y,
+		x = pos.x,
+		count = s.count,
+		chars = cast([]u8)s,
+	});
+}
+
 write_char :: (using win: *Window, ch: u8) {
 	write_char(win, cursor.position, ch);
 }
@@ -538,6 +549,15 @@ split_line :: (using win: *Window, pos: Position, indent: bool = true) {
 			it.* = #char "\t";
 		_write_normal_string(win, .{0, curr_y+1}, cast(string)indent_chars);
 	}
+}
+
+split_line :: (buf: *Buffer, pos: Position) {
+	// probably validated...
+	ok := execute_buffer_operation(null, buf, .{
+		kind = .SPLIT_LINE,
+		y = pos.y,
+		x = pos.x,
+	});
 }
 
 // EDITING BUFFER COMMANDS END

@@ -10,7 +10,7 @@ Line :: struct {
 	chars: [..]u8;
 	#overlay(chars.count) count: int;
 	#overlay(chars) as_string: string;
-	CONST_MOD_COUNT :: 128 + 64 + 64; // looks like the best for memory
+	CONST_MOD_COUNT :: (128 + 64 + 64) * 2; // looks like the best for memory
 	// ^ for some lines it not enough... idk
 	//
 	mods: [CONST_MOD_COUNT]Char_Mod = ---; // A LOT !
@@ -68,10 +68,26 @@ Char_Mod :: struct {
 	attributes: s32;
 	fg: s8 = 0;
 	bg: s8 = -1;
-	pair_index: u8 = 0; // if != 0, then use this instead of fg/bg
+	pair_index: u16 = 0; // if != 0, then use this instead of fg/bg
 }
 
-as_ncurses_attribute :: (mod: Char_Mod) -> s32 {
+
+char_mod_on :: (win: *WINDOW, mod: Char_Mod) {
+	if mod.pair_index != 0 {
+		wattr_set(win, xx mod.attributes, xx mod.pair_index, null);
+	} else {
+		attr := as_ncurses_attribute(mod);
+		wattrset(win, attr);
+	}
+}
+
+char_mod_off :: (win: *WINDOW) {
+	wattrset(win, 0);
+	//wattr_set(win, 0, 0, null);
+}
+
+// this fucks up for when col > 0xff, whatevs
+as_ncurses_attribute :: (mod: Char_Mod) -> attr: s32 {
 	col: s32 = ifx mod.pair_index != 0 then mod.pair_index else color_fg_bg(mod.fg, mod.bg);
 	ret: s32 = 0;
 	ret |= COLOR_PAIR(col);

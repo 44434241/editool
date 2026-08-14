@@ -341,8 +341,13 @@ _draw_window :: (using win: *Window) {
 				if info.override_color != -1
 					mod.fg = info.override_color;
 				// matches are color 2
-				attr := as_ncurses_attribute(mod);
-				wattrset(nwindow, attr);
+				AA :: true;
+				#if AA {
+					char_mod_on(nwindow, mod);
+				} else {
+					attr := as_ncurses_attribute(mod);
+					wattrset(nwindow, attr);
+				}
 				//if mod.replaced.count > 0
 					//waddch(nwindow, mod.replaced[0]);
 				if info.replaced {
@@ -359,7 +364,11 @@ _draw_window :: (using win: *Window) {
 						wadd_wch(nwindow, *wch);
 					}
 				}
-				wattrset(nwindow, 0);
+				#if AA {
+					char_mod_off(nwindow);
+				} else {
+					wattrset(nwindow, 0);
+				}
 			}
 			if it.chars.count < user_mods.count {
 				attr := as_ncurses_attribute(user_mods[it.chars.count]);

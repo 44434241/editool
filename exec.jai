@@ -211,6 +211,7 @@ make_archer_window :: (_path: string) -> *Window {
 		root: *Window;
 		directory_window: *Window;
 		preview_window_id: WinId;
+		current_path: string = ""; // @Leak
 		//preview_window: *Window;
 	}
 	maybe_update_state :: (using state: *Archer_State) {
@@ -221,14 +222,28 @@ make_archer_window :: (_path: string) -> *Window {
 		if dir_buf.kind != .DIRECTORY
 			return;
 		rel_path := dir_buf.lines[directory_window.cursor.y].as_string;
-		preview_path := path_join(dir_buf.path, rel_path);
+		preview_path := path_join(dir_buf.path, rel_path); // @Leak
+		if current_path == preview_path
+			return;
 		cnt := file_length(preview_path);
 		if cnt > 1024 * 1024 {
 			edit_alert("Refusing to preview > 1mb file");
 			return;
 		}
-		buf := get_path_buffer(preview_path);
-		change_buffer(preview_window, buf);
+		_x, _y, _n: s32;
+		is_image := cast(bool)stbi_info(tprint("%\x00", preview_path).data, *_x, *_y, *_n);
+		if !is_image {
+			buf := get_path_buffer(preview_path);
+			change_buffer(preview_window, buf);
+		} else {
+			buf := make_image_buffer(preview_path, preview_window.size);
+			if !buf {
+				edit_warn("image preview failed !"); 
+				return;
+			}
+			change_buffer(preview_window, buf);
+		}
+		current_path = preview_path;
 	}
 	state := New(Archer_State);
 	{
@@ -580,6 +595,232 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 	return parent;
 }
 
+// returns null on failure, even if a buffer was passed
+make_image_buffer :: (_path: string, size: Vec2i) -> *Buffer {
+	Image_State :: struct {
+		// packed rgb: u32
+		// ncurses color: u16
+		// ncurses pair: u16
+		color_index: s16 = 100;
+		color_map: Table(u32, s16); // map from packed rgb to ncurses color index
+		//
+		pair_index: u16 = /* MAIN_PAIR_COUNT */ 300; // whatever.. 300 works fine
+		pair_map: Table(u32, u16); // map from 2 colors to ncurses pair
+		//
+		image_bytes: []u8; // @Leak
+		width, height, channels: s32;
+	}
+	WHITESPACE :: #run -> string {
+		buf: [..]u8;
+		for 1..1024 {
+			array_add(*buf, #char " ");
+		}
+		return cast(string)buf;
+	}
+	PRECISE :: true;
+	#if PRECISE {
+		UTF_CHAR :: "\xe2\x96\x84";
+		UTFSPACE :: #run -> string {
+			buf: [..]u8;
+			for 1..1024 {
+				array_add(*buf, .. cast([]u8)UTF_CHAR);
+			}
+			return cast(string)buf;
+		}
+	}
+	path := normalize_path(_path);
+	if !file_exists(path) {
+		edit_alert("File doesn't exist: '%'", path);
+		return null;
+	}
+	buf := create_custom_buffer();
+	buf.caps |= .ALL;
+	cleanup_and_return :: () #expand {
+		// if opened in "open" mode, this will destroy the window..
+		destroy_buffer(buf);
+		`return null;
+	}
+	{
+		using state := New(Image_State,, allocator = allocator_of(*buf.pool));
+		buf.user_data = state;
+		color_map.allocator = allocator_of(*buf.pool);
+		pair_map.allocator = allocator_of(*buf.pool);
+		actual_path: string;
+		{
+			#if !PRECISE {
+				max_width := (size.x - 1) / 2;
+				max_height := size.y;
+			} else {
+				max_width := (size.x - 1);
+				max_height := size.y * 2;
+			}
+			actual_width, actual_height, _channels: s32;
+			ok := cast(bool)stbi_info(temp_c_string(path), *actual_width, *actual_height, *_channels);
+			if !ok {
+				edit_alert("not an image");
+				cleanup_and_return();
+			}
+			if actual_width <= max_width && actual_height <= actual_height {
+				actual_path = path;
+			} else {
+				OUTPUT_PATH :: "/tmp/editool_image.png";
+				command := string.[
+					"magick", path,
+					"-resize", tprint("%x%", max_width, max_height),
+					"-colors", "100", 
+					OUTPUT_PATH
+				];
+				log("magick command: %", command); 
+				res := run_command(.. command);
+				if res.exit_code != 0 {
+					edit_alert("magick failed for: '%', probably not an image", path);
+					cleanup_and_return();
+				}
+				actual_path = OUTPUT_PATH;
+			}
+		}
+		// further errors shouldn't happen
+		file_bytes, ok := read_entire_file(actual_path);
+		if !ok {
+			edit_alert("Couldn't open '%'", path);
+			cleanup_and_return();
+		}
+		//desired_channels :: 3;
+		raw_bytes: *u8 = stbi_load_from_memory(file_bytes.data, xx file_bytes.count,
+					*width, *height, *channels, desired_channels = 4); // @Leak
+		channels = 4;
+		if !raw_bytes {
+			edit_alert("Not a valid image: '%'", path);
+			cleanup_and_return();
+		}
+		image_bytes = []u8.{ data = raw_bytes, count = width * height * channels };
+		//image_colors := []u32.{ data = cast(*u32)_image_bytes, count = width * height };
+		assert(channels == 3 || channels == 4);
+		assert(width <= WHITESPACE.count, "what u doin");
+		for y: 0..#ifx !PRECISE then (height-1) else ((height+1) / 2)-1 {
+			if y != height - 1 
+				split_line(buf, .{0, y});
+			#if !PRECISE {
+				_write_normal_string(buf, .{0, y}, slice(WHITESPACE, 0, width * 2) );
+			} else {
+				_write_normal_string(buf, .{0, y}, slice(UTFSPACE, 0, width * UTF_CHAR.count) );
+			}
+		}
+	}
+	buf.apply_mods = (win: *Window, lines: []*Line) {
+		using state := win.buffer.user_data.(*Image_State);
+		assert(state != null);
+		for line: lines {
+			line_y := (line - win.lines.data);
+			//if line_y >= height
+				//break;
+			for line_x: 0..line.count-1 {
+				if line_x >= line.user_mods.count
+					break;
+				pixel_to_color :: (x: int, y: int) -> u32 #expand {
+					base_image_index := ((y * width)+x)*channels;
+					r, g, b, a: u32;
+					if channels == 3 {
+						r = image_bytes[base_image_index+0];
+						g = image_bytes[base_image_index+1];
+						b = image_bytes[base_image_index+2];
+						a = 255;
+					} else if channels == 4 {
+						r = image_bytes[base_image_index+0];
+						g = image_bytes[base_image_index+1];
+						b = image_bytes[base_image_index+2];
+						a = image_bytes[base_image_index+3];
+					} else {
+						assert(channels == 2);
+						// b/w + alpha
+						r, g, b = image_bytes[base_image_index];
+						a = image_bytes[base_image_index+1];
+					}
+					col32: u32 = r + (g << 8) + (b << 16) + (a << 24);
+					return col32;
+				}
+				color_to_rgba :: (col: u32) -> u8, u8, u8, u8 {
+					return xx (col & 0xff), xx ((col >> 8) & 0xff), xx ((col >> 16) & 0xff), xx ((col >> 24) & 0xff);
+				}
+				color_to_ncurses :: (col32: u32) -> s16 #expand {
+					col: *s16 = find_or_add(*color_map, col32);
+					if col.* == 0 {
+						to_col :: (col: s16) -> s16 {
+							return xx ((cast(s32)col * 1000) / 255);
+						}
+						r, g, b, a := color_to_rgba(col32);
+						if a > 3 {
+							col.* = color_index;
+							color_index += 1;
+							init_extended_color(col.*, to_col(r), to_col(g), to_col(b));
+						} else {
+							col.* = -1;
+						}
+					}
+					return col.*;
+				}
+				ncurses_color_pair_to_ncurses :: (_fg: s16, _bg: s16) -> u16 #expand {
+					// lil hack, since there can be -1 color, but i wanna shift them !!
+					//fg := (*_fg).(*u16).*;
+					//bg := (*_bg).(*u16).*;
+					
+					fg: u32 = xx,no_check _fg;
+					bg: u32 = xx,no_check _bg;
+					//
+					both: u32 = (fg << 16) | bg;
+					//both: u32 = (bg << 16) | fg;
+					pair: *u16 = find_or_add(*pair_map, both);
+					if pair.* == 0 {
+						pair.* = pair_index;
+						pair_index += 1;
+						log("% = %/% (%)", pair.*, _fg, _bg, both);
+						init_extended_pair(pair.*, _fg, _bg);
+						//log("pair % = %/%", pair.*, _fg, _bg);
+					}
+					return pair.*;
+				}
+				#if !PRECISE {
+					y := line_y;
+					x := line_x / 2; // since 2-wide chars
+					if x >= width
+						break;
+					col32 := pixel_to_color(x, y);
+					col_ncurses := color_to_ncurses(col32);
+					pair_ncurses := ncurses_color_pair_to_ncurses(-1, col_ncurses);
+					mod: *Char_Mod = *line.user_mods[line_x];
+					mod.pair_index = pair_ncurses;
+				} else {
+					// background is y1, fg is y2 !!
+					y1 := line_y * 2;
+					y2 := line_y * 2 + 1;
+					if y1 >= height
+						break;
+					//x := (line_x / UTF_CHAR.count); // since 3-wide chars
+					x := ((line_x + UTF_CHAR.count - 1) / UTF_CHAR.count); // since 3-wide chars
+					if x >= width
+						break;
+					col32_bg := pixel_to_color(x, y1);
+					col_ncurses_bg := color_to_ncurses(col32_bg);
+					col_ncurses_fg: s16 = col_ncurses_bg;
+					if y2 < height {
+						col32_fg := pixel_to_color(x, y2);
+						col_ncurses_fg = color_to_ncurses(col32_fg);
+					}
+					//col_ncurses_fg = col_ncurses_bg;
+					//col_ncurses_bg = col_ncurses_fg;
+					//col_ncurses_bg, col_ncurses_fg = col_ncurses_fg, col_ncurses_bg;
+					pair_ncurses := ncurses_color_pair_to_ncurses(col_ncurses_fg, col_ncurses_bg);
+					mod: *Char_Mod = *line.user_mods[line_x];
+					mod.pair_index = pair_ncurses;
+					
+				}
+			}
+		}
+		edit_alert("color count: % / pair count: % / channels: %", color_map.count, pair_map.count, channels);
+	}
+	return buf;
+}
+
 add_all_execs :: () {
 	add_exec("force_quit", () -> bool {
 		editool_quit(force = true);
@@ -865,6 +1106,8 @@ add_all_execs :: () {
 		if !buf
 			return false;
 		win := select_or_create_buffer_window(buf, .FLOAT); // .FLOAT by default for man?
+		if win
+			select_window(win);
 		//change_buffer(win, buf);
 		return win != null;
 	});
@@ -933,118 +1176,15 @@ add_all_execs :: () {
 		});
 		return true;
 	});
-	add_exec("image", (_path: string) -> bool {
-		path := normalize_path(_path);
-		if !file_exists(path) {
-			edit_alert("File doesn't exist: '%'", path);
+	add_exec("image", (path: string) -> bool {
+		win := select_or_create_placeholder_window(.OPEN);
+		buf := make_image_buffer(path, win.size);
+		if !buf {
+			destroy_window(win, force = true);
 			return false;
 		}
-		Image_State :: struct {
-			color_map: Table(u32, s16);
-			image_bytes: []u8; // @Leak
-			pair_index: s16 = MAIN_PAIR_COUNT;
-			color_index: s32 = 100;
-			width, height, channels: s32;
-		}
-		WHITESPACE :: #run -> string {
-			buf: [..]u8;
-			for 1..1024 {
-				array_add(*buf, #char " ");
-			}
-			return cast(string)buf;
-		}
-		win := select_or_create_placeholder_window(.OPEN);
-		buf := create_custom_buffer();
-		buf.caps |= .ALL;
 		convert_into_buffer_window(win, buf);
-		cleanup_and_return :: () #expand {
-			destroy_window(win, force = true);
-			`return false;
-		}
-		{
-			using state := New(Image_State,, allocator = allocator_of(*buf.pool));
-			buf.user_data = state;
-			color_map.allocator = allocator_of(*buf.pool);
-			//PATH :: "/home/user/catimg/screenshot.png";
-			OUTPUT_PATH :: "/tmp/editool_image.png";
-			command := string.[
-				"magick", path,
-				"-resize", tprint("%x%", (win.size.x - 1) / 2, win.size.y * 2),
-				"-colors", "100", 
-				OUTPUT_PATH
-			];
-			log("magick command: %", command); 
-			res := run_command(.. command);
-			if res.exit_code != 0 {
-				edit_alert("magick failed for: '%', probably not an image", path);
-				cleanup_and_return();
-			}
-			assert(res.exit_code == 0);
-			// further errors shouldn't happen
-			file_bytes, ok := read_entire_file(OUTPUT_PATH);
-			if !ok {
-				edit_alert("Couldn't open '%'", path);
-				cleanup_and_return();
-			}
-			desired_channels :: 3;
-			raw_bytes: *u8 = stbi_load_from_memory(file_bytes.data, xx file_bytes.count,
-						*width, *height, *channels, desired_channels = desired_channels); // @Leak
-			if !raw_bytes {
-				edit_alert("Not a valid image: '%'", path);
-				cleanup_and_return();
-			}
-			image_bytes = []u8.{ data = raw_bytes, count = width * height * channels };
-			//image_colors := []u32.{ data = cast(*u32)_image_bytes, count = width * height };
-			assert(channels >= desired_channels, "channels = %", channels);
-			assert(width <= WHITESPACE.count, "what u doin");
-			for y: 0..height-1 {
-				if y != height - 1 
-					split_line(win, .{0, y});
-				_write_normal_string(win, .{0, y}, slice(WHITESPACE, 0, width * 2) );
-			}
-		}
-		win.apply_mods = (win: *Window, lines: []*Line) {
-			using state := win.buffer.user_data.(*Image_State);
-			assert(state != null);
-			for line: lines {
-				y := (line - win.lines.data);
-				if y >= height
-					break;
-				for line_x: 0..line.count-1 {
-					x := line_x / 2; // since 2-wide chars
-					if x >= width
-						break;
-					base_image_index := ((y * width)+x)*channels;
-					r := image_bytes[base_image_index+0];
-					g := image_bytes[base_image_index+1];
-					b := image_bytes[base_image_index+2];
-					col32: u32 = r + g << 8 + b << 16;
-					val: *s16 = find_or_add(*color_map, col32);
-					if val.* == 0 {
-						if pair_index >= 256
-							continue; // whatever !
-						val.* = pair_index;
-						color_index += 1;
-						//
-						to_col :: (col: u8) -> s32 {
-							return xx ((col * 1000) / 255);
-						}
-						init_extended_color(color_index, to_col(r), to_col(g), to_col(b));
-						init_extended_pair(pair_index, -1, color_index);
-						//
-						val.* = pair_index;
-						pair_index += 1;
-						color_index += 1;
-					}
-					mod: *Char_Mod = *line.user_mods[line_x];
-					mod.pair_index = xx val.*;
-					
-					//attr_set(0, val.*, null);
-					//addch(#char " ");
-					//addch(#char " ");
-				}
-			}
-		}
+		move_cursor(win, .{0, 0});
 		select_window(win);
 		return true;
 	});
