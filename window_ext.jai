@@ -287,7 +287,10 @@ move_cursor_y :: (using win: *Window, y: int) {
 	if buffer.caps & .MOVE_Y == 0
 		return;
 	cursor.y = clamp(y, 0, lines.count-1); // normalizes self, because needs to get virtual x
-	virtual_x := _from_real_x_in_line(*win.lines[cursor.y], cursor.virtual_real_x);
+	_, virtual_x := _from_real_x_in_line(*win.lines[cursor.y], cursor.virtual_real_x);
+	log("AAAAAAAAAAAAAAAAAA");
+	log("virtual real x: %", cursor.virtual_real_x);
+	log("virtual x: %", virtual_x);
 	cursor.x = virtual_x;
 	normalize_cursor(win, with_scroll = true);
 }
@@ -303,12 +306,18 @@ move_cursor_x :: (using win: *Window, x: int) {
 // these 2 are extras..
 
 update_from_cursor_virtual_x :: (using win: *Window) {
+	log("UPDATE FROM VIRTUAL X");
 	virtual_x := _from_real_x_in_line(*win.lines[cursor.y], cursor.virtual_real_x);
+	log("virtual real x: %", cursor.virtual_real_x);
+	log("virtual x: %", virtual_x);
 	move_cursor_x(win, virtual_x);
 }
 
 refresh_cursor_virtual_x :: (using win: *Window) {
+	log("REFRESH VIRTUAL X");
 	cursor.virtual_real_x = _get_real_x_in_line(*lines[cursor.y], cursor.x);
+	log("virtual real x: %", cursor.virtual_real_x);
+	log("cursor x: %", cursor.x);
 }
 
 offset_cursor :: (using win: *Window, x: int, y: int) {
@@ -562,29 +571,30 @@ split_line :: (buf: *Buffer, pos: Position) {
 
 // EDITING BUFFER COMMANDS END
 
+// convert FROM an index into line.chars INTO x position on screen
 _get_real_x_in_line :: (line: *Line, x: int) -> int {
 	if x == 0
 		return 0;
 	ret: int = 0;
 	idx: int = 0;
-	//character_utf8_to_utf32 :: (s: *u8, source_length: s64, $strict := false) -> u32, s64, Unicode_Result {
 	while idx < min(x, line.count) {
 		code, count, res := character_utf8_to_utf32(line.chars.data + idx, line.chars.count - idx);
 		if res != .CONVERSION_OK {
 			break;
 		}
 		idx += count;
-		ret += _get_char_info(code).size;
+		ret += _get_char_info(code).size; // usually 1
 	}
 	return ret;
 }
 
-_from_real_x_in_line :: (line: *Line, real_x: int) -> int {
+// `visual_x` is where the cursor would be, `x` is the actual index of the character
+_from_real_x_in_line :: (line: *Line, real_x: int) -> (visual_x: int, x: int) {
 	idx := 0;
 	utf_idx := 0;
 	while idx < line.count {
 		if real_x <= 0
-			return utf_idx;
+			return utf_idx, idx;
 		code, count, res := character_utf8_to_utf32(line.chars.data + idx, line.chars.count - idx);
 		if res != .CONVERSION_OK {
 			break;
@@ -592,16 +602,8 @@ _from_real_x_in_line :: (line: *Line, real_x: int) -> int {
 		idx += count;
 		real_x -= _get_char_info(code).size;
 		if real_x < 0
-			return utf_idx;
+			return utf_idx, idx;
 		utf_idx += 1;
 	}
-	/*
-	for line.chars {
-		if real_x <= 0
-			return it_index;
-		real_x -= _get_char_info(it).size;
-		if real_x < 0
-			return it_index;
-	}*/
-	return utf_idx;
+	return utf_idx, idx;
 }

@@ -202,8 +202,12 @@ path_to_filetype :: (_path: string) -> string {
 		ext := advance(path, idx2+1);
 		if ext == {
 			case "comp"; #through;
+			case "compute"; #through;
 			case "frag"; #through;
-			case "vert";
+			case "fragment"; #through;
+			case "vert"; #through;
+			case "vertex"; #through;
+			case "shader"; // might be hlsl, but whatever
 				return "glsl";
 			case "toml"; #through;
 			case "yaml"; #through;

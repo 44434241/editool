@@ -532,62 +532,10 @@ _new_window :: (kind: Window.Kind, parent: *Window, flags: Window.Flags,
 	return win;
 }
 
-// U CREATE ROOT WITH THIS
+// U CREATE ROOT WITH THIS (in _new_window())
 create_container_window :: (parent: *Window, nwindow: *WINDOW = null, flags: Window.Flags = .NONE, mode: Window.Container_Mode = .VERTICAL, is_hidden := false) -> *Window {
-	/*
-	if is_hidden {
-		assert(parent == null);
-	}
-	//
-	win := New(Window);
-	set_allocators(*win.pool);
-	win.commands.allocator = allocator_of(*win.pool);
-	win.id = next_window_id();
-	win.is_hidden = is_hidden;
-	win.flags = flags;
-	win.flags |= .CONTAINER_TABS;
-	array_add(*context.edit.windows, win);
-	win.kind = .CONTAINER;
-	*/
 	win := _new_window(.CONTAINER, parent, flags | .CONTAINER_TABS, nwindow, is_hidden = is_hidden);
 	win.container_mode = mode;
-	/*
-	win.parent = parent;
-	//
-	if !is_hidden && parent == null {
-		if context.edit.root == null {
-			context.edit.root = win;
-			win.is_root = true;
-			win.is_any_root = true;
-		} else if context.edit.second_root == null {
-			context.edit.second_root = win;
-			win.is_second_root = true;
-			win.is_any_root = true;
-			nwindow = derwin(stdscr, 1, 1, 0, 0);
-		} else {
-			assert(false);
-		}
-	}
-	if nwindow == null {
-		if parent != null {
-			nwindow = derwin(parent.nwindow, 1, 1, 0, 0);
-		} else {
-			// Assumes that it belongs to root, will need to remove this later..
-			assert(context.edit.root != null);
-			nwindow = derwin(context.edit.root.nwindow, 1, 1, 0, 0);
-		}
-	}
-	win.nwindow = nwindow;
-	//
-	if win.is_root {
-		#if SECOND_ROOT {
-			assert(context.edit.second_root == null);
-			tmp := create_container_window(null, null, mode = .TABBED);
-			//remove_flags(tmp, .CONTAINER_TABS);
-			assert(tmp == context.edit.second_root);
-		}
-	}
-	*/
 	if parent != null {
 		refresh_window_size(parent);
 	} else {
@@ -606,15 +554,6 @@ create_placeholder_window :: (parent: *Window, flags: Window.Flags = .NONE, is_h
 // screen is explicitly initialized i guess?
 create_buffer_window :: (parent: *Window, buf: *Buffer, flags: Window.Flags = .NONE, nwindow: *WINDOW = null,
 			select := true, is_hidden := false) -> *Window {
-	/*
-	if !is_hidden {
-		assert(parent != null, "Only container window can be root");
-	} else {
-		// hidden window might have a parent?? idk
-		assert(parent == null);
-	}
-	*/
-	//
 	if buf.kind == .FILE || buf.kind == .DIRECTORY {
 		flags |= .BUFFER_MARKS;
 		flags |= .BUFFER_LINE_NO;
@@ -623,37 +562,6 @@ create_buffer_window :: (parent: *Window, buf: *Buffer, flags: Window.Flags = .N
 	win := _new_window(.BUFFER, parent, flags, nwindow, is_hidden = is_hidden);
 	win.buffer = buf;
 	array_add(*buf.windows, win); // HMMMM
-	/*
-	win := New(Window);
-	set_allocators(*win.pool);
-	win.commands.allocator = allocator_of(*win.pool);
-	win.id = next_window_id();
-	array_add(*context.edit.windows, win);
-	win.is_hidden = is_hidden;
-	win.flags = flags;
-	if buf.kind == .FILE || buf.kind == .DIRECTORY {
-		win.flags |= .BUFFER_MARKS;
-		win.flags |= .BUFFER_LINE_NO;
-		win.flags |= .BUFFER_STATUS_LINE;
-	}
-	win.kind = .BUFFER;
-	win.buffer = buf;
-	win.parent = parent;
-	if nwindow == null {
-		if parent != null {
-			// just auto create nwindow..
-			nwindow = derwin(parent.nwindow, 1, 1, 0, 0);
-		} else {
-			// Assumes that it belongs to root, will need to remove this later..
-			assert(context.edit.root != null);
-			nwindow = derwin(context.edit.root.nwindow, 1, 1, 0, 0);
-		}
-	}
-	win.nwindow = nwindow;
-	//
-	array_add(*buf.windows, win); // HMMMM
-	move_cursor(win, .{0, 0});
-	*/
 	if parent != null {
 		refresh_window_size(parent);
 	}

@@ -354,7 +354,7 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 		if state.match_win.cursor.y < state.res.items.count {
 			item := state.res.items[state.match_win.cursor.y];
 			if context.buffer_window == state.match_win || context.buffer_window == state.input_win {
-				buf := state.res.get_buffer(item);
+				buf := state.res.get_buffer(item, state.preview_win);
 				if buf {
 					change_buffer(state.preview_win, buf);
 					move_cursor(state.preview_win, .{0, item.line_number});
@@ -487,7 +487,7 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 		}
 		item := state.items[state.match_win.cursor.y];
 		assert(state.res.get_buffer != null);
-		buf := state.res.get_buffer(item);
+		buf := state.res.get_buffer(item, state.preview_win);
 		if buf == null {
 			return command_error("Null buffer...");
 		}
@@ -609,6 +609,8 @@ make_image_buffer :: (_path: string, size: Vec2i) -> *Buffer {
 		//
 		image_bytes: []u8; // @Leak
 		width, height, channels: s32;
+		//
+		is_precise: bool;
 	}
 	WHITESPACE :: #run -> string {
 		buf: [..]u8;
@@ -617,16 +619,14 @@ make_image_buffer :: (_path: string, size: Vec2i) -> *Buffer {
 		}
 		return cast(string)buf;
 	}
-	PRECISE :: true;
-	#if PRECISE {
-		UTF_CHAR :: "\xe2\x96\x84";
-		UTFSPACE :: #run -> string {
-			buf: [..]u8;
-			for 1..1024 {
-				array_add(*buf, .. cast([]u8)UTF_CHAR);
-			}
-			return cast(string)buf;
+	//PRECISE :: true;
+	UTF_CHAR :: "\xe2\x96\x84";
+	UTFSPACE :: #run -> string {
+		buf: [..]u8;
+		for 1..1024 {
+			array_add(*buf, .. cast([]u8)UTF_CHAR);
 		}
+		return cast(string)buf;
 	}
 	path := normalize_path(_path);
 	if !file_exists(path) {
@@ -647,26 +647,30 @@ make_image_buffer :: (_path: string, size: Vec2i) -> *Buffer {
 		pair_map.allocator = allocator_of(*buf.pool);
 		actual_path: string;
 		{
-			#if !PRECISE {
-				max_width := (size.x - 1) / 2;
-				max_height := size.y;
-			} else {
-				max_width := (size.x - 1);
-				max_height := size.y * 2;
-			}
+			max_basic_width := (size.x - 1) / 2;
+			max_basic_height := size.y;
+			// precise is smaller, using utf characters..
+			max_precise_width := (size.x - 1);
+			max_precise_height := size.y * 2;
+			//
 			actual_width, actual_height, _channels: s32;
 			ok := cast(bool)stbi_info(temp_c_string(path), *actual_width, *actual_height, *_channels);
 			if !ok {
 				edit_alert("not an image");
 				cleanup_and_return();
 			}
-			if actual_width <= max_width && actual_height <= actual_height {
+			if actual_width <= max_basic_width && actual_height <= max_basic_height {
+				is_precise = false;
+				actual_path = path;
+			} else if actual_width <= max_precise_width && actual_height <= max_precise_height {
+				is_precise = true;
 				actual_path = path;
 			} else {
+				is_precise = true;
 				OUTPUT_PATH :: "/tmp/editool_image.png";
 				command := string.[
 					"magick", path,
-					"-resize", tprint("%x%", max_width, max_height),
+					"-resize", tprint("%x%", max_precise_width, max_precise_height),
 					"-colors", "100", 
 					OUTPUT_PATH
 				];
@@ -697,13 +701,14 @@ make_image_buffer :: (_path: string, size: Vec2i) -> *Buffer {
 		//image_colors := []u32.{ data = cast(*u32)_image_bytes, count = width * height };
 		assert(channels == 3 || channels == 4);
 		assert(width <= WHITESPACE.count, "what u doin");
-		for y: 0..#ifx !PRECISE then (height-1) else ((height+1) / 2)-1 {
-			if y != height - 1 
+		line_count := ifx !is_precise then (height) else ((height+1) / 2);
+		for y: 0..line_count-1 {
+			if y != line_count - 1 
 				split_line(buf, .{0, y});
-			#if !PRECISE {
-				_write_normal_string(buf, .{0, y}, slice(WHITESPACE, 0, width * 2) );
-			} else {
+			if is_precise {
 				_write_normal_string(buf, .{0, y}, slice(UTFSPACE, 0, width * UTF_CHAR.count) );
+			} else {
+				_write_normal_string(buf, .{0, y}, slice(WHITESPACE, 0, width * 2) );
 			}
 		}
 	}
@@ -773,13 +778,12 @@ make_image_buffer :: (_path: string, size: Vec2i) -> *Buffer {
 					if pair.* == 0 {
 						pair.* = pair_index;
 						pair_index += 1;
-						log("% = %/% (%)", pair.*, _fg, _bg, both);
 						init_extended_pair(pair.*, _fg, _bg);
 						//log("pair % = %/%", pair.*, _fg, _bg);
 					}
 					return pair.*;
 				}
-				#if !PRECISE {
+				if !is_precise {
 					y := line_y;
 					x := line_x / 2; // since 2-wide chars
 					if x >= width

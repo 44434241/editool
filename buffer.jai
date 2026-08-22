@@ -176,6 +176,9 @@ Buffer :: struct {
 	//
 	directory_files: [..]Directory_File;
 	directory_files_confirm_index := -1;
+	//
+	// Only valid when not a file.
+	custom_refresh: #type (*Window) -> bool, string; 
 	//is_in_directory_confirm_thing := false;
 }
 
@@ -273,7 +276,11 @@ refresh_buffer :: (win: *Window) -> bool, string {
 			refresh_directory_buffer(buf);
 			return true, "";
 		case;
-			return false, tprint("Not a file (%)", buf.kind);
+			if buf.custom_refresh {
+				ok, msg := buf.custom_refresh(win);
+				return ok, msg;
+			}
+			return false, tprint("Not a file (%) and no custom refresh", buf.kind);
 	}
 }
 

@@ -45,6 +45,7 @@
 // - can use /dev/tty instead of finding tty file?
 // - refresh man page
 // - in archer, can't destroy left window??? (probably related to fixed size..?)
+// - in command mode, being able to press backspace to remove one char.. might be more complicated than i thought
 //
 //
 // I want these a lil more
@@ -842,6 +843,7 @@ main :: () {
 	filenames.allocator = temp;
 	logfile := "";
 	is_archer := false;
+	is_image := false; // open files as image
 	should_early_quit := false;
 	{
 		args := get_command_line_arguments();
@@ -852,6 +854,9 @@ main :: () {
 				case "-";
 					context.edit.use_stdout_as_tty_fd = true;
 					array_add(*filenames, "-");
+					idx += 1;
+				case "--image";
+					is_image = true;
 					idx += 1;
 				case "--archer";
 					is_archer = true;
@@ -922,6 +927,11 @@ main :: () {
 			}
 			set_working_directory(path);
 		} 
+		if is_image && filenames.count == 0 {
+			print("Error: --image must have a file", to_standard_error = true);
+			exit(1);
+			return;
+		}
 		if !filenames {
 			if context.edit.should_print_path
 				array_add(*filenames, "./"); 
@@ -929,25 +939,37 @@ main :: () {
 				array_add(*filenames, ""); // default is empty buffer
 		}
 	}
-	editool_init(logfile = logfile);
 	{
-		log("filenames: %", filenames);
-		parent := context.edit.root;
+		assert(!is_image || !is_archer); // at most one
 		if is_archer && filenames.count != 1 {
-			editool_deinit();
 			print("Error: --archer must have at most 1 directory", to_standard_error = true);
 			exit(1);
 			return;
 		}
+	}
+	editool_init(logfile = logfile);
+	{
+		log("filenames: %", filenames);
+		parent := context.edit.root;
 		for filenames {
 			if is_archer {
 				win := make_archer_window(it);
 				continue;
 			}
-			if it != "-" {
-				buf: *Buffer = get_path_buffer(it);
-				win := create_buffer_window(parent, buf, flags = .BUFFER_LINE_NO);
-			} else {
+			if is_image {
+				win := create_placeholder_window(parent);
+				buf := make_image_buffer(it, win.size);
+				if !buf {
+					editool_deinit();
+					print("Error: '%' is not an image file", it, to_standard_error = true);
+					exit(1);
+				}
+				convert_into_buffer_window(win, buf);
+				move_cursor(win, .{0, 0});
+				select_window(win);
+				continue;
+			}
+			if it == "-" {
 				buf: *Buffer = get_path_buffer("");
 				all_chars: [..]u8;
 				all_chars.allocator = temp;
@@ -960,6 +982,9 @@ main :: () {
 				}
 				_insert_string_into_buffer_as_from_file(buf, cast(string)all_chars, this_has_escape_sequences = true);
 				log("chars: %\n", cast(string)all_chars);
+				win := create_buffer_window(parent, buf, flags = .BUFFER_LINE_NO);
+			} else {
+				buf: *Buffer = get_path_buffer(it);
 				win := create_buffer_window(parent, buf, flags = .BUFFER_LINE_NO);
 			}
 		}

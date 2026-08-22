@@ -30,8 +30,9 @@ Fzf_Result :: struct {
 	thread_group: Thread_Group;
 	input_process: Process;
 	input_process_is_done: bool;
-	get_buffer: #type (Fzf_Item) -> *Buffer;
+	get_buffer: #type (Fzf_Item, *Window) -> *Buffer;
 	user_data: *void;
+	extra_path_filter: string; // path must match this?
 }
 
 allocator_of :: (res: *Fzf_Result) -> Allocator {
@@ -249,55 +250,6 @@ do_rg_but_in_background :: (res: *Fzf_Result, _search: string, paths: .. string)
 	}
 	res.poll(res);
 	return;
-	/*
-	if lines.count >= 200 {
-		// There are a lot of lines, we use threads
-		Work :: struct {
-			json_string: string;
-			match: Rg_Match; // some stuff here might be allocated.. dunno
-			parse_ok: bool;
-		}
-		res.thread_group.logging = false;
-		// I DON'T KNOW WHY THIS HAPPENS @@:
-		// if num_threads > 6 and using pool allocator, it randomly crashes...
-		// (but otherwise, this shit leaks..)
-		num_threads := get_number_of_processors();
-		num_threads = clamp(num_threads / 2, 1, 32);
-		edit_alert("num threads: %", num_threads);
-		init(*res.thread_group, num_threads = num_threads, (group: *Thread_Group, thread: *Thread, _work: *void) -> Thread_Continue_Status {
-			work := _work.(*Work);
-			// looks like using the temp thread allocator works..
-			work.parse_ok, work.match = fson_parse_string(work.json_string, Rg_Match,, allocator=temp);
-			return .CONTINUE;
-		},, allocator=allocator_of(res));
-		res.poll = (res: *Fzf_Result) {
-			time_this("Poll");
-			results := get_completed_work(*res.thread_group,, allocator=temp);
-			for results {
-				work := it.(*Work);
-				if !work.parse_ok
-					continue;
-				maybe_add(res, work.match);
-			}
-		};
-		start(*res.thread_group,, allocator=temp);
-		for lines {
-			work := New(Work,, allocator=allocator_of(res));
-			work.* = .{ json_string = it };
-			add_work(*res.thread_group, work,, allocator=temp);
-			//log("MATCH %", val);
-		}
-		res.poll(res);
-		//for 1..2 {
-			//res.poll(res);
-		//}
-	} else {
-		for lines {
-			ok, match := fson_parse_string(it, Rg_Match,, allocator=allocator_of(res));
-			maybe_add(res, match);
-		}
-	}
-	*/
 }
 
 do_rg :: (res: *Fzf_Result, _search: string, paths: .. string) {
@@ -321,6 +273,13 @@ do_rg :: (res: *Fzf_Result, _search: string, paths: .. string) {
 	if starts_with(search, "!") {
 		search = advance(search, 1);
 		array_add(*extra_paths, "/home/user/jai/latest");
+	}
+	{
+		idx := find_index_from_left(search, "  "); // after 2 spaces
+		if idx >= 0 {
+			res.extra_path_filter = copy_string(advance(search, idx + 2),, allocator=allocator_of(res));
+			search.count = idx;
+		}
 	}
 	//
 	res.search = copy_string(search,, allocator=allocator_of(res));
@@ -351,6 +310,8 @@ do_rg :: (res: *Fzf_Result, _search: string, paths: .. string) {
 		if val.type != "match" 
 			return;
 		if val.submatches.count == 0
+			return;
+		if res.extra_path_filter && !contains(val.path.text, res.extra_path_filter)
 			return;
 		item := Fzf_Item.{
 			filename = val.path.text,
@@ -399,9 +360,6 @@ do_rg :: (res: *Fzf_Result, _search: string, paths: .. string) {
 			//log("MATCH %", val);
 		}
 		res.poll(res);
-		//for 1..2 {
-			//res.poll(res);
-		//}
 	} else {
 		for lines {
 			ok, match := fson_parse_string(it, Rg_Match,, allocator=allocator_of(res));
@@ -420,7 +378,7 @@ do_fzf_buffers :: (res: *Fzf_Result, search: string) {
 	res.items.allocator = allocator_of(res);
 	//
 	res.release = _default_release;
-	res.get_buffer = (item: Fzf_Item) -> *Buffer {
+	res.get_buffer = (item: Fzf_Item, _: *Window) -> *Buffer {
 		id := cast(BufId)item.user_data;
 		buf := find_buffer(id);
 		//assert(buf != null);
@@ -466,7 +424,7 @@ do_fzf_apropos :: (res: *Fzf_Result, search: string) {
 	res.items.allocator = allocator_of(res);
 	//
 	res.release = _default_release;
-	res.get_buffer = (item: Fzf_Item) -> *Buffer {
+	res.get_buffer = (item: Fzf_Item, _: *Window) -> *Buffer {
 		str := item.line;
 		idx := find_index_from_left(str, #char " ");
 		number: string = "";
@@ -511,13 +469,24 @@ _default_release :: (res: *Fzf_Result) {
 	release(*res.pool);
 }
 
-_default_get_buffer :: (item: Fzf_Item) -> *Buffer {
+_default_get_buffer :: (item: Fzf_Item, window: *Window) -> *Buffer {
 	cnt := file_length(item.filename);
 	if cnt > 1024 * 1024 {
 		edit_alert("Refusing to preview > 1mb file");
 		return null;
 	}
-	return get_path_buffer(item.filename);
+	_x, _y, _n: s32;
+	is_image := cast(bool)stbi_info(tprint("%\x00", item.filename).data, *_x, *_y, *_n);
+	if is_image {
+		buf := make_image_buffer(item.filename, window.size);
+		if !buf {
+			edit_warn("image preview failed !"); 
+		}
+		return buf;
+	} else {
+		buf := get_path_buffer(item.filename);
+		return buf;
+	}
 }
 
 #import "Process";
