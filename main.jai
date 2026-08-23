@@ -43,8 +43,7 @@
 // - maybe backspace working in command mode?
 // - dotify
 // - can use /dev/tty instead of finding tty file?
-// - refresh man page
-// - in archer, can't destroy left window??? (probably related to fixed size..?)
+// - ':refresh' man page
 // - in command mode, being able to press backspace to remove one char.. might be more complicated than i thought
 //
 //

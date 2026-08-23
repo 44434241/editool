@@ -432,7 +432,7 @@ make_fzf_window :: ($get_result: #type (*Fzf_Result, string, *void) -> (), user_
 			item := state.res.items[y];
 			prefix_count := item.line_prefix.count;
 			if item.flags & .SYNTAX {
-				if it.dirty_flags & .USER1 && ends_with(item.filename, ".jai") {
+				if it.dirty_flags & .USER1 {
 					syntax := get_syntax_for_filename(item.filename);
 					apply_syntax_mods(it, syntax, first_x = prefix_count);
 					it.user_mods = it.mods;

@@ -804,8 +804,25 @@ _destroy_window :: (win: *Window, force: bool = false, even_only_child := false)
 	}
 	release(*win.pool);
 	free(win);
-	if parent != null
+	if parent != null {
+		{
+			// If all siblings are fixed after getting destroyed,
+			// we want them to be weighted instead so they fix the screen.
+			all_are_fixed := true;
+			for parent.children {
+				if it.container_item.fixed_size == 0 {
+					all_are_fixed = false;
+					break;
+				}
+			}
+			if all_are_fixed {
+				for parent.children {
+					it.container_item = .{ weighted_size = cast(float)it.container_item.fixed_size };
+				}
+			}
+		}
 		refresh_window_size(parent);
+	}
 	return true, "";
 }
 
@@ -938,7 +955,7 @@ refresh_window_size :: (using win: *Window, force := false) {
 					} else {
 						w := ifx weighted_size > 0 then weighted_size else 1.0;
 						new_weight := weight + w;
-						child_size = (round_to_int((new_weight / total_weight)* total_weighted_size) - round_to_int((weight / total_weight)* total_weighted_size));
+						child_size = (round_to_int((new_weight / total_weight) * total_weighted_size) - round_to_int((weight / total_weight) * total_weighted_size));
 						weight = new_weight;
 					}
 					child_begin2: Vec2i = begin;

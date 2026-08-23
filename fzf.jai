@@ -129,7 +129,7 @@ do_rg_but_in_background :: (res: *Fzf_Result, _search: string, paths: .. string)
 		max_per_file = "100"; // idk
 	args: [..]string;
 	args.allocator = temp;
-	array_add(*args, "rg", "--json", "-m", max_per_file, "-S", "--", search);
+	array_add(*args, "rg", "--no-ignore", "--json", "-m", max_per_file, "-S", "--", search);
 	array_add(*args, .. paths);
 	array_add(*args, .. extra_paths);
 	if !paths
@@ -297,7 +297,7 @@ do_rg :: (res: *Fzf_Result, _search: string, paths: .. string) {
 		max_per_file = "100"; // idk
 	args: [..]string;
 	args.allocator = temp;
-	array_add(*args, "rg", "--json", "-m", max_per_file, "-S", "--", search);
+	array_add(*args, "rg", "--no-ignore", "--json", "-m", max_per_file, "-S", "--", search);
 	array_add(*args, .. paths);
 	array_add(*args, .. extra_paths);
 	if !paths
